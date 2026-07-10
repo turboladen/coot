@@ -297,10 +297,12 @@ checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 name = "billz-app"
 version = "0.1.0"
 dependencies = [
+ "billz-core",
  "serde",
  "serde_json",
  "tauri",
  "tauri-build",
+ "thiserror 2.0.18",
 ]
 
 [[package]]

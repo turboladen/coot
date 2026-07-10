@@ -33,6 +33,11 @@ pub enum CoreError {
     /// (`PLAN.md` §3, `CLAUDE.md`).
     #[error("query error: {0}")]
     Query(String),
+    /// Reading or writing the on-disk connection metadata failed. `io::Error` /
+    /// `serde_json::Error` are stringified here by `ConnectionStore` so this
+    /// variant stays backend-agnostic (no `#[from]`), matching `Secret`/`Query`.
+    #[error("connection store error: {0}")]
+    Store(String),
 }
 
 #[cfg(test)]
@@ -50,5 +55,11 @@ mod tests {
         let e = CoreError::Config("no server".into());
         assert!(e.to_string().contains("connection configuration error"));
         assert!(e.to_string().contains("no server"));
+    }
+
+    #[test]
+    fn store_display_mentions_connection_store() {
+        let e = CoreError::Store("bad json".into());
+        assert_eq!(e.to_string(), "connection store error: bad json");
     }
 }

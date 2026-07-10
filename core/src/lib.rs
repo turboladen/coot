@@ -11,6 +11,7 @@
 //! `mssql-client` calls those modules will use.
 
 pub mod connection;
+pub mod connection_store;
 pub mod context;
 pub mod error;
 pub mod executor;
@@ -21,6 +22,7 @@ pub use connection::{
     ConnectionConfig, ConnectionId, InMemorySecretStore, KeychainSecretStore, SecretStore,
     build_connection_string,
 };
+pub use connection_store::ConnectionStore;
 pub use context::ExecutionContext;
 pub use error::{CoreError, Result};
 pub use executor::run;
