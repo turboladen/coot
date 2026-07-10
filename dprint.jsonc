@@ -1,0 +1,39 @@
+{
+  "typescript": {},
+  "json": {
+    "lineWidth": 100,
+  },
+  "markdown": {
+    "lineWidth": 100,
+    "textWrap": "always",
+  },
+  "toml": {
+    "lineWidth": 100,
+  },
+  "dockerfile": {},
+  "ruff": {},
+  "malva": {},
+  "markup": {},
+  "yaml": {
+    // Adding space between braces breaks Tera expressions https://keats.github.io/tera/docs/#variables, which is how loco injects env vars into
+    // configuration files https://loco.rs/docs/the-app/your-project/#placeholders-variables-in-config.
+    "braceSpacing": false,
+  },
+  "excludes": [
+    // exclude typescript files since eslint handles that
+    "typescript/**",
+    "**/node_modules",
+    "**/*-lock.json",
+  ],
+  "plugins": [
+    "https://plugins.dprint.dev/typescript-0.95.15.wasm",
+    "https://plugins.dprint.dev/json-0.21.1.wasm",
+    "https://plugins.dprint.dev/markdown-0.21.1.wasm",
+    "https://plugins.dprint.dev/toml-0.7.0.wasm",
+    "https://plugins.dprint.dev/dockerfile-0.3.3.wasm",
+    "https://plugins.dprint.dev/ruff-0.7.5.wasm",
+    "https://plugins.dprint.dev/g-plane/malva-v0.15.2.wasm",
+    "https://plugins.dprint.dev/g-plane/markup_fmt-v0.26.0.wasm",
+    "https://plugins.dprint.dev/g-plane/pretty_yaml-v0.6.0.wasm",
+  ],
+}
