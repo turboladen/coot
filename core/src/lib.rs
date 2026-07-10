@@ -10,6 +10,7 @@
 //! (`typed_probe`, `dynamic_dump`) are the working proof of the exact
 //! `mssql-client` calls those modules will use.
 
+pub mod batch;
 pub mod connection;
 pub mod connection_store;
 pub mod context;
@@ -18,6 +19,7 @@ pub mod executor;
 pub mod result;
 pub mod types;
 
+pub use batch::{batch_at_line, split_batches};
 pub use connection::{
     ConnectionConfig, ConnectionId, InMemorySecretStore, KeychainSecretStore, SecretStore,
     build_connection_string,

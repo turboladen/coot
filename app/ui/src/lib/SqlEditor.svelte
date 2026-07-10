@@ -1,7 +1,7 @@
 <script lang="ts">
   // cwt.4 — CodeMirror 6 T-SQL editor. It is the INPUT to the runner. Exposes
-  // getText/getSelectionText/getRunText/focus via `bind:this` — the seam cwt.5
-  // depends on (Run button reads getRunText()). No run-wiring lives here.
+  // getText/getSelectionText/getRunTarget/focus via `bind:this` — the seam cwt.5
+  // reads (App's Run button calls getRunTarget()). Cmd/Ctrl-Enter fires `onrun`.
   import { onMount } from "svelte";
   import { EditorState } from "@codemirror/state";
   import { EditorView, keymap } from "@codemirror/view";
@@ -11,7 +11,8 @@
 
   let {
     value = $bindable(""), // two-way document text; source of truth is CM's doc
-  }: { value?: string } = $props();
+    onrun, // fired by Cmd/Ctrl-Enter while CM holds focus (App wires it to run())
+  }: { value?: string; onrun?: () => void } = $props();
 
   let host = $state<HTMLDivElement>(); // bind:this on the container div
   let view: EditorView | undefined;
@@ -21,7 +22,13 @@
     // Explicit + high-precedence (prepended) so Mod-/ toggles comments regardless
     // of basicSetup internals. basicSetup's defaultKeymap also binds it; this
     // documents intent and guarantees the AC.
-    keymap.of([{ key: "Mod-/", run: toggleComment, preventDefault: true }]),
+    keymap.of([
+      { key: "Mod-/", run: toggleComment, preventDefault: true },
+      // Cmd/Ctrl-Enter runs. High-precedence + preventDefault so it fires while
+      // CM has focus (basicSetup doesn't bind Mod-Enter). Returns true to stop
+      // further handlers even if `onrun` is unset.
+      { key: "Mod-Enter", run: () => { onrun?.(); return true; }, preventDefault: true },
+    ]),
     basicSetup, // line numbers, history, brackets, default keymap, highlighting, autocomplete
     sql({ dialect: MSSQL }), // T-SQL keywords + syntax highlighting
     EditorView.theme({
@@ -64,10 +71,17 @@
     const { from, to } = view.state.selection.main;
     return view.state.sliceDoc(from, to);
   }
-  export function getRunText(): string {
-    // "run the selection, else the whole batch" — text half only; splitting on
-    // GO and calling run_sql is cwt.5's job.
-    return getSelectionText() || getText();
+  export function getRunTarget(): { text: string; selection: string; line: number } {
+    // What to run: the full doc text, the current selection (empty if none), and
+    // the caret's 1-based line. core's batch_at_line uses `line` (line-based, not
+    // byte offset) — CM's doc.lineAt(head).number matches Rust's split('\n')
+    // index because CM normalizes all line breaks to `\n` in doc.toString().
+    const text = getText();
+    if (!view) return { text, selection: "", line: 1 };
+    const { from, to, head } = view.state.selection.main;
+    const selection = view.state.sliceDoc(from, to);
+    const line = view.state.doc.lineAt(head).number;
+    return { text, selection, line };
   }
   export function focus(): void {
     view?.focus();

@@ -86,11 +86,22 @@ async fn test_connection(id: ConnectionId, state: State<'_, AppState>) -> AppRes
 }
 
 /// The real query path. `database = None` ⇒ connection default; `Some` ⇒ `USE [db]`.
+///
+/// Resolves WHAT to run, then GO-splits it (billz-cwt.5). A non-empty selection
+/// wins (and still GO-splits, since a selection can span a `GO`); otherwise the
+/// batch containing the caret's `line` (1-based, from CodeMirror). The batch
+/// logic lives in `core`; this command only orchestrates: resolve text →
+/// `split_batches` → loop `core::run` → flatten every result set into one `Vec`
+/// (cwt.7 adds tabs). A failing batch aborts the rest (`?`) — SSMS-style
+/// continue-on-error is deferred. Empty input → `[]` (the UI shows "nothing to
+/// run"). Return shape (`Vec<QueryResult>`) is unchanged from the pre-cwt.5 path.
 #[tauri::command]
 async fn run_sql(
     id: ConnectionId,
     database: Option<String>,
-    sql: String,
+    sql: String,               // full document text
+    selection: Option<String>, // Some(text) when a non-empty selection exists
+    line: usize,               // 1-based caret line in `sql` (CodeMirror line number)
     state: State<'_, AppState>,
 ) -> AppResult<Vec<QueryResult>> {
     let cfg = state
@@ -101,7 +112,19 @@ async fn run_sql(
     if let Some(db) = database {
         ctx = ctx.with_database(db);
     }
-    Ok(billz_core::run(&cfg, &state.secrets, &ctx, &sql).await?)
+
+    let batches: Vec<&str> = match selection.as_deref() {
+        Some(sel) if !sel.trim().is_empty() => billz_core::split_batches(sel),
+        _ => billz_core::split_batches(billz_core::batch_at_line(&sql, line)),
+    };
+
+    // Run each batch and flatten every result set into one Vec.
+    let mut out = Vec::new();
+    for batch in batches {
+        let mut results = billz_core::run(&cfg, &state.secrets, &ctx, batch).await?;
+        out.append(&mut results);
+    }
+    Ok(out)
 }
 
 pub fn run() {
@@ -172,5 +195,27 @@ mod tests {
         })
         .unwrap();
         assert_eq!(results.len(), 1);
+    }
+
+    /// Exercises the `run_sql` split+loop against `billz_core` directly (not the
+    /// `#[tauri::command]` wrapper, which needs `State<AppState>`): a GO-split
+    /// script runs as two batches whose result sets flatten into one Vec. Same
+    /// env gate as above — skips cleanly when `MSSQL_*` is unset.
+    #[test]
+    fn split_and_loop_flattens_two_batches() {
+        let Some((cfg, store)) = env_connection() else {
+            eprintln!("skipping split_and_loop_flattens_two_batches: MSSQL_* env not set");
+            return;
+        };
+        let ctx = ExecutionContext::new(cfg.id.clone());
+        let out = tauri::async_runtime::block_on(async {
+            let mut out = Vec::new();
+            for batch in billz_core::split_batches("SELECT 1\nGO\nSELECT 2") {
+                let mut results = billz_core::run(&cfg, &store, &ctx, batch).await.unwrap();
+                out.append(&mut results);
+            }
+            out
+        });
+        assert_eq!(out.len(), 2);
     }
 }
