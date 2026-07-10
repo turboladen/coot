@@ -4,7 +4,8 @@
   import ConnectionForm from "./lib/ConnectionForm.svelte";
   import ConnectionList from "./lib/ConnectionList.svelte";
   import SqlEditor from "./lib/SqlEditor.svelte";
-  import ResultsGrid from "./lib/ResultsGrid.svelte";
+  import ResultTabs from "./lib/ResultTabs.svelte";
+  import { type Message, summarize } from "./lib/resultSummary";
   import { conns, refresh } from "./lib/connections.svelte";
 
   // The form pane: `undefined` = closed, `null` = new, a config = editing it.
@@ -16,41 +17,40 @@
   let sqlText = $state("SELECT TOP 100 * FROM sys.objects;");
 
   // Live run state. `results` is every flattened result set from the last run
-  // (null = never run); `runStatus` is the toolbar line.
+  // (null = never run); `messages` feeds the Messages tab (run summary or the
+  // error string); `activeTab` selects a result set by index or the Messages
+  // pane. Every run reassigns all three (cwt.7).
   let results = $state<QueryResult[] | null>(null);
   let running = $state(false);
-  let runStatus = $state<{ kind: "ok" | "error"; text: string } | null>(null);
-
-  // MVP single-result display: first result set that has columns, else the
-  // first, else nothing. Multi-result-set TABS are cwt.7.
-  const displayResult = $derived(
-    results == null ? null : (results.find((r) => r.columns.length > 0) ?? results[0] ?? null),
-  );
+  let messages = $state<Message[]>([]);
+  let activeTab = $state<number | "messages">(0);
 
   async function run() {
     if (running) return;
     const id = conns.activeId;
     if (!id) {
-      runStatus = { kind: "error", text: "Select a connection first." };
+      // Route the "pick a connection" nudge through the one output surface too,
+      // and clear stale Result tabs from a prior run (implementer note A).
+      results = null;
+      messages = [{ kind: "error", text: "Select a connection first." }];
+      activeTab = "messages";
       return;
     }
     const t = editor?.getRunTarget();
     if (!t) return;
     running = true;
-    runStatus = null;
     try {
       // database:null → the connection's default DB (no DB picker this wave).
-      results = await runSql(id, null, t.text, t.selection || null, t.line);
-      // length 0 = the batch(es) ran but returned no result set (e.g. a DML
-      // INSERT/UPDATE), OR the input was empty. It is NOT an error and must not
-      // imply the query didn't execute (rows-affected display is bead billz-38l).
-      if (results.length === 0) runStatus = { kind: "ok", text: "No result set returned." };
-      else if (results.length > 1) {
-        runStatus = { kind: "ok", text: `${results.length} result sets — showing 1 (tabs: cwt.7).` };
-      }
+      const out = await runSql(id, null, t.text, t.selection || null, t.line);
+      results = out;
+      messages = summarize(out);
+      // 0 result sets (e.g. a DML batch — billz-38l) → land on Messages, which
+      // carries the honest "No result set returned." line; else the first tab.
+      activeTab = out.length > 0 ? 0 : "messages";
     } catch (e) {
       results = null;
-      runStatus = { kind: "error", text: String(e) };
+      messages = [{ kind: "error", text: String(e) }];
+      activeTab = "messages";
     } finally {
       running = false;
     }
@@ -86,19 +86,12 @@
         <div class="editor-pane">
           <SqlEditor bind:this={editor} bind:value={sqlText} onrun={run} />
         </div>
-        <!-- Run button + Cmd/Ctrl-Enter → getRunTarget() → runSql → displayResult. -->
+        <!-- Run button + Cmd/Ctrl-Enter → getRunTarget() → runSql → result tabs. -->
         <div class="toolbar">
           <button onclick={run} disabled={running}>{running ? "Running…" : "Run"}</button>
-          {#if runStatus}<span class="status {runStatus.kind}">{runStatus.text}</span>{/if}
         </div>
         <div class="grid-pane">
-          {#if displayResult}
-            {#key displayResult}
-              <ResultsGrid result={displayResult} />
-            {/key}
-          {:else}
-            <div class="grid-empty">Run a query to see results.</div>
-          {/if}
+          <ResultTabs {results} {messages} bind:activeTab />
         </div>
       </div>
     {/if}
@@ -142,21 +135,5 @@
   .grid-pane {
     min-height: 0;
     overflow: hidden;
-  }
-  .grid-empty {
-    padding: 1rem;
-    color: #6b7280;
-    font-size: 0.9rem;
-  }
-  /* Mirrors ConnectionForm's status styling. */
-  .status {
-    font-size: 0.85rem;
-  }
-  .status.ok {
-    color: #16a34a;
-  }
-  .status.error {
-    color: #dc2626;
-    white-space: pre-wrap;
   }
 </style>
