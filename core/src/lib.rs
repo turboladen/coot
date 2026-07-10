@@ -13,6 +13,7 @@
 pub mod connection;
 pub mod context;
 pub mod error;
+pub mod executor;
 pub mod result;
 pub mod types;
 
@@ -22,5 +23,6 @@ pub use connection::{
 };
 pub use context::ExecutionContext;
 pub use error::{CoreError, Result};
+pub use executor::run;
 pub use result::{CellValue, ColumnMeta, QueryResult};
 pub use types::friendly_type_name;
