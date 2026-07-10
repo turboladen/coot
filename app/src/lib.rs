@@ -5,8 +5,8 @@
 //! only `core`'s own serde types (`ConnectionConfig` / `QueryResult` / …).
 
 use billz_core::{
-    ConnectionConfig, ConnectionId, ConnectionStore, CoreError, ExecutionContext,
-    KeychainSecretStore, QueryResult, SecretStore,
+    CachingSecretStore, ConnectionConfig, ConnectionId, ConnectionStore, CoreError,
+    ExecutionContext, KeychainSecretStore, QueryResult, SecretStore,
 };
 use tauri::{Manager, State};
 
@@ -30,10 +30,13 @@ impl serde::Serialize for AppError {
 type AppResult<T> = Result<T, AppError>;
 
 /// Managed state: the connection-metadata store (holds the `connections.json`
-/// path) and the Keychain secret store. Both `Send + Sync + 'static`.
+/// path) and the secret store. The secret store is the Keychain wrapped in a
+/// session cache, so the password is read from the (prompt-inducing) macOS
+/// Keychain at most once per connection per session — every subsequent query /
+/// tab / `GO` batch reuses the in-memory copy. Both `Send + Sync + 'static`.
 struct AppState {
     connections: ConnectionStore,
-    secrets: KeychainSecretStore,
+    secrets: CachingSecretStore<KeychainSecretStore>,
 }
 
 /// Trivial bridge command: proves the Svelte -> Rust `invoke` path is wired.
@@ -136,7 +139,9 @@ pub fn run() {
             let store = ConnectionStore::new(dir.join("connections.json"));
             app.manage(AppState {
                 connections: store,
-                secrets: KeychainSecretStore,
+                // Keychain reads are cached for the session (read once per
+                // connection, then reused) so a query never re-prompts.
+                secrets: CachingSecretStore::new(KeychainSecretStore),
             });
             Ok(())
         })
