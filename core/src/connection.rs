@@ -161,6 +161,60 @@ impl SecretStore for InMemorySecretStore {
     }
 }
 
+/// A [`SecretStore`] decorator that caches passwords in memory for the process
+/// lifetime, so the prompt-inducing macOS Keychain is read **at most once per
+/// connection per session**. Every subsequent `get_password` (a new query, a new
+/// tab, each `GO` batch) is served from the cache without touching the OS
+/// keychain — no repeated authorization prompts.
+///
+/// Wraps any inner store. `set_password` writes through to the inner store *and*
+/// refreshes the cache (so editing a connection's password takes effect without
+/// a restart); `delete_password` evicts. The plaintext lives only in memory —
+/// consistent with the "secrets never on disk in plaintext" invariant
+/// (`CLAUDE.md`); the connection metadata and the durable secret still live in
+/// the config file and the Keychain respectively.
+pub struct CachingSecretStore<S: SecretStore> {
+    inner: S,
+    cache: Mutex<HashMap<String, String>>,
+}
+
+impl<S: SecretStore> CachingSecretStore<S> {
+    pub fn new(inner: S) -> Self {
+        Self {
+            inner,
+            cache: Mutex::new(HashMap::new()),
+        }
+    }
+}
+
+impl<S: SecretStore> SecretStore for CachingSecretStore<S> {
+    fn set_password(&self, id: &ConnectionId, password: &str) -> Result<()> {
+        self.inner.set_password(id, password)?;
+        self.cache
+            .lock()
+            .unwrap()
+            .insert(id.0.clone(), password.to_string());
+        Ok(())
+    }
+
+    fn get_password(&self, id: &ConnectionId) -> Result<Option<String>> {
+        if let Some(pw) = self.cache.lock().unwrap().get(&id.0) {
+            return Ok(Some(pw.clone())); // cache hit → no Keychain access, no prompt
+        }
+        let fetched = self.inner.get_password(id)?;
+        if let Some(pw) = &fetched {
+            self.cache.lock().unwrap().insert(id.0.clone(), pw.clone());
+        }
+        Ok(fetched)
+    }
+
+    fn delete_password(&self, id: &ConnectionId) -> Result<()> {
+        self.inner.delete_password(id)?;
+        self.cache.lock().unwrap().remove(&id.0);
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -192,6 +246,56 @@ mod tests {
     fn in_memory_delete_of_absent_id_is_ok() {
         let store = InMemorySecretStore::default();
         store.delete_password(&ConnectionId("nope".into())).unwrap();
+    }
+
+    /// A `SecretStore` that counts `get_password` calls — stands in for the
+    /// Keychain to prove `CachingSecretStore` reads it at most once per id.
+    #[derive(Default)]
+    struct CountingStore {
+        inner: InMemorySecretStore,
+        reads: std::sync::atomic::AtomicUsize,
+    }
+    impl SecretStore for CountingStore {
+        fn set_password(&self, id: &ConnectionId, password: &str) -> Result<()> {
+            self.inner.set_password(id, password)
+        }
+        fn get_password(&self, id: &ConnectionId) -> Result<Option<String>> {
+            self.reads
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            self.inner.get_password(id)
+        }
+        fn delete_password(&self, id: &ConnectionId) -> Result<()> {
+            self.inner.delete_password(id)
+        }
+    }
+
+    #[test]
+    fn caching_store_reads_inner_at_most_once_per_id() {
+        use std::sync::atomic::Ordering;
+        let id = ConnectionId("c1".into());
+        let store = CachingSecretStore::new(CountingStore::default());
+        store.set_password(&id, "hunter2").unwrap();
+
+        // Three reads (e.g. three GO batches / three query runs) → the inner
+        // (Keychain) store is hit at most once; the rest are cache hits.
+        for _ in 0..3 {
+            assert_eq!(store.get_password(&id).unwrap(), Some("hunter2".into()));
+        }
+        assert!(store.inner.reads.load(Ordering::Relaxed) <= 1);
+    }
+
+    #[test]
+    fn caching_store_refreshes_on_set_and_evicts_on_delete() {
+        let id = ConnectionId("c1".into());
+        let store = CachingSecretStore::new(InMemorySecretStore::default());
+        store.set_password(&id, "old").unwrap();
+        assert_eq!(store.get_password(&id).unwrap(), Some("old".into()));
+        // A changed password takes effect without a restart (cache refreshed).
+        store.set_password(&id, "new").unwrap();
+        assert_eq!(store.get_password(&id).unwrap(), Some("new".into()));
+        // Delete evicts the cache too.
+        store.delete_password(&id).unwrap();
+        assert_eq!(store.get_password(&id).unwrap(), None);
     }
 
     #[test]
