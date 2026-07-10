@@ -53,5 +53,10 @@ export const deleteConnection = (id: string) => invoke<void>("delete_connection"
 
 export const testConnection = (id: string) => invoke<void>("test_connection", { id });
 
-export const runSql = (id: string, database: string | null, sql: string) =>
-  invoke<QueryResult[]>("run_sql", { id, database, sql });
+export const runSql = (
+  id: string,
+  database: string | null,
+  sql: string,
+  selection: string | null,
+  line: number,
+) => invoke<QueryResult[]>("run_sql", { id, database, sql, selection, line });
