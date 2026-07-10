@@ -9,10 +9,13 @@ enough for me" beats "general-purpose." Do not build for scale, multi-user, or d
 
 ## Read before doing anything
 
+- `bd ready` — what's actionable now. The build order (`PLAN.md` §9) lives as beads epics
+  (`Phase 0…3`) with dependencies, so `bd ready` is the source of truth for _where to start_.
 - `PLAN.md` — architecture, data models, phases, non-goals.
-- `spikes/` (or wherever the two probe binaries live) — **working proof** of the exact
-  `mssql-client` calls the plan relies on. When in doubt about the driver, read/run these, don't
-  guess.
+- The two spike probes (`core/examples/typed_probe.rs` typed, `core/examples/dynamic_dump.rs`
+  untyped dump) — **working proof** of the exact `mssql-client` calls the plan relies on. When in
+  doubt about the driver, read/run them (`cargo run -p billz-core --example <name>`), don't guess.
+  (`billz-ce1.7` ports them into `core`'s env-gated integration tests.)
 
 ## Non-negotiable invariants
 
@@ -33,8 +36,8 @@ enough for me" beats "general-purpose." Do not build for scale, multi-user, or d
 - SQL-auth only. No Entra/AAD/Windows auth.
 - Do **not** build: cross-DB fan-out, ER diagrams, MCP server, tree nodes beyond
   Databases/Tables/Columns/Views. **Omit** unbuilt tree nodes — don't render disabled stubs.
-- If a "nice to have" tempts you and it isn't in the current phase, leave a `// TODO(phaseN):` and
-  move on.
+- If a "nice to have" tempts you and it isn't in the current phase, **file a deferred bead** (or
+  leave a `// TODO(phaseN):` pointing at its id) and move on — don't build it.
 
 ## Tech stack (locked)
 
