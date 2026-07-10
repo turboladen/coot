@@ -10,9 +10,11 @@
   import { toggleComment } from "@codemirror/commands";
 
   let {
-    value = $bindable(""), // two-way document text; source of truth is CM's doc
+    value = "", // INIT-ONLY doc text (per {#key activeId} remount); CM's doc is the
+    // live source of truth. Not $bindable — edits flow OUT via `onchange`, not a bind.
+    onchange, // called on every CM docChange with the new text (App wires it to setActiveContent)
     onrun, // fired by Cmd/Ctrl-Enter while CM holds focus (App wires it to run())
-  }: { value?: string; onrun?: () => void } = $props();
+  }: { value?: string; onchange?: (text: string) => void; onrun?: () => void } = $props();
 
   let host = $state<HTMLDivElement>(); // bind:this on the container div
   let view: EditorView | undefined;
@@ -35,9 +37,10 @@
       "&": { height: "100%", fontSize: "13px" },
       ".cm-scroller": { overflow: "auto", fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" },
     }),
-    // CM's own edits flow out to the bindable `value`.
+    // CM's own edits flow OUT via the onchange callback (one-directional data
+    // flow: module → value init → CM → onchange → module → debounced save).
     EditorView.updateListener.of((u) => {
-      if (u.docChanged) value = u.state.doc.toString();
+      if (u.docChanged) onchange?.(u.state.doc.toString());
     }),
   ];
 
@@ -52,7 +55,12 @@
 
   // Reconcile an EXTERNAL set of `value` (e.g. loading a saved query in Phase 3)
   // back into CM, without echoing CM's own edits. The guard + the `===` no-op
-  // check keep it loop-free.
+  // check keep it loop-free. DORMANT this wave: cwt.8 swaps tabs by a
+  // {#key activeId} remount (fresh CM per tab, so undo history/cursor are per-tab
+  // — note: undo history resets on switch-away-and-back, each remount being a new
+  // CM), never by re-setting `value` on a live instance, so `v === doc` always
+  // holds here and this no-ops. Kept as defensive support for a future
+  // set-without-remount caller (the Phase 3 load-a-query path).
   $effect(() => {
     const v = value;
     if (!view || applyingExternal) return;
