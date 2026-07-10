@@ -69,9 +69,14 @@ fast-moving and single-maintainer).
 
 ## Shell & commands
 
+- **Prefer `just` for all tasks** — the `justfile` at the repo root is the task interface. `just`
+  lists recipes; the common ones: `just dev` (run the app), `just verify` (the full Rust+frontend
+  gate), `just test` / `just lint` / `just fmt`, `just ui-check` / `just ui-test` / `just ui-build`,
+  `just app-build` (signed release), `just setup-signing`, `just probe-typed` / `probe-dynamic`. Add
+  a recipe there rather than reaching for a raw `cargo`/`bun` invocation.
 - I use **fish**. Emit fish-compatible commands (`set -x FOO bar`, not `export FOO=bar`).
-- Frontend: `bun run dev` / `bun run build`; Tauri via `bun run tauri dev`.
-- Rust: `cargo test`, `cargo run -p core --example <probe>` for the DEV-box smoke tests.
+- Under the hood: frontend tooling is **bun** (`app/ui`); Rust is **cargo** (workspace root); the
+  Tauri CLI runs via bun (`bun run tauri …`, wired with `TAURI_APP_PATH=..`).
 
 ## Secrets & git hygiene
 
