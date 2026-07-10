@@ -27,6 +27,12 @@ pub enum CoreError {
     /// by `KeychainSecretStore` so this variant stays backend-agnostic.
     #[error("secret store error: {0}")]
     Secret(String),
+    /// A query or statement failed on the server or in the driver. The driver's
+    /// `mssql_client::Error` is stringified here by the executor — never
+    /// `#[from]` — so the public error surface never names a driver type
+    /// (`PLAN.md` §3, `CLAUDE.md`).
+    #[error("query error: {0}")]
+    Query(String),
 }
 
 #[cfg(test)]
