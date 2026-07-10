@@ -88,7 +88,11 @@ pub fn build_connection_string(cfg: &ConnectionConfig, password: &str) -> String
 /// Password storage, abstracted so unit tests never hit the OS keychain (no
 /// prompts, works headless). Production uses [`KeychainSecretStore`]; tests use
 /// [`InMemorySecretStore`].
-pub trait SecretStore {
+///
+/// `Send + Sync` so `&dyn SecretStore` can be held across an `.await` inside a
+/// Tauri async command (whose future must be `Send`). Both implementors already
+/// satisfy it (unit struct / `Mutex`-guarded map).
+pub trait SecretStore: Send + Sync {
     fn set_password(&self, id: &ConnectionId, password: &str) -> Result<()>;
     /// `Ok(None)` when nothing is stored for `id`.
     fn get_password(&self, id: &ConnectionId) -> Result<Option<String>>;
