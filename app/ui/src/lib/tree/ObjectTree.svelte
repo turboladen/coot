@@ -2,6 +2,7 @@
   import { type DatabaseInfo, listDatabases, refreshSchema } from "../api";
   import { conns } from "../connections.svelte";
   import DatabaseNode from "./DatabaseNode.svelte";
+  import LoadingNote from "./LoadingNote.svelte";
   import { bumpRefresh } from "./refresh.svelte";
 
   // The active connection is the module-level source of truth (no prop plumbing).
@@ -47,7 +48,7 @@
   {#if !activeId}
     <p class="hint">Select a connection to browse its objects.</p>
   {:else if status === "loading"}
-    <p class="hint">Loading…</p>
+    <LoadingNote text="Loading databases…" />
   {:else if status === "error"}
     <p class="hint err">{error}</p>
   {:else if databases.length === 0}

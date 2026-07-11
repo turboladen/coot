@@ -2,6 +2,7 @@
   import { type ColumnInfo, listColumns, type TableInfo } from "../api";
   import { newTabWithContent } from "../tabs.svelte";
   import ColumnLeaf from "./ColumnLeaf.svelte";
+  import LoadingNote from "./LoadingNote.svelte";
   import { selectTop1000 } from "./selectTopQuery";
 
   let { id, db, table }: { id: string; db: string; table: TableInfo } = $props();
@@ -45,7 +46,7 @@
   </button>
   {#if expanded}
     {#if status === "loading"}
-      <div class="note">Loading…</div>
+      <LoadingNote text="Loading columns…" />
     {:else if status === "error"}
       <div class="note err">{error}</div>
     {:else}

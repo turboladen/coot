@@ -1,5 +1,6 @@
 <script lang="ts">
   import { type DatabaseInfo, listTables, listViews, type TableInfo, type ViewInfo } from "../api";
+  import LoadingNote from "./LoadingNote.svelte";
   import TableNode from "./TableNode.svelte";
   import ViewNode from "./ViewNode.svelte";
 
@@ -46,7 +47,7 @@
   </button>
   {#if expanded}
     {#if status === "loading"}
-      <div class="note">Loading…</div>
+      <LoadingNote text="Loading tables & views…" />
     {:else if status === "error"}
       <div class="note err">{error}</div>
     {:else}
