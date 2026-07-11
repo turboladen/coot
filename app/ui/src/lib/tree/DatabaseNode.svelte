@@ -12,7 +12,12 @@
   let tables = $state<TableInfo[]>([]);
   let views = $state<ViewInfo[]>([]);
 
+  // rqb.4: only ONLINE dbs are expandable — enumerating tables/views in a
+  // RESTORING/OFFLINE db errors, so those rows grey out and stay collapsed.
+  const isOnline = $derived(database.stateDesc === "ONLINE");
+
   async function toggle() {
+    if (!isOnline) return; // rqb.4: don't enumerate a RESTORING/OFFLINE db
     expanded = !expanded;
     if (!expanded || status !== "idle") return; // re-expand = memo, no refetch
     // CRITICAL (double-fetch guard): flip out of "idle" SYNCHRONOUSLY, before any
@@ -31,13 +36,13 @@
       status = "error";
     }
   }
-  // TODO(rqb.4): grey + disable-expand when database.stateDesc !== "ONLINE"
 </script>
 
 <li>
-  <button class="row" onclick={toggle}>
-    <span class="twisty">{expanded ? "▼" : "▶"}</span>
+  <button class="row" class:muted={!isOnline} onclick={toggle} disabled={!isOnline}>
+    <span class="twisty">{isOnline ? (expanded ? "▼" : "▶") : ""}</span>
     <span class="label">{database.name}</span>
+    {#if !isOnline}<span class="state">({database.stateDesc})</span>{/if}
   </button>
   {#if expanded}
     {#if status === "loading"}
@@ -82,6 +87,9 @@
   }
   .twisty { color: #888; font-size: 0.7rem; width: 0.8rem; }
   .label { color: #333; font-weight: 500; }
+  /* B1: greys the NAME too — the .label rule above otherwise wins on the muted row. */
+  .row.muted .label { color: #aaa; }
+  .state { color: #aaa; font-size: 0.75rem; }
   ul { list-style: none; margin: 0; padding: 0; }
   .group {
     padding: 0.1rem 0 0.1rem 0.7rem;
