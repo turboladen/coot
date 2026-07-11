@@ -8,11 +8,12 @@
 //! (`PLAN.md` §3, `CLAUDE.md`). Errors are stringified into [`CoreError`];
 //! the driver's `Error` is never `#[from]`.
 
-use mssql_client::{Client, Column, Config, SqlValue};
+use mssql_client::{Client, Column, Config, NamedParam, QueryStream, Ready, SqlValue};
 
 use crate::connection::{ConnectionConfig, SecretStore, build_connection_string};
 use crate::context::ExecutionContext;
 use crate::error::{CoreError, Result};
+use crate::param_bind::{BindValue, ResolvedParam, parse_bind_value, partition, splice_raw_text};
 use crate::result::{CellValue, ColumnMeta, QueryResult};
 use crate::types::friendly_type_name;
 
@@ -32,67 +33,170 @@ pub async fn run(
     ctx: &ExecutionContext,
     sql: &str,
 ) -> Result<Vec<QueryResult>> {
-    // Missing stored password is a *configuration* gap, not a store *failure*
-    // (`get_password` returned `Ok(None)`), so it maps to `Config`, not `Secret`.
-    let password = store.get_password(&cfg.id)?.ok_or_else(|| {
-        CoreError::Config(format!("no stored password for connection {}", cfg.id.0))
-    })?;
-
-    let conn_str = build_connection_string(cfg, &password);
-    let config =
-        Config::from_connection_string(&conn_str).map_err(|e| CoreError::Config(e.to_string()))?;
-    let mut client = Client::connect(config)
-        .await
-        .map_err(|e| CoreError::Config(e.to_string()))?;
-
-    // Apply the database context as a separate statement so the user's SQL stays
-    // unmodified (accurate server error line numbers). `use_statement` does the
-    // identifier bracket-quoting — never hand-splice `USE` here.
-    if let Some(use_stmt) = ctx.use_statement() {
-        client
-            .execute(&use_stmt, &[])
-            .await
-            .map_err(|e| CoreError::Query(e.to_string()))?;
-    }
+    let mut client = connect(cfg, store).await?;
+    apply_use_statement(&mut client, ctx).await?;
 
     let multi = client
         .query_multiple(sql, &[])
         .await
         .map_err(|e| CoreError::Query(e.to_string()))?;
 
+    // Streams borrow `&mut client`; the borrow ends once they're all consumed
+    // below, so the best-effort `close` afterward is safe.
     let streams = multi.into_query_streams();
     let mut out = Vec::with_capacity(streams.len());
     for stream in streams {
-        // Snapshot column metadata before the `for row` loop consumes the stream.
-        let columns: Vec<ColumnMeta> = stream.columns().iter().map(column_meta).collect();
-        let mut rows: Vec<Vec<CellValue>> = Vec::new();
-        for row in stream {
-            let row = row.map_err(|e| CoreError::Query(e.to_string()))?;
-            let cells = (0..row.len())
-                .map(|i| {
-                    // `get_raw` returns `None` on out-of-range *or* decode error
-                    // (`parse_value(..).ok()`); either way we surface `Null`.
-                    // Acceptable for a personal tool: a value that fails to decode
-                    // is indistinguishable from a real SQL NULL here.
-                    row.get_raw(i)
-                        .map(|v| cell_from_sql_value(&v))
-                        .unwrap_or(CellValue::Null)
-                })
-                .collect();
-            rows.push(cells);
-        }
-        // TODO(later): capture PRINT/info messages — bead billz-mfd.
-        // TODO(later): populate rows_affected for DML — bead billz-38l.
-        out.push(QueryResult {
-            columns,
-            rows,
-            rows_affected: None,
-        });
+        out.push(query_stream_to_result(stream)?);
     }
-    // Streams are fully consumed, so the `&mut client` borrow has ended — safe to
-    // close. Best-effort: a close failure doesn't invalidate the results.
     let _ = client.close().await;
     Ok(out)
+}
+
+/// Run `sql` with parameters, applying the [`ExecutionContext`], and return the
+/// result(s). **Core types only** in the signature — `params` is `core`'s own
+/// [`ResolvedParam`] and the return is [`QueryResult`]; no `NamedParam`/`SqlValue`/
+/// `Client` leaks past this boundary (`PLAN.md` §3/§7, `CLAUDE.md`).
+///
+/// Two mechanisms, decided by each param's `sql_type` (`PLAN.md` §5):
+///   - `None` → a **raw-text** fragment, spliced literally into the SQL before
+///     send (injectable BY DESIGN; d28.6 flags it loud).
+///   - `Some(_)` → a **bind** param: its value is parsed to a typed value and sent
+///     via `sp_executesql` (safe, typed) — the driver derives the type declaration
+///     from the value at runtime.
+///
+/// **Single-result-set on the bind path (driver limitation, `PLAN.md` §0 F5):** the
+/// driver has no named multi-result API, so a query that actually has bind params
+/// returns only its first result set. A query with only raw-text params (or none)
+/// still routes through the multi-result path after splicing, preserving
+/// multi-result there. Follow-up: bead for a positional `@cust`→`@p1` remap if
+/// multi-result-with-bind is ever needed.
+pub async fn run_with_params(
+    cfg: &ConnectionConfig,
+    store: &dyn SecretStore,
+    ctx: &ExecutionContext,
+    sql: &str,
+    params: &[ResolvedParam],
+) -> Result<Vec<QueryResult>> {
+    let mut client = connect(cfg, store).await?;
+    apply_use_statement(&mut client, ctx).await?;
+
+    let (raw, bind) = partition(params);
+    let sent_sql = splice_raw_text(sql, &raw);
+
+    // Parse each bind value pre-flight (a bad value is `CoreError::Param`, not a
+    // driver error) and build the driver's `NamedParam`s. `sql_value_from_bind` is
+    // the ONE place `BindValue` meets the driver's `SqlValue`.
+    let mut named = Vec::with_capacity(bind.len());
+    for p in &bind {
+        // `partition` only puts `Some(sql_type)` params in `bind`.
+        let sql_type = p
+            .sql_type
+            .expect("partition guarantees bind params carry Some(sql_type)");
+        let value = parse_bind_value(sql_type, &p.value)?;
+        named.push(NamedParam::new(p.name.clone(), sql_value_from_bind(value)));
+    }
+
+    let out = if named.is_empty() {
+        // No bind params → keep the multi-result path (raw-text-only or no params).
+        let multi = client
+            .query_multiple(&sent_sql, &[])
+            .await
+            .map_err(|e| CoreError::Query(e.to_string()))?;
+        let streams = multi.into_query_streams();
+        let mut out = Vec::with_capacity(streams.len());
+        for stream in streams {
+            out.push(query_stream_to_result(stream)?);
+        }
+        out
+    } else {
+        // Bind params → `sp_executesql`, a single result set (F5).
+        let stream = client
+            .query_named(&sent_sql, &named)
+            .await
+            .map_err(|e| CoreError::Query(e.to_string()))?;
+        vec![query_stream_to_result(stream)?]
+    };
+
+    let _ = client.close().await;
+    Ok(out)
+}
+
+/// Connect per call: resolve the stored password, build the driver `Config`, and
+/// connect. Shared by [`run`] and [`run_with_params`]. A missing stored password
+/// is a *configuration* gap, not a store *failure* (`get_password` returned
+/// `Ok(None)`), so it maps to `Config`, not `Secret`.
+async fn connect(cfg: &ConnectionConfig, store: &dyn SecretStore) -> Result<Client<Ready>> {
+    let password = store.get_password(&cfg.id)?.ok_or_else(|| {
+        CoreError::Config(format!("no stored password for connection {}", cfg.id.0))
+    })?;
+    let conn_str = build_connection_string(cfg, &password);
+    let config =
+        Config::from_connection_string(&conn_str).map_err(|e| CoreError::Config(e.to_string()))?;
+    Client::connect(config)
+        .await
+        .map_err(|e| CoreError::Config(e.to_string()))
+}
+
+/// Apply the database context as a separate statement so the user's SQL stays
+/// unmodified (accurate server error line numbers). `use_statement` does the
+/// identifier bracket-quoting — never hand-splice `USE` here.
+async fn apply_use_statement(client: &mut Client<Ready>, ctx: &ExecutionContext) -> Result<()> {
+    if let Some(use_stmt) = ctx.use_statement() {
+        client
+            .execute(&use_stmt, &[])
+            .await
+            .map_err(|e| CoreError::Query(e.to_string()))?;
+    }
+    Ok(())
+}
+
+/// Drain one driver `QueryStream` into core's `QueryResult`: snapshot the column
+/// metadata, then map every row's `SqlValue`s to `CellValue`s. Shared by the
+/// multi-result path ([`run`], the raw-text-only branch) and the single-stream
+/// bind path. The driver types never escape this fn.
+fn query_stream_to_result(stream: QueryStream<'_>) -> Result<QueryResult> {
+    // Snapshot column metadata before the `for row` loop consumes the stream.
+    let columns: Vec<ColumnMeta> = stream.columns().iter().map(column_meta).collect();
+    let mut rows: Vec<Vec<CellValue>> = Vec::new();
+    for row in stream {
+        let row = row.map_err(|e| CoreError::Query(e.to_string()))?;
+        let cells = (0..row.len())
+            .map(|i| {
+                // `get_raw` returns `None` on out-of-range *or* decode error
+                // (`parse_value(..).ok()`); either way we surface `Null`.
+                // Acceptable for a personal tool: a value that fails to decode is
+                // indistinguishable from a real SQL NULL here.
+                row.get_raw(i)
+                    .map(|v| cell_from_sql_value(&v))
+                    .unwrap_or(CellValue::Null)
+            })
+            .collect();
+        rows.push(cells);
+    }
+    // TODO(later): capture PRINT/info messages — bead billz-mfd.
+    // TODO(later): populate rows_affected for DML — bead billz-38l.
+    Ok(QueryResult {
+        columns,
+        rows,
+        rows_affected: None,
+    })
+}
+
+/// Map core's [`BindValue`] to the driver's `SqlValue` — the 9→9 trivial map and
+/// the ONLY place `BindValue` meets `mssql_client`. Closed match (no wildcard):
+/// `BindValue` is core-owned, so a new variant is a compile error here.
+fn sql_value_from_bind(v: BindValue) -> SqlValue {
+    match v {
+        BindValue::Int(n) => SqlValue::Int(n),
+        BindValue::BigInt(n) => SqlValue::BigInt(n),
+        BindValue::Text(s) => SqlValue::String(s),
+        BindValue::Bool(b) => SqlValue::Bool(b),
+        BindValue::Date(d) => SqlValue::Date(d),
+        BindValue::DateTime(dt) => SqlValue::DateTime(dt),
+        BindValue::Decimal(d) => SqlValue::Decimal(d),
+        BindValue::Uuid(u) => SqlValue::Uuid(u),
+        BindValue::Money(d) => SqlValue::Money(d),
+    }
 }
 
 /// Map a driver `Column` to core's `ColumnMeta`. Private — the driver type never

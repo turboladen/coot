@@ -38,11 +38,14 @@ pub struct SavedQueryId(pub String);
 /// — those strings equal [`crate::friendly_type_name`]'s output, so d28.5 can map a
 /// catalog type name straight to a `SqlType`.
 ///
-// TODO(d28.2): decimal/nvarchar/money need precision/length at bind — the bare
-// SqlType tag truncates (`decimal` → `decimal(18,0)`, `nvarchar` → `nvarchar(1)`),
-// so d28.2 must supply precision/length at bind time, NOT splice the bare tag for
-// those parameterized types. Fixed-width types (int/bigint/bit/date/datetime2/
-// uniqueidentifier) bind straight from the tag.
+// Note (d28.2, resolved): a bare tag carries no precision/length, and that turns
+// out not to matter for the bind path. The driver (`mssql-client` 0.20.2) does NOT
+// build the `sp_executesql` declaration from this tag — it derives it from the
+// bound `SqlValue` variant at runtime: `nvarchar` is auto-sized to the actual
+// string, `decimal(38, scale)` takes the scale from the parsed value, `money` is
+// `money`. So `param_bind`'s only job is producing the right `SqlValue`; no
+// precision/length metadata on `SqlType` is needed. (If a future driver ever
+// required an explicit decl, THAT is where width would re-enter — not here.)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum SqlType {
