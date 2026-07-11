@@ -117,13 +117,6 @@ export function setActiveDatabase(database: string | null): void {
   flushSave();
 }
 
-// The active tab's target database (null = connection default). A function, not
-// an exported `$derived`, for the same cross-module reactivity reason as
-// activeContent(); App re-derives from tabsState where it needs reactivity.
-export function activeDatabase(): string | null {
-  return tabsState.tabs.find((t) => t.id === tabsState.activeId)?.database ?? null;
-}
-
 export function selectTab(id: string): void {
   if (tabsState.activeId === id) return;
   tabsState.activeId = id;

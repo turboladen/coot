@@ -68,9 +68,11 @@ export function deserialize(json: string | null): TabsState | null {
     ) {
       const raw = t as Record<string, unknown>;
       // `database` is read-tolerant: a pre-cwt.9 blob has no key, and a garbled
-      // value shouldn't poison the whole set — anything non-string becomes null
-      // (= connection default), matching the field's "unset" meaning.
-      const database = typeof raw.database === "string" ? raw.database : null;
+      // value shouldn't poison the whole set — anything that isn't a non-empty
+      // string becomes null (= connection default), matching the field's "unset"
+      // meaning. Empty string is normalized too, so a corrupt blob can't produce
+      // a `USE []` (invalid T-SQL) at run time.
+      const database = typeof raw.database === "string" && raw.database !== "" ? raw.database : null;
       tabs.push({ id: raw.id as string, title: raw.title as string, content: raw.content as string, database });
     } else {
       return null; // any malformed tab poisons the blob → reseed default

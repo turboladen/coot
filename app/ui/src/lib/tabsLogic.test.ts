@@ -107,6 +107,14 @@ describe("serialize / deserialize", () => {
     expect(deserialize(bad)?.tabs[0].database).toBe(null);
   });
 
+  test("an empty-string database normalizes to null (no USE [] at run time)", () => {
+    const empty = JSON.stringify({
+      tabs: [{ id: "a", title: "t", content: "SELECT 1", database: "" }],
+      activeId: "a",
+    });
+    expect(deserialize(empty)?.tabs[0].database).toBe(null);
+  });
+
   test("dangling activeId is repaired to the first tab", () => {
     const repaired = deserialize(JSON.stringify({ tabs: [tab("a"), tab("b")], activeId: "gone" }));
     expect(repaired?.activeId).toBe("a");
