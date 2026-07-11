@@ -31,8 +31,10 @@
     }
   }
   // rqb.6: open a new tab pre-seeded with a 3-part SELECT TOP 1000 (not auto-run).
+  // Pass `db` as the tab's target so the picker (cwt.9) shows the table's DB and
+  // any follow-up 2-part query the user types resolves against it.
   function openSelect() {
-    newTabWithContent(selectTop1000(db, table.schema, table.name));
+    newTabWithContent(selectTop1000(db, table.schema, table.name), db);
   }
   // TODO(d28.7): context menu — run saved query scoped to this table
 </script>
