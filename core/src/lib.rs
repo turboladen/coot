@@ -5,10 +5,9 @@
 //! plain, serializable types (`QueryResult` / `ColumnMeta` / `CellValue`). See `PLAN.md` §3.
 //!
 //! Wave-1 modules (`result`/`error`, `types`, `connection`, `context`) land the
-//! foundational, driver-free types. Still to come in later beads:
-//! `executor`/`schema`/`query_store`. The two probes in `examples/`
+//! foundational, driver-free types. The two probes in `examples/`
 //! (`typed_probe`, `dynamic_dump`) are the working proof of the exact
-//! `mssql-client` calls those modules will use.
+//! `mssql-client` calls the driver-touching modules use.
 
 pub mod batch;
 pub mod connection;
@@ -16,6 +15,8 @@ pub mod connection_store;
 pub mod context;
 pub mod error;
 pub mod executor;
+pub mod query;
+pub mod query_store;
 pub mod result;
 pub mod schema;
 pub mod types;
@@ -29,6 +30,8 @@ pub use connection_store::ConnectionStore;
 pub use context::ExecutionContext;
 pub use error::{CoreError, Result};
 pub use executor::run;
+pub use query::{Param, ParamScope, SavedQuery, SavedQueryId, SqlType};
+pub use query_store::QueryStore;
 pub use result::{CellValue, ColumnMeta, QueryResult};
 pub use schema::{
     ColumnInfo, DatabaseInfo, SchemaCache, TableInfo, ViewInfo, list_columns, list_databases,
