@@ -4,8 +4,8 @@
 import { describe, expect, test } from "bun:test";
 import { deriveTitle, deserialize, pickNeighbourId, type QueryTab, serialize, type TabsState } from "./tabsLogic";
 
-function tab(id: string, content = ""): QueryTab {
-  return { id, title: deriveTitle(content), content };
+function tab(id: string, content = "", database: string | null = null): QueryTab {
+  return { id, title: deriveTitle(content), content, database };
 }
 
 describe("deriveTitle", () => {
@@ -80,6 +80,31 @@ describe("serialize / deserialize", () => {
 
   test("a malformed tab poisons the blob → null", () => {
     expect(deserialize(JSON.stringify({ tabs: [{ id: "a" }], activeId: "a" }))).toBe(null);
+  });
+
+  test("round-trips a tab's target database (billz-cwt.9)", () => {
+    const withDb: TabsState = {
+      tabs: [tab("a", "SELECT 1", "ESP_Arnotts_Group_DEV"), tab("b", "SELECT 2", null)],
+      activeId: "a",
+    };
+    expect(deserialize(serialize(withDb))).toEqual(withDb);
+  });
+
+  test("a v1 blob without a database field defaults to null (backward compat)", () => {
+    // Tabs persisted before cwt.9 have no `database` key — must load, not poison.
+    const legacy = JSON.stringify({
+      tabs: [{ id: "a", title: "SELECT 1", content: "SELECT 1" }],
+      activeId: "a",
+    });
+    expect(deserialize(legacy)?.tabs[0].database).toBe(null);
+  });
+
+  test("a non-string, non-null database coerces to null", () => {
+    const bad = JSON.stringify({
+      tabs: [{ id: "a", title: "t", content: "SELECT 1", database: 42 }],
+      activeId: "a",
+    });
+    expect(deserialize(bad)?.tabs[0].database).toBe(null);
   });
 
   test("dangling activeId is repaired to the first tab", () => {
