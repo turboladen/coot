@@ -10,6 +10,7 @@
   import { type Message, summarize } from "./lib/resultSummary";
   import { conns, refresh } from "./lib/connections.svelte";
   import { activeContent, flushSave, restore, setActiveContent, tabsState } from "./lib/tabs.svelte";
+  import { treeRefresh } from "./lib/tree/refresh.svelte";
 
   // The form pane: `undefined` = closed, `null` = new, a config = editing it.
   // `{#key}` on the form remounts it when the target changes so fields re-init.
@@ -108,10 +109,11 @@
 <main>
   <aside>
     <ConnectionList onnew={openNew} onedit={openEdit} />
-    <!-- Tree for the active connection. {#key conns.activeId} remounts it on a
-         connection switch so every node resets to idle and reloads. -->
+    <!-- Tree for the active connection. The key remounts it on a connection
+         switch (every node resets to idle and reloads) and on a Refresh bump
+         (rqb.5 — drops the node-local memos so the invalidated core cache re-queries). -->
     <div class="tree-pane">
-      {#key conns.activeId}
+      {#key `${conns.activeId}:${treeRefresh.nonce}`}
         <ObjectTree />
       {/key}
     </div>

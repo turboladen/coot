@@ -87,3 +87,6 @@ export const listViews = (id: string, db: string) =>
 
 export const listColumns = (id: string, db: string, schema: string, table: string) =>
   invoke<ColumnInfo[]>("list_columns", { id, db, schema, table });
+
+// Refresh (rqb.5): drop the connection's cached schema so the next tree load re-queries sys.*.
+export const refreshSchema = (id: string) => invoke<void>("refresh_schema", { id });
