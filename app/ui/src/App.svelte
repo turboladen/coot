@@ -3,6 +3,7 @@
   import { type ConnectionConfig, type QueryResult, runSql } from "./lib/api";
   import ConnectionForm from "./lib/ConnectionForm.svelte";
   import ConnectionList from "./lib/ConnectionList.svelte";
+  import ObjectTree from "./lib/tree/ObjectTree.svelte";
   import SqlEditor from "./lib/SqlEditor.svelte";
   import TabBar from "./lib/TabBar.svelte";
   import ResultTabs from "./lib/ResultTabs.svelte";
@@ -107,6 +108,13 @@
 <main>
   <aside>
     <ConnectionList onnew={openNew} onedit={openEdit} />
+    <!-- Tree for the active connection. {#key conns.activeId} remounts it on a
+         connection switch so every node resets to idle and reloads. -->
+    <div class="tree-pane">
+      {#key conns.activeId}
+        <ObjectTree />
+      {/key}
+    </div>
   </aside>
   <section>
     {#if editing !== undefined}
@@ -143,9 +151,20 @@
     height: 100vh;
     font-family: system-ui, sans-serif;
   }
+  /* Two-row sidebar: ConnectionList at natural height, the tree scrolling below
+     it. min-height:0 on the tree region lets it shrink so it scrolls internally
+     under a long connection list. */
   aside {
+    display: flex;
+    flex-direction: column;
     border-right: 1px solid #ccc;
-    overflow-y: auto;
+    overflow: hidden;
+  }
+  .tree-pane {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    border-top: 1px solid #ccc;
   }
   /* min-height:0 lets the section's children shrink so they scroll internally. */
   section {

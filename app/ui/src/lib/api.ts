@@ -42,6 +42,19 @@ export type QueryResult = {
   rowsAffected: number | null;
 };
 
+// Object-tree schema types (rqb.2) — mirror core's `schema.rs` serde shapes.
+export type DatabaseInfo = { name: string; databaseId: number; stateDesc: string };
+export type TableInfo = { schema: string; name: string };
+export type ViewInfo = { schema: string; name: string };
+export type ColumnInfo = {
+  name: string;
+  dataType: string;
+  nullable: boolean;
+  isPrimaryKey: boolean;
+  isForeignKey: boolean;
+  ordinal: number;
+};
+
 // The camelCase keys (`cfg`/`password`/`id`/`database`/`sql`) match the Rust
 // command arg names — Tauri marshals JS→Rust args by name.
 export const listConnections = () => invoke<ConnectionConfig[]>("list_connections");
@@ -60,3 +73,17 @@ export const runSql = (
   selection: string | null,
   line: number,
 ) => invoke<QueryResult[]>("run_sql", { id, database, sql, selection, line });
+
+// Object-tree loaders (rqb.2). Keys (`id`/`db`/`schema`/`table`) match the Rust
+// command arg names — Tauri marshals JS→Rust args by name.
+export const listDatabases = (id: string) =>
+  invoke<DatabaseInfo[]>("list_databases", { id });
+
+export const listTables = (id: string, db: string) =>
+  invoke<TableInfo[]>("list_tables", { id, db });
+
+export const listViews = (id: string, db: string) =>
+  invoke<ViewInfo[]>("list_views", { id, db });
+
+export const listColumns = (id: string, db: string, schema: string, table: string) =>
+  invoke<ColumnInfo[]>("list_columns", { id, db, schema, table });
