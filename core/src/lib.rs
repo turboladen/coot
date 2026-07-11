@@ -15,6 +15,7 @@ pub mod connection_store;
 pub mod context;
 pub mod error;
 pub mod executor;
+pub mod param_bind;
 pub mod query;
 pub mod query_store;
 pub mod result;
@@ -29,7 +30,8 @@ pub use connection::{
 pub use connection_store::ConnectionStore;
 pub use context::ExecutionContext;
 pub use error::{CoreError, Result};
-pub use executor::run;
+pub use executor::{run, run_with_params};
+pub use param_bind::{BindValue, ResolvedParam};
 pub use query::{Param, ParamScope, SavedQuery, SavedQueryId, SqlType};
 pub use query_store::QueryStore;
 pub use result::{CellValue, ColumnMeta, QueryResult};

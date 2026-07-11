@@ -23,7 +23,7 @@
 
 use billz_core::{
     CellValue, ConnectionConfig, ConnectionId, ExecutionContext, InMemorySecretStore, QueryResult,
-    SecretStore, build_connection_string, run,
+    ResolvedParam, SecretStore, SqlType, build_connection_string, run, run_with_params,
 };
 
 /// Build a live `(cfg, store)` from `MSSQL_*` env, or `None` when any required
@@ -433,4 +433,174 @@ async fn driver_typed_decode_matrix() {
     decode_ok!(client, "SELECT SYSDATETIMEOFFSET()", DateTime<FixedOffset>);
 
     let _ = client.close().await; // best-effort, mirrors `run`.
+}
+
+// ---------------------------------------------------------------------------
+// d28.2 — parameterized execution (`run_with_params`): typed bind vs raw-text.
+//
+// AC: "Typed params bind via `sp_executesql`; raw-text params splice." These
+// tests prove the MECHANISM end-to-end against the box (skip-clean when
+// `MSSQL_*` unset). The strong discriminator between bind and splice is d2:
+// `WHERE x = @n` with a bind param can ONLY work as a real `sp_executesql`
+// parameter — a client-side splice of an int name would fail "must declare the
+// scalar variable @n".
+// ---------------------------------------------------------------------------
+
+/// Build a bind param (`Some(sql_type)`).
+fn bind(name: &str, sql_type: SqlType, value: &str) -> ResolvedParam {
+    ResolvedParam {
+        name: name.into(),
+        sql_type: Some(sql_type),
+        value: value.into(),
+    }
+}
+
+/// Build a raw-text param (`None` → spliced literally).
+fn raw(name: &str, value: &str) -> ResolvedParam {
+    ResolvedParam {
+        name: name.into(),
+        sql_type: None,
+        value: value.into(),
+    }
+}
+
+/// d1 — typed bind round-trips a spread of types through `sp_executesql`. Each
+/// `SELECT @p AS c` returns the bound value decoded back through the untyped
+/// `run` mapping path, proving the whole parse→SqlValue→bind→decode chain and
+/// that the driver derived a correct type declaration from the value alone.
+#[tokio::test]
+async fn param_typed_bind_round_trips_all_types() {
+    let Some((cfg, store)) = env_connection() else {
+        eprintln!("skipping param_typed_bind_round_trips_all_types: MSSQL_* env not set");
+        return;
+    };
+    let ctx = ExecutionContext::new(cfg.id.clone());
+
+    // (sql_type, input value, expected CellValue) for a single `@p` bind.
+    let cases: Vec<(SqlType, &str, CellValue)> = vec![
+        (SqlType::Int, "12345", CellValue::Int(12345)),
+        (SqlType::BigInt, "9000000000", CellValue::Int(9_000_000_000)),
+        (
+            SqlType::NVarChar,
+            "héllo ☃",
+            CellValue::Text("héllo ☃".into()),
+        ),
+        (
+            SqlType::Decimal,
+            "1234.5678",
+            CellValue::Decimal("1234.5678".into()),
+        ),
+        (SqlType::Money, "12.34", CellValue::Decimal("12.34".into())),
+        (
+            SqlType::Date,
+            "2024-03-17",
+            CellValue::Date("2024-03-17".into()),
+        ),
+        (
+            SqlType::UniqueIdentifier,
+            "6F9619FF-8B86-D011-B42D-00C04FC964FF",
+            CellValue::Uuid("6f9619ff-8b86-d011-b42d-00c04fc964ff".into()),
+        ),
+        (SqlType::Bit, "1", CellValue::Bool(true)),
+    ];
+
+    for (sql_type, value, expected) in cases {
+        let params = [bind("@p", sql_type, value)];
+        let results = run_with_params(&cfg, &store, &ctx, "SELECT @p AS c", &params)
+            .await
+            .unwrap_or_else(|e| panic!("{sql_type:?} bind of {value:?} failed: {e}"));
+        // F5: a bound query returns exactly one result set.
+        assert_eq!(results.len(), 1, "{sql_type:?}");
+        assert_eq!(
+            results[0].rows[0][0], expected,
+            "{sql_type:?} bind of {value:?}"
+        );
+    }
+}
+
+/// d2 — a REAL bind, not a splice. `WHERE x = @n` filters via `sp_executesql`;
+/// a client-side splice of an int-typed `@n` would raise "must declare the
+/// scalar variable @n". Exactly one matching row proves the parameterized RPC.
+#[tokio::test]
+async fn param_bind_filters_via_sp_executesql_not_splice() {
+    let Some((cfg, store)) = env_connection() else {
+        eprintln!("skipping param_bind_filters_via_sp_executesql_not_splice: MSSQL_* env not set");
+        return;
+    };
+    let ctx = ExecutionContext::new(cfg.id.clone());
+
+    let sql = "SELECT x FROM (VALUES (1),(2)) t(x) WHERE x = @n";
+    let params = [bind("@n", SqlType::Int, "2")];
+    let results = run_with_params(&cfg, &store, &ctx, sql, &params)
+        .await
+        .unwrap();
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].rows.len(), 1, "exactly one row matches x = 2");
+    assert_eq!(results[0].rows[0][0], CellValue::Int(2));
+}
+
+/// e — raw-text splice reaches the sent SQL. `ORDER BY @dir` with `@dir` →
+/// `x DESC` sorts descending, so the rows come back 3,2,1. No bind params → the
+/// multi-result path (still one result set here).
+#[tokio::test]
+async fn param_raw_text_splice_orders_rows() {
+    let Some((cfg, store)) = env_connection() else {
+        eprintln!("skipping param_raw_text_splice_orders_rows: MSSQL_* env not set");
+        return;
+    };
+    let ctx = ExecutionContext::new(cfg.id.clone());
+
+    let sql = "SELECT x FROM (VALUES (1),(2),(3)) t(x) ORDER BY @dir";
+    let params = [raw("@dir", "x DESC")];
+    let results = run_with_params(&cfg, &store, &ctx, sql, &params)
+        .await
+        .unwrap();
+    assert_eq!(results.len(), 1);
+    let got: Vec<CellValue> = results[0].rows.iter().map(|r| r[0].clone()).collect();
+    assert_eq!(
+        got,
+        vec![CellValue::Int(3), CellValue::Int(2), CellValue::Int(1)]
+    );
+}
+
+/// f — mixed bind + raw-text in one query. `TOP (@lim)` binds while `ORDER BY
+/// @dir` splices; a bind param is present so this goes through the single-result
+/// bind path. Descending order + a limit of 2 → rows [3, 2].
+#[tokio::test]
+async fn param_mixed_bind_and_raw_text() {
+    let Some((cfg, store)) = env_connection() else {
+        eprintln!("skipping param_mixed_bind_and_raw_text: MSSQL_* env not set");
+        return;
+    };
+    let ctx = ExecutionContext::new(cfg.id.clone());
+
+    let sql = "SELECT TOP (@lim) x FROM (VALUES (1),(2),(3)) t(x) ORDER BY @dir";
+    let params = [bind("@lim", SqlType::Int, "2"), raw("@dir", "x DESC")];
+    let results = run_with_params(&cfg, &store, &ctx, sql, &params)
+        .await
+        .unwrap();
+    assert_eq!(results.len(), 1);
+    let got: Vec<CellValue> = results[0].rows.iter().map(|r| r[0].clone()).collect();
+    assert_eq!(got, vec![CellValue::Int(3), CellValue::Int(2)]);
+}
+
+/// h — the `ExecutionContext` `USE` is applied BEFORE the parameterized call.
+/// Pin the database to `tempdb` and select `DB_NAME()` alongside a bind param;
+/// the reported database must be `tempdb`.
+#[tokio::test]
+async fn param_run_applies_use_before_parameterized_call() {
+    let Some((cfg, store)) = env_connection() else {
+        eprintln!("skipping param_run_applies_use_before_parameterized_call: MSSQL_* env not set");
+        return;
+    };
+    let ctx = ExecutionContext::new(cfg.id.clone()).with_database("tempdb");
+
+    let sql = "SELECT DB_NAME() AS db, @x AS x";
+    let params = [bind("@x", SqlType::Int, "1")];
+    let results = run_with_params(&cfg, &store, &ctx, sql, &params)
+        .await
+        .unwrap();
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].rows[0][0], CellValue::Text("tempdb".into()));
+    assert_eq!(results[0].rows[0][1], CellValue::Int(1));
 }

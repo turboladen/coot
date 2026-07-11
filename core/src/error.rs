@@ -38,6 +38,13 @@ pub enum CoreError {
     /// variant stays backend-agnostic (no `#[from]`), matching `Secret`/`Query`.
     #[error("connection store error: {0}")]
     Store(String),
+    /// A bind param's value could not be parsed into its declared type — a
+    /// **pre-flight** user error (it happens in `parse_bind_value` before any
+    /// server contact), distinct from a driver/`Query` failure. Note: Money
+    /// range/scale errors are NOT caught here; they surface as `Query` at send
+    /// time (`param_bind` / `PLAN.md` §5).
+    #[error("parameter error: {0}")]
+    Param(String),
 }
 
 #[cfg(test)]
