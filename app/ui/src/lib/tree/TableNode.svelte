@@ -1,6 +1,8 @@
 <script lang="ts">
   import { type ColumnInfo, listColumns, type TableInfo } from "../api";
+  import { newTabWithContent } from "../tabs.svelte";
   import ColumnLeaf from "./ColumnLeaf.svelte";
+  import { selectTop1000 } from "./selectTopQuery";
 
   let { id, db, table }: { id: string; db: string; table: TableInfo } = $props();
 
@@ -27,12 +29,17 @@
       status = "error";
     }
   }
-  // TODO(rqb.6): ondblclick → open a new editor tab with SELECT TOP 1000 FROM [schema].[table]
+  // rqb.6: open a new tab pre-seeded with a 3-part SELECT TOP 1000 (not auto-run).
+  function openSelect() {
+    newTabWithContent(selectTop1000(db, table.schema, table.name));
+  }
   // TODO(d28.7): context menu — run saved query scoped to this table
 </script>
 
 <li>
-  <button class="row" onclick={toggle}>
+  <!-- Double-click also fires two onclicks (toggle is idempotent — expanded
+       returns to its prior state), harmless for a single-user tool. -->
+  <button class="row" onclick={toggle} ondblclick={openSelect}>
     <span class="twisty">{expanded ? "▼" : "▶"}</span>
     <span class="label">{table.schema}.{table.name}</span>
   </button>

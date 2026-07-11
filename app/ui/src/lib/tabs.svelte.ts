@@ -96,6 +96,15 @@ export function newTab(): void {
   flushSave();
 }
 
+// Open a NEW tab pre-seeded with `content` and make it active. Used by the tree's
+// double-click-table action (rqb.6). Structural op → flushSave (no debounce).
+export function newTabWithContent(content: string): void {
+  const tab = newQueryTab(content);
+  tabsState.tabs.push(tab);
+  tabsState.activeId = tab.id;
+  flushSave();
+}
+
 export function selectTab(id: string): void {
   if (tabsState.activeId === id) return;
   tabsState.activeId = id;

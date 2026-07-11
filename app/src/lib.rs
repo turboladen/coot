@@ -196,6 +196,14 @@ async fn list_columns(
         .await?)
 }
 
+/// Refresh (rqb.5): drop the active connection's cached schema so the next
+/// tree load re-queries sys.* (I do DDL on DEV and want new objects at once).
+#[tauri::command]
+async fn refresh_schema(id: ConnectionId, state: State<'_, AppState>) -> AppResult<()> {
+    state.schema.invalidate_connection(&id);
+    Ok(())
+}
+
 pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
@@ -222,7 +230,8 @@ pub fn run() {
             list_databases,
             list_tables,
             list_views,
-            list_columns
+            list_columns,
+            refresh_schema
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

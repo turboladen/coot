@@ -1,7 +1,8 @@
 <script lang="ts">
-  import { type DatabaseInfo, listDatabases } from "../api";
+  import { type DatabaseInfo, listDatabases, refreshSchema } from "../api";
   import { conns } from "../connections.svelte";
   import DatabaseNode from "./DatabaseNode.svelte";
+  import { bumpRefresh } from "./refresh.svelte";
 
   // The active connection is the module-level source of truth (no prop plumbing).
   // App.svelte wraps this in {#key conns.activeId} so switching connections
@@ -27,13 +28,20 @@
 
   // Root loads eagerly on mount (a connection is active). Node children stay lazy.
   if (activeId) load();
+
+  async function refresh() {
+    if (!activeId) return;
+    // Invalidate core FIRST, then remount so the re-fetch misses the cache and
+    // re-queries SQL (order matters — bump before invalidate would re-fill from stale).
+    await refreshSchema(activeId);
+    bumpRefresh();
+  }
 </script>
 
 <div class="tree">
   <div class="header">
     <h2>Objects</h2>
-    <!-- TODO(rqb.5): Refresh — invalidate core cache + remount tree (bump a nonce
-         in the {#key} so the whole ObjectTree remounts past the node-local memo). -->
+    <button class="refresh" onclick={refresh} disabled={!activeId} title="Refresh">↻</button>
   </div>
 
   {#if !activeId}
@@ -57,6 +65,16 @@
   .tree { padding: 0.5rem; }
   .header { display: flex; align-items: center; justify-content: space-between; }
   h2 { font-size: 1rem; margin: 0.5rem 0; }
+  .refresh {
+    background: none;
+    border: none;
+    font: inherit;
+    font-size: 1rem;
+    color: #555;
+    cursor: pointer;
+    padding: 0 0.3rem;
+  }
+  .refresh:disabled { color: #ccc; cursor: default; }
   .hint { color: #888; font-size: 0.9rem; }
   .err { color: #b91c1c; }
   ul { list-style: none; margin: 0; padding: 0; }
