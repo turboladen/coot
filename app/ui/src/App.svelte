@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { type ConnectionConfig, type QueryResult, runSql } from "./lib/api";
+  import { type ConnectionConfig, type DatabaseInfo, listDatabases, type QueryResult, runSql } from "./lib/api";
   import ConnectionForm from "./lib/ConnectionForm.svelte";
   import ConnectionList from "./lib/ConnectionList.svelte";
   import ObjectTree from "./lib/tree/ObjectTree.svelte";
@@ -11,7 +11,7 @@
   import { type Message, summarize } from "./lib/resultSummary";
   import { conns, refresh } from "./lib/connections.svelte";
   import { refresh as refreshLibrary } from "./lib/savedQueries.svelte";
-  import { activeContent, flushSave, restore, setActiveContent, tabsState } from "./lib/tabs.svelte";
+  import { activeContent, flushSave, restore, setActiveContent, setActiveDatabase, tabsState } from "./lib/tabs.svelte";
   import { treeRefresh } from "./lib/tree/refresh.svelte";
 
   // Sidebar lower region toggles between the object tree and the saved-query
@@ -36,6 +36,46 @@
   let messages = $state<Message[]>([]);
   let activeTab = $state<number | "messages">(0);
 
+  // Databases for the per-tab DB picker (cwt.9). Loaded for the active connection
+  // and refreshed alongside the tree (treeRefresh.nonce), swallowing errors like
+  // the tree does. Reusing list_databases — no new backend.
+  let databases = $state<DatabaseInfo[]>([]);
+  $effect(() => {
+    const id = conns.activeId;
+    treeRefresh.nonce; // track: a schema Refresh also repopulates the picker
+    if (!id) {
+      databases = [];
+      return;
+    }
+    // Guard against an out-of-order resolve: on a rapid connection switch a
+    // slower prior fetch must not overwrite the newer connection's list. The
+    // cleanup runs before the next effect run (or on unmount) and drops the
+    // stale response.
+    let cancelled = false;
+    listDatabases(id)
+      .then((dbs) => !cancelled && (databases = dbs))
+      .catch(() => !cancelled && (databases = []));
+    return () => {
+      cancelled = true;
+    };
+  });
+
+  // The active tab's stored target DB (null = connection default). Derived so the
+  // picker, which lives outside the per-tab {#key} block, tracks tab switches + edits.
+  const activeDb = $derived(
+    tabsState.tabs.find((t) => t.id === tabsState.activeId)?.database ?? null,
+  );
+
+  // The stored DB validated against the CURRENT connection's databases. If it
+  // isn't in the list (e.g. after switching to a connection that lacks it, or
+  // before the list has loaded), it resolves to null so the picker's displayed
+  // selection and run()'s target ALWAYS agree on the connection default — never a
+  // silent USE [db] against the wrong server. The stored value is left untouched,
+  // so returning to its own connection restores the selection.
+  const effectiveDb = $derived(
+    activeDb !== null && databases.some((d) => d.name === activeDb) ? activeDb : null,
+  );
+
   async function run() {
     if (running) return;
     const id = conns.activeId;
@@ -51,8 +91,10 @@
     if (!t) return;
     running = true;
     try {
-      // database:null → the connection's default DB (no DB picker this wave).
-      const out = await runSql(id, null, t.text, t.selection || null, t.line);
+      // Per-tab target DB (cwt.9): the executor issues USE [db] before the batch;
+      // null ⇒ the connection's default DB. `effectiveDb` (not the raw stored
+      // value) so we never USE a DB absent from the active connection.
+      const out = await runSql(id, effectiveDb, t.text, t.selection || null, t.line);
       results = out;
       messages = summarize(out);
       // 0 result sets (e.g. a DML batch — billz-38l) → land on Messages, which
@@ -73,6 +115,8 @@
   // persisted — switching or relaunching starts the pane empty.
   $effect(() => {
     tabsState.activeId; // track: re-run whenever the active tab changes
+    activeDb; // and whenever the picker retargets the DB — else the grid would
+    // show the prior DB's rows next to a changed picker (the same mismatch).
     results = null;
     messages = [];
     activeTab = 0;
@@ -155,8 +199,24 @@
             <SqlEditor bind:this={editor} value={activeContent()} onchange={setActiveContent} onrun={run} />
           {/key}
         </div>
-        <!-- Run button + Cmd/Ctrl-Enter → getRunTarget() → runSql → result tabs. -->
+        <!-- DB picker + Run button. Cmd/Ctrl-Enter → getRunTarget() → runSql →
+             result tabs. The picker sets the active tab's target DB (cwt.9);
+             its value feeds runSql, where the executor issues USE [db]. -->
         <div class="toolbar">
+          <select
+            class="db-picker"
+            title="Target database — the runner issues USE [db] before your batch"
+            value={effectiveDb ?? ""}
+            disabled={!conns.activeId}
+            onchange={(e) => setActiveDatabase(e.currentTarget.value || null)}
+          >
+            <option value="">(default database)</option>
+            {#each databases as db (db.databaseId)}
+              <option value={db.name} disabled={db.stateDesc !== "ONLINE"}>
+                {db.name}{db.stateDesc !== "ONLINE" ? ` (${db.stateDesc.toLowerCase()})` : ""}
+              </option>
+            {/each}
+          </select>
           <button onclick={run} disabled={running}>{running ? "Running…" : "Run"}</button>
         </div>
         <div class="grid-pane">
@@ -230,6 +290,13 @@
     padding: 0.4rem 0.6rem;
     border-bottom: 1px solid #ccc;
   }
+  .db-picker {
+    font: inherit;
+    font-size: 0.85rem;
+    max-width: 16rem;
+    padding: 0.15rem 0.3rem;
+  }
+  .db-picker:disabled { color: #ccc; }
   .grid-pane {
     min-height: 0;
     overflow: hidden;

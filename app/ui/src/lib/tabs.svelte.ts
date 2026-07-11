@@ -71,8 +71,8 @@ export function flushSave(): void {
 }
 
 // --- Helpers -----------------------------------------------------------------
-function newQueryTab(content: string): QueryTab {
-  return { id: crypto.randomUUID(), title: deriveTitle(content), content };
+function newQueryTab(content: string, database: string | null = null): QueryTab {
+  return { id: crypto.randomUUID(), title: deriveTitle(content), content, database };
 }
 
 function seedDefault(): void {
@@ -96,12 +96,24 @@ export function newTab(): void {
   flushSave();
 }
 
-// Open a NEW tab pre-seeded with `content` and make it active. Used by the tree's
-// double-click-table action (rqb.6). Structural op → flushSave (no debounce).
-export function newTabWithContent(content: string): void {
-  const tab = newQueryTab(content);
+// Open a NEW tab pre-seeded with `content` (and optionally a target `database`)
+// and make it active. Used by the tree's double-click-table action (rqb.6),
+// which passes the table's DB so the new tab's picker reflects it (cwt.9).
+// Structural op → flushSave (no debounce).
+export function newTabWithContent(content: string, database: string | null = null): void {
+  const tab = newQueryTab(content, database);
   tabsState.tabs.push(tab);
   tabsState.activeId = tab.id;
+  flushSave();
+}
+
+// Set the active tab's target database (cwt.9). null = connection default. A
+// deliberate structural choice → flushSave immediately (like select/new/close),
+// so a quit right after picking a DB never loses it.
+export function setActiveDatabase(database: string | null): void {
+  const tab = tabsState.tabs.find((t) => t.id === tabsState.activeId);
+  if (!tab) return;
+  tab.database = database;
   flushSave();
 }
 

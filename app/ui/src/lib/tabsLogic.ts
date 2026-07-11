@@ -4,7 +4,10 @@
 // live `$state` and delegates here. Mirrors the repo's renderCell.ts/resultSummary.ts
 // pure-helper pattern.
 
-export type QueryTab = { id: string; title: string; content: string };
+// `database`: the tab's target DB for the runner (billz-cwt.9). null = the
+// connection's default DB. Each tab carries its own, so one tab can sit on
+// ESP_Arnotts_Group_DEV while another targets ESP_Suntory_DEV (PLAN §4/§5).
+export type QueryTab = { id: string; title: string; content: string; database: string | null };
 
 export type TabsState = { tabs: QueryTab[]; activeId: string };
 
@@ -63,8 +66,14 @@ export function deserialize(json: string | null): TabsState | null {
       && typeof (t as Record<string, unknown>).title === "string"
       && typeof (t as Record<string, unknown>).content === "string"
     ) {
-      const tab = t as { id: string; title: string; content: string };
-      tabs.push({ id: tab.id, title: tab.title, content: tab.content });
+      const raw = t as Record<string, unknown>;
+      // `database` is read-tolerant: a pre-cwt.9 blob has no key, and a garbled
+      // value shouldn't poison the whole set — anything that isn't a non-empty
+      // string becomes null (= connection default), matching the field's "unset"
+      // meaning. Empty string is normalized too, so a corrupt blob can't produce
+      // a `USE []` (invalid T-SQL) at run time.
+      const database = typeof raw.database === "string" && raw.database !== "" ? raw.database : null;
+      tabs.push({ id: raw.id as string, title: raw.title as string, content: raw.content as string, database });
     } else {
       return null; // any malformed tab poisons the blob → reseed default
     }
