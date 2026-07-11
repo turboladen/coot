@@ -4,13 +4,19 @@
   import ConnectionForm from "./lib/ConnectionForm.svelte";
   import ConnectionList from "./lib/ConnectionList.svelte";
   import ObjectTree from "./lib/tree/ObjectTree.svelte";
+  import SavedQueryLibrary from "./lib/SavedQueryLibrary.svelte";
   import SqlEditor from "./lib/SqlEditor.svelte";
   import TabBar from "./lib/TabBar.svelte";
   import ResultTabs from "./lib/ResultTabs.svelte";
   import { type Message, summarize } from "./lib/resultSummary";
   import { conns, refresh } from "./lib/connections.svelte";
+  import { refresh as refreshLibrary } from "./lib/savedQueries.svelte";
   import { activeContent, flushSave, restore, setActiveContent, tabsState } from "./lib/tabs.svelte";
   import { treeRefresh } from "./lib/tree/refresh.svelte";
+
+  // Sidebar lower region toggles between the object tree and the saved-query
+  // library (d28.6) — the library gets its own full-height home per PLAN §5.
+  let sidebarMode = $state<"objects" | "library">("objects");
 
   // The form pane: `undefined` = closed, `null` = new, a config = editing it.
   // `{#key}` on the form remounts it when the target changes so fields re-init.
@@ -77,6 +83,7 @@
     restore();
     // Falls back silently outside a Tauri webview (plain `vite` in a browser).
     refresh().catch(() => {});
+    refreshLibrary().catch(() => {});
     // Flush any pending debounced save on app quit (Cmd-Q). Tauri's WKWebView
     // doesn't reliably deliver `beforeunload` at termination, so hook the window
     // close event instead; the localStorage write is synchronous. try/catch so
@@ -109,13 +116,27 @@
 <main>
   <aside>
     <ConnectionList onnew={openNew} onedit={openEdit} />
-    <!-- Tree for the active connection. The key remounts it on a connection
-         switch (every node resets to idle and reloads) and on a Refresh bump
-         (rqb.5 — drops the node-local memos so the invalidated core cache re-queries). -->
-    <div class="tree-pane">
-      {#key `${conns.activeId}:${treeRefresh.nonce}`}
-        <ObjectTree />
-      {/key}
+    <!-- Segmented toggle: the lower region shows the object tree OR the saved-query
+         library (d28.6). Objects need a connection; the library is independent. -->
+    <div class="mode-toggle">
+      <button class:active={sidebarMode === "objects"} onclick={() => (sidebarMode = "objects")}>
+        Objects
+      </button>
+      <button class:active={sidebarMode === "library"} onclick={() => (sidebarMode = "library")}>
+        Library
+      </button>
+    </div>
+    <div class="lower-pane">
+      {#if sidebarMode === "objects"}
+        <!-- Tree for the active connection. The key remounts it on a connection
+             switch (every node resets to idle and reloads) and on a Refresh bump
+             (rqb.5 — drops the node-local memos so the invalidated core cache re-queries). -->
+        {#key `${conns.activeId}:${treeRefresh.nonce}`}
+          <ObjectTree />
+        {/key}
+      {:else}
+        <SavedQueryLibrary />
+      {/if}
     </div>
   </aside>
   <section>
@@ -162,7 +183,24 @@
     border-right: 1px solid #ccc;
     overflow: hidden;
   }
-  .tree-pane {
+  /* Segmented [Objects | Library] toggle between the connection list and the
+     scrolling lower region. */
+  .mode-toggle {
+    display: flex;
+    gap: 0.25rem;
+    padding: 0.3rem 0.5rem;
+    border-top: 1px solid #ccc;
+  }
+  .mode-toggle button {
+    flex: 1;
+    font-size: 0.8rem;
+    cursor: pointer;
+  }
+  .mode-toggle button.active {
+    font-weight: 600;
+    border-color: #3b82f6;
+  }
+  .lower-pane {
     flex: 1;
     min-height: 0;
     overflow: auto;

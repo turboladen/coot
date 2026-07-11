@@ -55,6 +55,37 @@ export type ColumnInfo = {
   ordinal: number;
 };
 
+// Saved-query library types (d28.6) — mirror core's `query.rs` serde shapes.
+// The lowercase SqlType tags equal `friendly_type_name` output (query.rs SqlType
+// serde) so d28.5 can map a catalog type straight to one.
+export type SqlType =
+  | "int"
+  | "bigint"
+  | "nvarchar"
+  | "bit"
+  | "date"
+  | "datetime2"
+  | "decimal"
+  | "uniqueidentifier"
+  | "money";
+
+export type ParamScope = "global" | "session" | "local";
+
+export type Param = {
+  name: string;
+  sqlType: SqlType | null; // null → raw-text fragment (unsafe); set → bind
+  lastValue: string | null;
+  scope: ParamScope;
+};
+
+export type SavedQuery = {
+  id: string;
+  name: string;
+  sql: string;
+  targetDatabase: string | null;
+  params: Param[];
+};
+
 // The camelCase keys (`cfg`/`password`/`id`/`database`/`sql`) match the Rust
 // command arg names — Tauri marshals JS→Rust args by name.
 export const listConnections = () => invoke<ConnectionConfig[]>("list_connections");
@@ -90,3 +121,11 @@ export const listColumns = (id: string, db: string, schema: string, table: strin
 
 // Refresh (rqb.5): drop the connection's cached schema so the next tree load re-queries sys.*.
 export const refreshSchema = (id: string) => invoke<void>("refresh_schema", { id });
+
+// Saved-query library (d28.6). Keys (`query`/`id`) match the Rust command arg
+// names — Tauri marshals JS→Rust args by name.
+export const listQueries = () => invoke<SavedQuery[]>("list_queries");
+
+export const saveQuery = (query: SavedQuery) => invoke<void>("save_query", { query });
+
+export const deleteQuery = (id: string) => invoke<void>("delete_query", { id });
