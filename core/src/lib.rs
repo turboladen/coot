@@ -17,6 +17,7 @@ pub mod context;
 pub mod error;
 pub mod executor;
 pub mod result;
+pub mod schema;
 pub mod types;
 
 pub use batch::{batch_at_line, split_batches};
@@ -29,4 +30,8 @@ pub use context::ExecutionContext;
 pub use error::{CoreError, Result};
 pub use executor::run;
 pub use result::{CellValue, ColumnMeta, QueryResult};
+pub use schema::{
+    ColumnInfo, DatabaseInfo, SchemaCache, TableInfo, ViewInfo, list_columns, list_databases,
+    list_tables, list_views,
+};
 pub use types::friendly_type_name;
