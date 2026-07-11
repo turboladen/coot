@@ -5,8 +5,9 @@
 //! only `core`'s own serde types (`ConnectionConfig` / `QueryResult` / …).
 
 use billz_core::{
-    CachingSecretStore, ConnectionConfig, ConnectionId, ConnectionStore, CoreError,
-    ExecutionContext, KeychainSecretStore, QueryResult, SecretStore,
+    CachingSecretStore, ColumnInfo, ConnectionConfig, ConnectionId, ConnectionStore, CoreError,
+    DatabaseInfo, ExecutionContext, KeychainSecretStore, QueryResult, SchemaCache, SecretStore,
+    TableInfo, ViewInfo,
 };
 use tauri::{Manager, State};
 
@@ -37,6 +38,7 @@ type AppResult<T> = Result<T, AppError>;
 struct AppState {
     connections: ConnectionStore,
     secrets: CachingSecretStore<KeychainSecretStore>,
+    schema: SchemaCache, // in-memory introspection cache (rqb.2)
 }
 
 /// Trivial bridge command: proves the Svelte -> Rust `invoke` path is wired.
@@ -130,6 +132,70 @@ async fn run_sql(
     Ok(out)
 }
 
+/// Object-tree data (rqb.2). The four schema commands mirror `test_connection`'s
+/// idiom: resolve `cfg` by id (`?` → `AppError::Core`), then delegate to the
+/// managed [`SchemaCache`], which dedups + caches per key. Returns are all
+/// `core`-owned serde types — no `mssql_client` type crosses the boundary.
+///
+/// Arg names (`id`/`db`/`schema`/`table`) are load-bearing: Tauri marshals
+/// JS→Rust args by name, so `api.ts`'s `invoke` keys must match exactly. These
+/// use `db` (terser) where `run_sql` uses `database`.
+#[tauri::command]
+async fn list_databases(
+    id: ConnectionId,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<DatabaseInfo>> {
+    let cfg = state
+        .connections
+        .get(&id)?
+        .ok_or_else(|| CoreError::Config(format!("no connection {}", id.0)))?;
+    Ok(state.schema.databases(&cfg, &state.secrets).await?)
+}
+
+#[tauri::command]
+async fn list_tables(
+    id: ConnectionId,
+    db: String,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<TableInfo>> {
+    let cfg = state
+        .connections
+        .get(&id)?
+        .ok_or_else(|| CoreError::Config(format!("no connection {}", id.0)))?;
+    Ok(state.schema.tables(&cfg, &state.secrets, &db).await?)
+}
+
+#[tauri::command]
+async fn list_views(
+    id: ConnectionId,
+    db: String,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<ViewInfo>> {
+    let cfg = state
+        .connections
+        .get(&id)?
+        .ok_or_else(|| CoreError::Config(format!("no connection {}", id.0)))?;
+    Ok(state.schema.views(&cfg, &state.secrets, &db).await?)
+}
+
+#[tauri::command]
+async fn list_columns(
+    id: ConnectionId,
+    db: String,
+    schema: String,
+    table: String,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<ColumnInfo>> {
+    let cfg = state
+        .connections
+        .get(&id)?
+        .ok_or_else(|| CoreError::Config(format!("no connection {}", id.0)))?;
+    Ok(state
+        .schema
+        .columns(&cfg, &state.secrets, &db, &schema, &table)
+        .await?)
+}
+
 pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
@@ -142,6 +208,7 @@ pub fn run() {
                 // Keychain reads are cached for the session (read once per
                 // connection, then reused) so a query never re-prompts.
                 secrets: CachingSecretStore::new(KeychainSecretStore),
+                schema: SchemaCache::new(),
             });
             Ok(())
         })
@@ -151,7 +218,11 @@ pub fn run() {
             save_connection,
             delete_connection,
             test_connection,
-            run_sql
+            run_sql,
+            list_databases,
+            list_tables,
+            list_views,
+            list_columns
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
