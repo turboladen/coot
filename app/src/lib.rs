@@ -6,8 +6,8 @@
 
 use billz_core::{
     CachingSecretStore, ColumnInfo, ConnectionConfig, ConnectionId, ConnectionStore, CoreError,
-    DatabaseInfo, ExecutionContext, KeychainSecretStore, QueryResult, SchemaCache, SecretStore,
-    TableInfo, ViewInfo,
+    DatabaseInfo, ExecutionContext, KeychainSecretStore, QueryResult, QueryStore, SavedQuery,
+    SavedQueryId, SchemaCache, SecretStore, TableInfo, ViewInfo,
 };
 use tauri::{Manager, State};
 
@@ -39,6 +39,7 @@ struct AppState {
     connections: ConnectionStore,
     secrets: CachingSecretStore<KeychainSecretStore>,
     schema: SchemaCache, // in-memory introspection cache (rqb.2)
+    queries: QueryStore, // saved-query library (d28.6) — saved_queries.json
 }
 
 /// Trivial bridge command: proves the Svelte -> Rust `invoke` path is wired.
@@ -204,6 +205,31 @@ async fn refresh_schema(id: ConnectionId, state: State<'_, AppState>) -> AppResu
     Ok(())
 }
 
+/// Saved-query library (d28.6). Three thin passthroughs over the managed
+/// [`QueryStore`], mirroring the connection commands: each bottoms out in
+/// `CoreError` via `?` (no new `AppError` variant), and returns `core`-owned
+/// serde types only. The library is connection-independent — a `SavedQuery` has
+/// no connection id.
+#[tauri::command]
+async fn list_queries(state: State<'_, AppState>) -> AppResult<Vec<SavedQuery>> {
+    Ok(state.queries.list()?)
+}
+
+/// Insert-or-replace by `query.id`. The UI mints the id (like `ConnectionForm`),
+/// builds the whole `SavedQuery`, and passes it here — so promote AND future
+/// rename/edit are one path. Mirror of `save_connection`.
+#[tauri::command]
+async fn save_query(query: SavedQuery, state: State<'_, AppState>) -> AppResult<()> {
+    state.queries.upsert(&query)?;
+    Ok(())
+}
+
+#[tauri::command]
+async fn delete_query(id: SavedQueryId, state: State<'_, AppState>) -> AppResult<()> {
+    state.queries.delete(&id)?; // idempotent in the store
+    Ok(())
+}
+
 pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
@@ -217,6 +243,7 @@ pub fn run() {
                 // connection, then reused) so a query never re-prompts.
                 secrets: CachingSecretStore::new(KeychainSecretStore),
                 schema: SchemaCache::new(),
+                queries: QueryStore::new(dir.join("saved_queries.json")),
             });
             Ok(())
         })
@@ -231,7 +258,10 @@ pub fn run() {
             list_tables,
             list_views,
             list_columns,
-            refresh_schema
+            refresh_schema,
+            list_queries,
+            save_query,
+            delete_query
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
