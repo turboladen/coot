@@ -10,7 +10,7 @@
   import TabBar from "./lib/TabBar.svelte";
   import ResultTabs from "./lib/ResultTabs.svelte";
   import { type Message, summarize } from "./lib/resultSummary";
-  import { deriveParams, nextParamValues, routeWrites, toResolvedParams, valueSource } from "./lib/paramBarLogic";
+  import { deriveParams, nextParamValues, persistDeclared, toResolvedParams, valueSource } from "./lib/paramBarLogic";
   import { sessionParams, setSessionParams } from "./lib/sessionParams.svelte";
   import { globalParams, setGlobalParams } from "./lib/globalParams.svelte";
   import { conns, refresh } from "./lib/connections.svelte";
@@ -155,9 +155,13 @@
       // the plain run_sql path (selection/GO-splitting).
       let out: QueryResult[];
       if (curParams.length > 0 && curSavedQuery && curTab) {
-        // Route each param's value to its scope tier (d28.4): Local → saved query;
-        // Session/Global → the shared stores. Persisting also declares new params.
-        const routed = routeWrites(curParams, paramValues);
+        // Persist values to their scope tiers (d28.4), but ONLY for params declared
+        // in the saved query's STORED sql (d28.8): a saved query is a stable
+        // template, so SQL edits and edited-in @params are scratch — run this
+        // session, remembered nowhere; editing a declared param out is
+        // non-destructive. (Explicit save-back = billz-d28.10.) The RUN below still
+        // uses curParams + curTab.content, so edited-in params execute fine now.
+        const routed = persistDeclared(curSavedQuery, paramValues);
         await saveQuery({ ...curSavedQuery, params: routed.params });
         setSessionParams(routed.session);
         setGlobalParams(routed.global);

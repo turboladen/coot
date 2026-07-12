@@ -94,6 +94,25 @@ export function routeWrites(
   return { params: outParams, session, global };
 }
 
+// d28.8: persist-back for an opened saved query under the "stable template" model.
+// The saved query's param set is defined by its STORED sql (not the edited tab
+// content): only DECLARED params are remembered; params edited into the tab are
+// scratch (used for the run, discarded). A declared param not currently visible
+// (edited out of the tab) keeps its stored value — editing is non-destructive.
+// Reuses routeWrites for tier routing; the caller merges session/global + saves
+// params exactly as before. See the d28.8 design spec for the full rationale.
+export function persistDeclared(
+  stored: SavedQuery,
+  values: Record<string, string>,
+): { params: Param[]; session: Record<string, string>; global: Record<string, string> } {
+  const declared = deriveParams(stored.sql, stored.params);
+  const toWrite = declared.filter((p) => p.name in values);
+  const routed = routeWrites(toWrite, values);
+  const written = new Map(routed.params.map((p) => [p.name, p]));
+  const params = declared.map((p) => written.get(p.name) ?? p);
+  return { params, session: routed.session, global: routed.global };
+}
+
 // Map a catalog canonical type (ColumnInfo.data_type, e.g. "nvarchar(50)",
 // "decimal(19,4)", "int") into the capped SqlType set, or null (→ raw-text) for
 // types outside it. Widens (smallint→int, datetime→datetime2, varchar→nvarchar):
