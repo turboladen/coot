@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, untrack } from "svelte";
-  import { type ConnectionConfig, type QueryResult, runParams, runSql } from "./lib/api";
+  import { type ConnectionConfig, type ParamScope, type QueryResult, runParams, runSql } from "./lib/api";
   import ConnectionForm from "./lib/ConnectionForm.svelte";
   import ConnectionList from "./lib/ConnectionList.svelte";
   import ObjectTree from "./lib/tree/ObjectTree.svelte";
@@ -10,7 +10,9 @@
   import TabBar from "./lib/TabBar.svelte";
   import ResultTabs from "./lib/ResultTabs.svelte";
   import { type Message, summarize } from "./lib/resultSummary";
-  import { deriveParams, nextParamValues, rememberValues, toResolvedParams } from "./lib/paramBarLogic";
+  import { deriveParams, nextParamValues, routeWrites, toResolvedParams, valueSource } from "./lib/paramBarLogic";
+  import { sessionParams, setSessionParams } from "./lib/sessionParams.svelte";
+  import { globalParams, setGlobalParams } from "./lib/globalParams.svelte";
   import { conns, refresh } from "./lib/connections.svelte";
   import { library, refresh as refreshLibrary, save as saveQuery } from "./lib/savedQueries.svelte";
   import { activeContent, flushSave, restore, setActiveContent, setActiveDatabase, tabsState } from "./lib/tabs.svelte";
@@ -96,15 +98,32 @@
   // yet, and populate any newly-appeared param from its lastValue. `valuesTabId` is
   // effect-local bookkeeping; `untrack` reads paramValues without subscribing (else
   // writing it below would re-trigger this effect).
+  // Which tier each param's displayed value resolves from (drives the badge).
+  // Reads the stores reactively so a badge updates live when a store changes.
+  const paramSources = $derived(
+    Object.fromEntries(curParams.map((p) => [p.name, valueSource(p, sessionParams, globalParams)])),
+  );
+
+  // Persist a scope change immediately (a rare, deliberate config choice — avoids
+  // a separate scope state map). Declares a newly-derived param in the process.
+  async function onScopeChange(name: string, scope: ParamScope) {
+    if (!curSavedQuery) return;
+    const params = curParams.map((p) => (p.name === name ? { ...p, scope } : p));
+    await saveQuery({ ...curSavedQuery, params });
+  }
+
   let paramValues = $state<Record<string, string>>({});
   let valuesTabId = "";
   $effect(() => {
     const id = tabsState.activeId; // tab switch → full reset
     const params = curParams; // track: late library load + new @names on edit
-    // Snapshot prior values via untrack (a plain copy — reading the proxy's keys
-    // outside untrack would subscribe and re-arm this effect on our own write).
+    // Snapshot prior values + the stores via untrack (plain copies — reading the
+    // proxy keys outside untrack would subscribe and re-arm this effect). Session/
+    // Global changes are thus picked up on the next switch/rebuild, not mid-edit.
     const prev = untrack(() => ({ ...paramValues }));
-    paramValues = nextParamValues(id !== valuesTabId, params, prev);
+    const session = untrack(() => ({ ...sessionParams }));
+    const global = untrack(() => ({ ...globalParams }));
+    paramValues = nextParamValues(id !== valuesTabId, params, prev, session, global);
     valuesTabId = id;
   });
 
@@ -127,9 +146,12 @@
       // the plain run_sql path (selection/GO-splitting).
       let out: QueryResult[];
       if (curParams.length > 0 && curSavedQuery && curTab) {
-        // Remember values (Local) — this also DECLARES newly-derived params on the
-        // saved query — then run with sp_executesql / raw-text splice.
-        await saveQuery({ ...curSavedQuery, params: rememberValues(curParams, paramValues) });
+        // Route each param's value to its scope tier (d28.4): Local → saved query;
+        // Session/Global → the shared stores. Persisting also declares new params.
+        const routed = routeWrites(curParams, paramValues);
+        await saveQuery({ ...curSavedQuery, params: routed.params });
+        setSessionParams(routed.session);
+        setGlobalParams(routed.global);
         const resolved = toResolvedParams(curParams, paramValues);
         out = await runParams(id, effectiveDb, curTab.content, resolved);
       } else {
@@ -236,7 +258,7 @@
         <!-- Always a grid child (empty placeholder when no params) so the 5-track
              .workspace template stays aligned (d28.3). -->
         {#if curParams.length > 0}
-          <ParamBar params={curParams} values={paramValues} />
+          <ParamBar params={curParams} values={paramValues} sources={paramSources} onScopeChange={onScopeChange} />
         {:else}
           <div class="param-bar-slot"></div>
         {/if}
