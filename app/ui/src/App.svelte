@@ -91,13 +91,6 @@
     curSavedQuery ? deriveParams(curTab?.content ?? "", curSavedQuery.params) : [],
   );
 
-  // Bar field values, keyed by param name. On a TAB SWITCH rebuild fresh from each
-  // param's lastValue (never bleed one query's values into another). On a same-tab
-  // recompute (an SQL keystroke changes curTab.content → curParams, or the library
-  // loads async after the tab opened) PRESERVE values the user typed but hasn't run
-  // yet, and populate any newly-appeared param from its lastValue. `valuesTabId` is
-  // effect-local bookkeeping; `untrack` reads paramValues without subscribing (else
-  // writing it below would re-trigger this effect).
   // Which tier each param's displayed value resolves from (drives the badge).
   // Reads the stores reactively so a badge updates live when a store changes.
   const paramSources = $derived(
@@ -112,6 +105,13 @@
     await saveQuery({ ...curSavedQuery, params });
   }
 
+  // Bar field values, keyed by param name. On a TAB SWITCH rebuild fresh from each
+  // param's resolved value (never bleed one query's values into another). On a
+  // same-tab recompute (an SQL keystroke changes curTab.content → curParams, or the
+  // library loads async after the tab opened) PRESERVE values the user typed but
+  // hasn't run yet, and seed any newly-appeared param from resolve. `valuesTabId`
+  // is effect-local bookkeeping; `untrack` reads state without subscribing (else
+  // writing paramValues below would re-trigger this effect).
   let paramValues = $state<Record<string, string>>({});
   let valuesTabId = "";
   $effect(() => {
