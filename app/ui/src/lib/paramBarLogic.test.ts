@@ -1,6 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import type { Param } from "./api";
-import { deriveParams, nextParamValues, rememberValues, toResolvedParams } from "./paramBarLogic";
+import {
+  deriveParams,
+  nextParamValues,
+  parseStringMap,
+  resolve,
+  routeWrites,
+  toResolvedParams,
+  valueSource,
+} from "./paramBarLogic";
 
 const bind = (name: string, lastValue: string | null = null): Param => ({
   name,
@@ -35,24 +43,78 @@ describe("deriveParams", () => {
   });
 });
 
-describe("toResolvedParams / rememberValues", () => {
+describe("toResolvedParams", () => {
   const params: Param[] = [
     bind("@cust", "old"),
     { name: "@col", sqlType: null, lastValue: null, scope: "local" },
   ];
 
-  test("toResolvedParams pulls current field values, '' when unset", () => {
+  test("pulls current field values, '' when unset", () => {
     const got = toResolvedParams(params, { "@cust": "42" });
     expect(got).toEqual([
       { name: "@cust", sqlType: "int", value: "42" },
       { name: "@col", sqlType: null, value: "" },
     ]);
   });
+});
 
-  test("rememberValues updates lastValue from fields, keeps prior when absent", () => {
-    const got = rememberValues(params, { "@cust": "42" });
-    expect(got[0].lastValue).toBe("42");
-    expect(got[1].lastValue).toBe(null);
+describe("resolve / valueSource (precedence Local ?? Session ?? Global)", () => {
+  const p = (name: string, lastValue: string | null): Param => ({
+    name,
+    sqlType: null,
+    lastValue,
+    scope: "local",
+  });
+
+  test("Local wins", () => {
+    expect(resolve(p("@a", "L"), { "@a": "S" }, { "@a": "G" })).toBe("L");
+    expect(valueSource(p("@a", "L"), { "@a": "S" }, {})).toBe("local");
+  });
+  test("Session when no Local", () => {
+    expect(resolve(p("@a", null), { "@a": "S" }, { "@a": "G" })).toBe("S");
+    expect(valueSource(p("@a", null), { "@a": "S" }, { "@a": "G" })).toBe("session");
+  });
+  test("Global when no Local/Session", () => {
+    expect(resolve(p("@a", null), {}, { "@a": "G" })).toBe("G");
+    expect(valueSource(p("@a", null), {}, { "@a": "G" })).toBe("global");
+  });
+  test("null when nowhere", () => {
+    expect(resolve(p("@a", null), {}, {})).toBe(null);
+    expect(valueSource(p("@a", null), {}, {})).toBe(null);
+  });
+});
+
+describe("routeWrites", () => {
+  const p = (name: string, scope: "local" | "session" | "global"): Param => ({
+    name,
+    sqlType: null,
+    lastValue: "old",
+    scope,
+  });
+
+  test("Local → lastValue set; Session/Global → store write + lastValue cleared", () => {
+    const params = [p("@l", "local"), p("@s", "session"), p("@g", "global")];
+    const got = routeWrites(params, { "@l": "lv", "@s": "sv", "@g": "gv" });
+    expect(got.params.find((q) => q.name === "@l")!.lastValue).toBe("lv");
+    expect(got.params.find((q) => q.name === "@s")!.lastValue).toBe(null);
+    expect(got.params.find((q) => q.name === "@g")!.lastValue).toBe(null);
+    expect(got.session).toEqual({ "@s": "sv" });
+    expect(got.global).toEqual({ "@g": "gv" });
+    expect(got.params.map((q) => q.scope)).toEqual(["local", "session", "global"]);
+  });
+});
+
+describe("parseStringMap", () => {
+  test("null / malformed → {}", () => {
+    expect(parseStringMap(null)).toEqual({});
+    expect(parseStringMap("{not json")).toEqual({});
+    expect(parseStringMap("[1,2]")).toEqual({});
+  });
+  test("keeps string entries, drops non-string", () => {
+    expect(parseStringMap(JSON.stringify({ "@a": "x", "@b": 5, "@c": "y" }))).toEqual({
+      "@a": "x",
+      "@c": "y",
+    });
   });
 });
 
@@ -65,20 +127,26 @@ describe("nextParamValues", () => {
   });
 
   test("tab switch resets each field fresh from lastValue (drops typed values)", () => {
-    expect(nextParamValues(true, [p("@a", "av"), p("@b")], { "@a": "typed" })).toEqual({
+    expect(nextParamValues(true, [p("@a", "av"), p("@b")], { "@a": "typed" }, {}, {})).toEqual({
       "@a": "av",
       "@b": "",
     });
   });
 
   test("same-tab preserves typed values, seeds newly-appeared params from lastValue", () => {
-    expect(nextParamValues(false, [p("@a", "av"), p("@new", "nv")], { "@a": "typed" })).toEqual({
-      "@a": "typed",
-      "@new": "nv",
-    });
+    expect(
+      nextParamValues(false, [p("@a", "av"), p("@new", "nv")], { "@a": "typed" }, {}, {}),
+    ).toEqual({ "@a": "typed", "@new": "nv" });
   });
 
   test("same-tab preserves a user-cleared empty value ('' is not replaced)", () => {
-    expect(nextParamValues(false, [p("@a", "av")], { "@a": "" })).toEqual({ "@a": "" });
+    expect(nextParamValues(false, [p("@a", "av")], { "@a": "" }, {}, {})).toEqual({ "@a": "" });
+  });
+
+  test("pre-fills from resolve across tiers on tab switch", () => {
+    expect(nextParamValues(true, [p("@a"), p("@b", "L")], {}, { "@a": "S" }, {})).toEqual({
+      "@a": "S",
+      "@b": "L",
+    });
   });
 });
