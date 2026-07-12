@@ -10,9 +10,9 @@
   import TabBar from "./lib/TabBar.svelte";
   import ResultTabs from "./lib/ResultTabs.svelte";
   import { type Message, summarize } from "./lib/resultSummary";
-  import { deriveParams, nextParamValues, persistDeclared, toResolvedParams, valueSource } from "./lib/paramBarLogic";
-  import { sessionParams, setSessionParams } from "./lib/sessionParams.svelte";
-  import { globalParams, setGlobalParams } from "./lib/globalParams.svelte";
+  import { deriveParams, nextParamValues, persistDeclared, resolve, toResolvedParams, valueSource } from "./lib/paramBarLogic";
+  import { clearSessionParam, sessionParams, setSessionParams } from "./lib/sessionParams.svelte";
+  import { clearGlobalParam, globalParams, setGlobalParams } from "./lib/globalParams.svelte";
   import { conns, refresh } from "./lib/connections.svelte";
   import { library, refresh as refreshLibrary, save as saveQuery } from "./lib/savedQueries.svelte";
   import { activeContent, flushSave, restore, setActiveContent, setActiveDatabase, tabsState } from "./lib/tabs.svelte";
@@ -132,6 +132,17 @@
     if (!curSavedQuery) return;
     const params = curParams.map((p) => (p.name === name ? { ...p, sqlType } : p));
     await saveQuery({ ...curSavedQuery, params });
+  }
+
+  // d28.9: clear the SURFACED tier value for a param (the one the inherited badge
+  // shows), then refresh the field to the new resolved value (a lower tier or
+  // empty). Reads the stores AFTER the clear. Chaining clears both tiers; a value
+  // shadowed by a Local value has no badge, so it isn't reachable here (rare).
+  function onClearTier(name: string, tier: "session" | "global") {
+    if (tier === "session") clearSessionParam(name);
+    else clearGlobalParam(name);
+    const param = curParams.find((p) => p.name === name);
+    if (param) paramValues[name] = resolve(param, sessionParams, globalParams) ?? "";
   }
 
   // Bar field values, keyed by param name. On a TAB SWITCH rebuild fresh from each
@@ -291,7 +302,7 @@
         <!-- Always a grid child (empty placeholder when no params) so the 5-track
              .workspace template stays aligned (d28.3). -->
         {#if curParams.length > 0}
-          <ParamBar params={curParams} values={paramValues} sources={paramSources} onScopeChange={onScopeChange} onTypeChange={onTypeChange} />
+          <ParamBar params={curParams} values={paramValues} sources={paramSources} onScopeChange={onScopeChange} onTypeChange={onTypeChange} onClearTier={onClearTier} />
         {:else}
           <div class="param-bar-slot"></div>
         {/if}

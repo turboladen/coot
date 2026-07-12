@@ -12,12 +12,14 @@
     sources = {},
     onScopeChange = () => {},
     onTypeChange = () => {},
+    onClearTier = () => {},
   }: {
     params: Param[];
     values: Record<string, string>;
     sources?: Record<string, "local" | "session" | "global" | null>;
     onScopeChange?: (name: string, scope: ParamScope) => void;
     onTypeChange?: (name: string, sqlType: SqlType | null) => void;
+    onClearTier?: (name: string, tier: "session" | "global") => void;
   } = $props();
 </script>
 
@@ -62,8 +64,22 @@
       </select>
       {#if sources[p.name] === "session"}
         <span class="inh session" title="value inherited from the Session tier">↳ session</span>
+        <button
+          type="button"
+          class="clear-tier"
+          aria-label="Clear Session value for {p.name}"
+          title="Clear this Session value"
+          onclick={() => onClearTier(p.name, "session")}
+        >×</button>
       {:else if sources[p.name] === "global"}
         <span class="inh global" title="value inherited from the Global tier">↳ global</span>
+        <button
+          type="button"
+          class="clear-tier"
+          aria-label="Clear Global value for {p.name}"
+          title="Clear this Global value"
+          onclick={() => onClearTier(p.name, "global")}
+        >×</button>
       {/if}
     </label>
   {/each}
@@ -123,5 +139,20 @@
     background: #eef2fb;
     color: #3557b7;
     border-color: #c3d0f0;
+  }
+  .clear-tier {
+    font-size: 0.7rem;
+    line-height: 1;
+    padding: 0.05rem 0.28rem;
+    border: 1px solid #d5d5d5;
+    border-radius: 999px;
+    background: #fff;
+    color: #999;
+    cursor: pointer;
+  }
+  .clear-tier:hover {
+    color: #b91c1c;
+    border-color: #f3b4b4;
+    background: #fde8e8;
   }
 </style>
