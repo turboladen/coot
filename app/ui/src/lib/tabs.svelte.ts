@@ -71,8 +71,12 @@ export function flushSave(): void {
 }
 
 // --- Helpers -----------------------------------------------------------------
-function newQueryTab(content: string, database: string | null = null): QueryTab {
-  return { id: crypto.randomUUID(), title: deriveTitle(content), content, database };
+function newQueryTab(
+  content: string,
+  database: string | null = null,
+  savedQueryId: string | null = null,
+): QueryTab {
+  return { id: crypto.randomUUID(), title: deriveTitle(content), content, database, savedQueryId };
 }
 
 function seedDefault(): void {
@@ -100,8 +104,12 @@ export function newTab(): void {
 // and make it active. Used by the tree's double-click-table action (rqb.6),
 // which passes the table's DB so the new tab's picker reflects it (cwt.9).
 // Structural op → flushSave (no debounce).
-export function newTabWithContent(content: string, database: string | null = null): void {
-  const tab = newQueryTab(content, database);
+export function newTabWithContent(
+  content: string,
+  database: string | null = null,
+  savedQueryId: string | null = null,
+): void {
+  const tab = newQueryTab(content, database, savedQueryId);
   tabsState.tabs.push(tab);
   tabsState.activeId = tab.id;
   flushSave();
