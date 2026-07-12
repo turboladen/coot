@@ -31,10 +31,10 @@
     promoting = false;
   }
 
-  // Open = SQL into a fresh scratch tab. Named one-liner so d28.3 can grow a
-  // prompt+run sibling. Does NOT run or bind params.
+  // Open = SQL into a fresh tab LINKED to this saved query (d28.3: savedQueryId
+  // drives the param bar). Passes the query's target database too.
   function openSavedQuery(q: SavedQuery) {
-    newTabWithContent(q.sql);
+    newTabWithContent(q.sql, q.targetDatabase, q.id);
   }
 
   async function onDelete(q: SavedQuery) {

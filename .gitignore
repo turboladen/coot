@@ -5,3 +5,6 @@
 *.db
 .beads-credential-key
 .beads/proxieddb/
+
+# superpowers brainstorm visual-companion scratch
+.superpowers/

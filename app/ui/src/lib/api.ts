@@ -87,6 +87,9 @@ export type SavedQuery = {
   params: Param[];
 };
 
+// Execute-time param (mirrors core's ResolvedParam). sqlType null → raw-text.
+export type ResolvedParam = { name: string; sqlType: SqlType | null; value: string };
+
 // The camelCase keys (`cfg`/`password`/`id`/`database`/`sql`) match the Rust
 // command arg names — Tauri marshals JS→Rust args by name.
 export const listConnections = () => invoke<ConnectionConfig[]>("list_connections");
@@ -105,6 +108,13 @@ export const runSql = (
   selection: string | null,
   line: number,
 ) => invoke<QueryResult[]>("run_sql", { id, database, sql, selection, line });
+
+export const runParams = (
+  id: string,
+  database: string | null,
+  sql: string,
+  params: ResolvedParam[],
+) => invoke<QueryResult[]>("run_params", { id, database, sql, params });
 
 // Object-tree loaders (rqb.2). Keys (`id`/`db`/`schema`/`table`) match the Rust
 // command arg names — Tauri marshals JS→Rust args by name.

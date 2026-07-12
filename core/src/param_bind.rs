@@ -48,7 +48,8 @@ pub enum BindValue {
 /// non-optional: "unset" handling is d28.3's concern, and scope resolution is
 /// d28.4's; by execute time every param has a concrete value (`PLAN.md` §5). This
 /// deliberately drops `Param`'s `last_value`/`scope` fields (later beads).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ResolvedParam {
     /// The placeholder, e.g. `"@cust"` (leading `@` included).
     pub name: String,
@@ -235,6 +236,31 @@ pub fn partition(params: &[ResolvedParam]) -> (Vec<(&str, &str)>, Vec<&ResolvedP
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resolved_param_serde_is_camel_case() {
+        let p = ResolvedParam {
+            name: "@cust".into(),
+            sql_type: Some(crate::query::SqlType::Int),
+            value: "12345".into(),
+        };
+        let s = serde_json::to_string(&p).unwrap();
+        assert!(s.contains(r#""sqlType":"int""#), "{s}");
+        assert!(s.contains(r#""name":"@cust""#), "{s}");
+        let back: ResolvedParam = serde_json::from_str(&s).unwrap();
+        assert_eq!(back, p);
+        // raw-text param: sqlType null.
+        let raw = ResolvedParam {
+            name: "@col".into(),
+            sql_type: None,
+            value: "ord".into(),
+        };
+        assert!(
+            serde_json::to_string(&raw)
+                .unwrap()
+                .contains(r#""sqlType":null"#)
+        );
+    }
 
     // ------------------------------------------------------------------
     // splice_raw_text

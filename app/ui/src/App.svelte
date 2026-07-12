@@ -1,16 +1,18 @@
 <script lang="ts">
-  import { onMount } from "svelte";
-  import { type ConnectionConfig, type QueryResult, runSql } from "./lib/api";
+  import { onMount, untrack } from "svelte";
+  import { type ConnectionConfig, type QueryResult, runParams, runSql } from "./lib/api";
   import ConnectionForm from "./lib/ConnectionForm.svelte";
   import ConnectionList from "./lib/ConnectionList.svelte";
   import ObjectTree from "./lib/tree/ObjectTree.svelte";
   import SavedQueryLibrary from "./lib/SavedQueryLibrary.svelte";
+  import ParamBar from "./lib/ParamBar.svelte";
   import SqlEditor from "./lib/SqlEditor.svelte";
   import TabBar from "./lib/TabBar.svelte";
   import ResultTabs from "./lib/ResultTabs.svelte";
   import { type Message, summarize } from "./lib/resultSummary";
+  import { deriveParams, nextParamValues, rememberValues, toResolvedParams } from "./lib/paramBarLogic";
   import { conns, refresh } from "./lib/connections.svelte";
-  import { refresh as refreshLibrary } from "./lib/savedQueries.svelte";
+  import { library, refresh as refreshLibrary, save as saveQuery } from "./lib/savedQueries.svelte";
   import { activeContent, flushSave, restore, setActiveContent, setActiveDatabase, tabsState } from "./lib/tabs.svelte";
   import { treeRefresh } from "./lib/tree/refresh.svelte";
   import { dbStore, load as loadDatabases } from "./lib/databases.svelte";
@@ -76,6 +78,36 @@
     activeDb !== null && dbStore.list.some((d) => d.name === activeDb) ? activeDb : null,
   );
 
+  // The active editor tab + the saved query it was opened from (d28.3).
+  const curTab = $derived(tabsState.tabs.find((t) => t.id === tabsState.activeId));
+  const curSavedQuery = $derived(
+    curTab?.savedQueryId ? library.list.find((q) => q.id === curTab.savedQueryId) ?? null : null,
+  );
+  // Params derived from the tab's live SQL merged with the saved query's declared
+  // params. Empty ⇒ no param bar, plain run_sql path.
+  const curParams = $derived(
+    curSavedQuery ? deriveParams(curTab?.content ?? "", curSavedQuery.params) : [],
+  );
+
+  // Bar field values, keyed by param name. On a TAB SWITCH rebuild fresh from each
+  // param's lastValue (never bleed one query's values into another). On a same-tab
+  // recompute (an SQL keystroke changes curTab.content → curParams, or the library
+  // loads async after the tab opened) PRESERVE values the user typed but hasn't run
+  // yet, and populate any newly-appeared param from its lastValue. `valuesTabId` is
+  // effect-local bookkeeping; `untrack` reads paramValues without subscribing (else
+  // writing it below would re-trigger this effect).
+  let paramValues = $state<Record<string, string>>({});
+  let valuesTabId = "";
+  $effect(() => {
+    const id = tabsState.activeId; // tab switch → full reset
+    const params = curParams; // track: late library load + new @names on edit
+    // Snapshot prior values via untrack (a plain copy — reading the proxy's keys
+    // outside untrack would subscribe and re-arm this effect on our own write).
+    const prev = untrack(() => ({ ...paramValues }));
+    paramValues = nextParamValues(id !== valuesTabId, params, prev);
+    valuesTabId = id;
+  });
+
   async function run() {
     if (running) return;
     const id = conns.activeId;
@@ -87,14 +119,24 @@
       activeTab = "messages";
       return;
     }
-    const t = editor?.getRunTarget();
-    if (!t) return;
     running = true;
     try {
-      // Per-tab target DB (cwt.9): the executor issues USE [db] before the batch;
-      // null ⇒ the connection's default DB. `effectiveDb` (not the raw stored
-      // value) so we never USE a DB absent from the active connection.
-      const out = await runSql(id, effectiveDb, t.text, t.selection || null, t.line);
+      // `effectiveDb` (not the raw stored value) so we never USE a DB absent from
+      // the active connection (cwt.9). Param-aware (d28.3): a saved-query tab with
+      // derived @params runs via run_params (bind/splice); everything else keeps
+      // the plain run_sql path (selection/GO-splitting).
+      let out: QueryResult[];
+      if (curParams.length > 0 && curSavedQuery && curTab) {
+        // Remember values (Local) — this also DECLARES newly-derived params on the
+        // saved query — then run with sp_executesql / raw-text splice.
+        await saveQuery({ ...curSavedQuery, params: rememberValues(curParams, paramValues) });
+        const resolved = toResolvedParams(curParams, paramValues);
+        out = await runParams(id, effectiveDb, curTab.content, resolved);
+      } else {
+        const t = editor?.getRunTarget();
+        if (!t) return;
+        out = await runSql(id, effectiveDb, t.text, t.selection || null, t.line);
+      }
       results = out;
       messages = summarize(out);
       // 0 result sets (e.g. a DML batch — billz-38l) → land on Messages, which
@@ -191,6 +233,13 @@
     {:else}
       <div class="workspace">
         <TabBar />
+        <!-- Always a grid child (empty placeholder when no params) so the 5-track
+             .workspace template stays aligned (d28.3). -->
+        {#if curParams.length > 0}
+          <ParamBar params={curParams} values={paramValues} />
+        {:else}
+          <div class="param-bar-slot"></div>
+        {/if}
         <div class="editor-pane">
           <!-- Remount the editor per active tab: a fresh CM instance gives each
                tab its own doc/undo/cursor (no bleed across tabs). `value` is
@@ -273,8 +322,8 @@
   }
   .workspace {
     display: grid;
-    /* tab bar (auto) · editor · toolbar (auto) · grid */
-    grid-template-rows: auto minmax(8rem, 40%) auto 1fr;
+    /* tab bar · param bar · editor · toolbar · grid */
+    grid-template-rows: auto auto minmax(8rem, 40%) auto 1fr;
     height: 100%;
     min-height: 0;
   }

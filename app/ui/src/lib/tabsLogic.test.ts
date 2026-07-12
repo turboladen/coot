@@ -4,8 +4,13 @@
 import { describe, expect, test } from "bun:test";
 import { deriveTitle, deserialize, pickNeighbourId, type QueryTab, serialize, type TabsState } from "./tabsLogic";
 
-function tab(id: string, content = "", database: string | null = null): QueryTab {
-  return { id, title: deriveTitle(content), content, database };
+function tab(
+  id: string,
+  content = "",
+  database: string | null = null,
+  savedQueryId: string | null = null,
+): QueryTab {
+  return { id, title: deriveTitle(content), content, database, savedQueryId };
 }
 
 describe("deriveTitle", () => {
@@ -97,6 +102,22 @@ describe("serialize / deserialize", () => {
       activeId: "a",
     });
     expect(deserialize(legacy)?.tabs[0].database).toBe(null);
+  });
+
+  test("round-trips savedQueryId (d28.3)", () => {
+    const withSq: TabsState = {
+      tabs: [tab("a", "SELECT 1", null, "q-42")],
+      activeId: "a",
+    };
+    expect(deserialize(serialize(withSq))).toEqual(withSq);
+  });
+
+  test("a pre-d28.3 blob without savedQueryId defaults to null", () => {
+    const legacy = JSON.stringify({
+      tabs: [{ id: "a", title: "t", content: "SELECT 1", database: null }],
+      activeId: "a",
+    });
+    expect(deserialize(legacy)?.tabs[0].savedQueryId).toBe(null);
   });
 
   test("a non-string, non-null database coerces to null", () => {
