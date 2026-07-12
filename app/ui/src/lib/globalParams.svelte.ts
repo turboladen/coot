@@ -26,3 +26,14 @@ export function setGlobalParams(writes: Record<string, string>): void {
     console.warn("billz: failed to persist global params to localStorage", e);
   }
 }
+
+// Clear one param's Global value + persist the removal (d28.9). Mirrors
+// setGlobalParams' persistence; delete is reactive on the $state proxy.
+export function clearGlobalParam(name: string): void {
+  delete globalParams[name];
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(globalParams));
+  } catch (e) {
+    console.warn("billz: failed to persist global params to localStorage", e);
+  }
+}
