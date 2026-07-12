@@ -1,6 +1,6 @@
 // Pure, rune-free param logic for the saved-query param bar (d28.3). Unit-tested
 // via paramBarLogic.test.ts; ParamBar.svelte / App.svelte are the runes wrappers.
-import type { Param, ResolvedParam, SqlType } from "./api";
+import type { ColumnInfo, Param, ResolvedParam, SavedQuery, SqlType } from "./api";
 
 // Matches T-SQL param placeholders. `(?<!@)` skips server globals like
 // @@ROWCOUNT / @@IDENTITY (the doubled @). NOTE (billz-u2t / PLAN §6): a regex
@@ -128,6 +128,29 @@ export function catalogTypeToSqlType(dataType: string): SqlType | null {
     default:
       return null;
   }
+}
+
+// Saved queries whose SQL references the literal @table param (the ones a table
+// right-click can scope, d28.7). `(?<!@)` skips @@table; `(?![A-Za-z0-9_])` is the
+// word boundary so @table2 / @tablename don't count. Case-sensitive: @table is the
+// convention that openScopedQuery fills.
+export function queriesReferencingTable(queries: SavedQuery[]): SavedQuery[] {
+  const re = /(?<!@)@table(?![A-Za-z0-9_])/;
+  return queries.filter((q) => re.test(q.sql));
+}
+
+// Auto-type params from a table's columns (d28.7, consuming d28.5's mapping): for
+// each param that is NOT @table, is UNSET (sqlType null), and whose name (minus @,
+// case-insensitive) matches a column, set its sqlType via catalogTypeToSqlType
+// (itself null for a float/real/etc. column → stays raw-text). Already-typed params,
+// @table, and non-matching params are unchanged (manual overrides win).
+export function autoTypeParams(params: Param[], columns: ColumnInfo[]): Param[] {
+  const byLowerName = new Map(columns.map((c) => [c.name.toLowerCase(), c]));
+  return params.map((p) => {
+    if (p.name === "@table" || p.sqlType !== null) return p;
+    const c = byLowerName.get(p.name.slice(1).toLowerCase());
+    return c ? { ...p, sqlType: catalogTypeToSqlType(c.dataType) } : p;
+  });
 }
 
 // Tolerant parse of a persisted name→value map (globalParams). null / malformed
