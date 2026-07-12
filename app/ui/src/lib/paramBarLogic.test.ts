@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { Param } from "./api";
 import {
+  catalogTypeToSqlType,
   deriveParams,
   nextParamValues,
   parseStringMap,
@@ -101,6 +102,44 @@ describe("routeWrites", () => {
     expect(got.session).toEqual({ "@s": "sv" });
     expect(got.global).toEqual({ "@g": "gv" });
     expect(got.params.map((q) => q.scope)).toEqual(["local", "session", "global"]);
+  });
+});
+
+describe("catalogTypeToSqlType", () => {
+  test("maps exact families", () => {
+    expect(catalogTypeToSqlType("int")).toBe("int");
+    expect(catalogTypeToSqlType("bigint")).toBe("bigint");
+    expect(catalogTypeToSqlType("bit")).toBe("bit");
+    expect(catalogTypeToSqlType("date")).toBe("date");
+    expect(catalogTypeToSqlType("uniqueidentifier")).toBe("uniqueidentifier");
+  });
+  test("strips width/precision suffixes", () => {
+    expect(catalogTypeToSqlType("nvarchar(50)")).toBe("nvarchar");
+    expect(catalogTypeToSqlType("decimal(19,4)")).toBe("decimal");
+    expect(catalogTypeToSqlType("datetime2(7)")).toBe("datetime2");
+    expect(catalogTypeToSqlType("nvarchar(MAX)")).toBe("nvarchar");
+  });
+  test("widens into the capped set", () => {
+    expect(catalogTypeToSqlType("smallint")).toBe("int");
+    expect(catalogTypeToSqlType("tinyint")).toBe("int");
+    expect(catalogTypeToSqlType("varchar(10)")).toBe("nvarchar");
+    expect(catalogTypeToSqlType("char(2)")).toBe("nvarchar");
+    expect(catalogTypeToSqlType("datetime")).toBe("datetime2");
+    expect(catalogTypeToSqlType("smalldatetime")).toBe("datetime2");
+    expect(catalogTypeToSqlType("numeric(10,0)")).toBe("decimal");
+    expect(catalogTypeToSqlType("smallmoney")).toBe("money");
+    expect(catalogTypeToSqlType("money")).toBe("money");
+  });
+  test("unmappable types → null (raw-text)", () => {
+    expect(catalogTypeToSqlType("float")).toBe(null);
+    expect(catalogTypeToSqlType("real")).toBe(null);
+    expect(catalogTypeToSqlType("time(7)")).toBe(null);
+    expect(catalogTypeToSqlType("varbinary(MAX)")).toBe(null);
+    expect(catalogTypeToSqlType("xml")).toBe(null);
+  });
+  test("case-insensitive", () => {
+    expect(catalogTypeToSqlType("NVarChar(50)")).toBe("nvarchar");
+    expect(catalogTypeToSqlType("INT")).toBe("int");
   });
 });
 
