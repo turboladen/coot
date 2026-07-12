@@ -241,7 +241,7 @@ fn sql_value_from_bind(v: BindValue) -> SqlValue {
 fn column_meta(col: &Column) -> ColumnMeta {
     ColumnMeta {
         name: col.name.clone(),
-        sql_type: friendly_type_name(&col.type_name).to_string(),
+        sql_type: friendly_type_name(&col.type_name, col.max_length).to_string(),
         nullable: col.nullable,
         precision: col.precision,
         scale: col.scale,
@@ -475,6 +475,14 @@ mod tests {
     fn column_meta_passes_unknown_token_through() {
         let col = Column::new("x", 3, "SomeFutureType");
         assert_eq!(column_meta(&col).sql_type, "SomeFutureType");
+    }
+
+    #[test]
+    fn column_meta_is_width_aware_for_nullable_bigint() {
+        // billz-9qg: a nullable bigint arrives as IntN with max_length 8 → bigint,
+        // not the old collapsed "int".
+        let col = Column::new("id", 0, "IntN").with_max_length(8);
+        assert_eq!(column_meta(&col).sql_type, "bigint");
     }
 
     // ---- one env-gated live smoke test (clean skip with no DB) ----
