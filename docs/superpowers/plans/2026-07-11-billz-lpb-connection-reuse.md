@@ -138,6 +138,19 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 
 New module owning one lazily-connected, evictable `Client` per connection-id.
 
+> **Implementation note (post-plan-review discovery):** the `with_retry` +
+> `AsyncFnMut` async-closure design below does **not** compile — passing a
+> reference-capturing async closure through a generic `AsyncFnMut` bound yields a
+> future rustc cannot prove `Send` ("implementation of `Send` is not general
+> enough", a higher-ranked-lifetime limitation), which breaks the schema Tauri
+> commands. `async move` did not fix it (verified on rustc 1.97.0 with the real
+> captured set, incl. the driver's internal `&CancelHandle`). The shipped code
+> instead uses a plain `async fn attempt(slot, cfg, store, ctx, sql, fresh)` and
+> inlines the retry as a `match` in `run` — `Send`-clean. The `run_future_is_send`
+> guard test (Step 4) is what caught this in `core`, as intended. Steps below
+> keep the original `with_retry` text for the review trail; `session.rs` is the
+> source of truth.
+
 **Files:**
 - Create: `core/src/session.rs`
 - Modify: `core/src/lib.rs` (add `pub mod session;` + `pub use session::SessionCache;`)

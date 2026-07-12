@@ -1,4 +1,5 @@
-//! The executor — the ONE module where `mssql-client` is used in non-test code.
+//! The executor — one of two modules (with `session`) where `mssql-client` is
+//! used in non-test code.
 //!
 //! [`run`] connects (per call), applies the [`ExecutionContext`]'s `USE`, runs a
 //! SQL batch, and maps the driver's `SqlValue`→[`CellValue`] and
