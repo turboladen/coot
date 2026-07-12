@@ -67,6 +67,10 @@ async fn save_connection(
         state.secrets.set_password(&cfg.id, &pw)?;
     }
     state.connections.upsert(&cfg)?;
+    // Creds/server may have changed on an edit — drop any cached client + schema
+    // for this connection so the next use reconnects with fresh config (no-op for
+    // a brand-new connection). Fixes stale-schema-after-edit too.
+    state.schema.forget_connection(&cfg.id);
     Ok(())
 }
 
@@ -74,6 +78,7 @@ async fn save_connection(
 async fn delete_connection(id: ConnectionId, state: State<'_, AppState>) -> AppResult<()> {
     state.connections.delete(&id)?;
     state.secrets.delete_password(&id)?; // idempotent
+    state.schema.forget_connection(&id); // drop cached client + schema
     Ok(())
 }
 
