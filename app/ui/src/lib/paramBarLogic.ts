@@ -10,6 +10,11 @@ import type { ColumnInfo, Param, ResolvedParam, SavedQuery, SqlType } from "./ap
 // with u2t.
 const PARAM_RE = /(?<!@)@[A-Za-z_]\w*/g;
 
+// Detects a literal @table reference (d28.7 scoped-run). `(?<!@)` skips @@table;
+// `(?![A-Za-z0-9_])` is the word boundary so @table2 / @tablename don't count.
+// Case-sensitive: @table is the convention openScopedQuery fills.
+const TABLE_PARAM_RE = /(?<!@)@table(?![A-Za-z0-9_])/;
+
 // Ordered param list for a query: scan @names in `sql` (dedup, first-appearance
 // order) and merge with `stored` — an existing name keeps its sqlType/scope/
 // lastValue; a new name defaults to raw-text (null) / local / unset.
@@ -131,12 +136,9 @@ export function catalogTypeToSqlType(dataType: string): SqlType | null {
 }
 
 // Saved queries whose SQL references the literal @table param (the ones a table
-// right-click can scope, d28.7). `(?<!@)` skips @@table; `(?![A-Za-z0-9_])` is the
-// word boundary so @table2 / @tablename don't count. Case-sensitive: @table is the
-// convention that openScopedQuery fills.
+// right-click can scope, d28.7). See TABLE_PARAM_RE for the matching rules.
 export function queriesReferencingTable(queries: SavedQuery[]): SavedQuery[] {
-  const re = /(?<!@)@table(?![A-Za-z0-9_])/;
-  return queries.filter((q) => re.test(q.sql));
+  return queries.filter((q) => TABLE_PARAM_RE.test(q.sql));
 }
 
 // Auto-type params from a table's columns (d28.7, consuming d28.5's mapping): for
