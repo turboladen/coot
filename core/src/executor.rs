@@ -34,7 +34,24 @@ pub async fn run(
     sql: &str,
 ) -> Result<Vec<QueryResult>> {
     let mut client = connect(cfg, store).await?;
-    apply_use_statement(&mut client, ctx).await?;
+    // Close even on error: capture the result, close, then return it.
+    let out = run_batch(&mut client, ctx, sql).await;
+    let _ = client.close().await;
+    out
+}
+
+/// Apply `ctx`'s `USE` and run `sql` on an ALREADY-connected client, returning
+/// every result set. Neither connects nor closes — shared by [`run`]
+/// (connect → run_batch → close) and [`crate::session::SessionCache`] (reuse a
+/// live client → run_batch, no close). `pub(crate)`: the driver stays inside
+/// `core`. A reused session carries state, so applying the context's `USE` here
+/// (every call) is mandatory, not optional.
+pub(crate) async fn run_batch(
+    client: &mut Client<Ready>,
+    ctx: &ExecutionContext,
+    sql: &str,
+) -> Result<Vec<QueryResult>> {
+    apply_use_statement(client, ctx).await?;
 
     let multi = client
         .query_multiple(sql, &[])
@@ -42,13 +59,12 @@ pub async fn run(
         .map_err(|e| CoreError::Query(e.to_string()))?;
 
     // Streams borrow `&mut client`; the borrow ends once they're all consumed
-    // below, so the best-effort `close` afterward is safe.
+    // below, so callers can reuse or close the client afterward.
     let streams = multi.into_query_streams();
     let mut out = Vec::with_capacity(streams.len());
     for stream in streams {
         out.push(query_stream_to_result(stream)?);
     }
-    let _ = client.close().await;
     Ok(out)
 }
 
@@ -125,7 +141,10 @@ pub async fn run_with_params(
 /// connect. Shared by [`run`] and [`run_with_params`]. A missing stored password
 /// is a *configuration* gap, not a store *failure* (`get_password` returned
 /// `Ok(None)`), so it maps to `Config`, not `Secret`.
-async fn connect(cfg: &ConnectionConfig, store: &dyn SecretStore) -> Result<Client<Ready>> {
+pub(crate) async fn connect(
+    cfg: &ConnectionConfig,
+    store: &dyn SecretStore,
+) -> Result<Client<Ready>> {
     let password = store.get_password(&cfg.id)?.ok_or_else(|| {
         CoreError::Config(format!("no stored password for connection {}", cfg.id.0))
     })?;
