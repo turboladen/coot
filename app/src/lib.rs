@@ -7,7 +7,7 @@
 use billz_core::{
     CachingSecretStore, ColumnInfo, ConnectionConfig, ConnectionId, ConnectionStore, CoreError,
     DatabaseInfo, ExecutionContext, KeychainSecretStore, QueryResult, QueryStore, SavedQuery,
-    SavedQueryId, SchemaCache, SecretStore, TableInfo, ViewInfo,
+    SavedQueryId, SchemaCache, SecretStore, TableInfo, ViewInfo, build_connection_string,
 };
 use tauri::{Manager, State};
 
@@ -63,10 +63,27 @@ async fn save_connection(
 ) -> AppResult<()> {
     // Set the secret first: an orphan secret is a smaller problem than metadata
     // pointing at a missing password.
+    // Does this save change HOW we connect? Only then must the reused
+    // introspection client (+ its cached schema) be dropped so the next use
+    // reconnects with fresh config. A metadata-only edit (rename, default-db)
+    // keeps the warm client — that amortized login is the whole point of
+    // billz-lpb. A new password ⇒ changed; server/user/TLS diff ⇒ changed; a
+    // brand-new connection has nothing cached, so this is a harmless no-op.
+    let connect_changed = password.is_some()
+        || state.connections.get(&cfg.id)?.is_some_and(|old| {
+            // Compare via the connection-string builder (the single source of
+            // truth for what affects a connection) with a fixed dummy password,
+            // so this can't drift as connect-affecting fields are added/changed —
+            // only cfg-derived params differ here (password is handled above).
+            build_connection_string(&old, "") != build_connection_string(&cfg, "")
+        });
     if let Some(pw) = password {
         state.secrets.set_password(&cfg.id, &pw)?;
     }
     state.connections.upsert(&cfg)?;
+    if connect_changed {
+        state.schema.forget_connection(&cfg.id);
+    }
     Ok(())
 }
 
@@ -74,6 +91,7 @@ async fn save_connection(
 async fn delete_connection(id: ConnectionId, state: State<'_, AppState>) -> AppResult<()> {
     state.connections.delete(&id)?;
     state.secrets.delete_password(&id)?; // idempotent
+    state.schema.forget_connection(&id); // drop cached client + schema
     Ok(())
 }
 

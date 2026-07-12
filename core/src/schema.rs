@@ -30,8 +30,8 @@ use serde::{Deserialize, Serialize};
 use crate::connection::{ConnectionConfig, ConnectionId, SecretStore};
 use crate::context::ExecutionContext;
 use crate::error::{CoreError, Result};
-use crate::executor::run;
 use crate::result::{CellValue, QueryResult};
+use crate::session::SessionCache;
 
 // ---------------------------------------------------------------------------
 // §1. Model types (serde, camelCase, driver-free)
@@ -305,39 +305,43 @@ fn first_result(results: Vec<QueryResult>) -> Result<QueryResult> {
 
 /// Enumerate the server's databases. Runs on the connection default (no `USE`).
 pub async fn list_databases(
+    sessions: &SessionCache,
     cfg: &ConnectionConfig,
     store: &dyn SecretStore,
 ) -> Result<Vec<DatabaseInfo>> {
     let ctx = ExecutionContext::new(cfg.id.clone());
-    let results = run(cfg, store, &ctx, SQL_LIST_DATABASES).await?;
+    let results = sessions.run(cfg, store, &ctx, SQL_LIST_DATABASES).await?;
     parse_databases(&first_result(results)?)
 }
 
 /// Enumerate `db`'s user tables. Runs inside `db` (`USE [db]`).
 pub async fn list_tables(
+    sessions: &SessionCache,
     cfg: &ConnectionConfig,
     store: &dyn SecretStore,
     db: &str,
 ) -> Result<Vec<TableInfo>> {
     let ctx = ExecutionContext::new(cfg.id.clone()).with_database(db);
-    let results = run(cfg, store, &ctx, SQL_LIST_TABLES).await?;
+    let results = sessions.run(cfg, store, &ctx, SQL_LIST_TABLES).await?;
     parse_tables(&first_result(results)?)
 }
 
 /// Enumerate `db`'s views. Runs inside `db` (`USE [db]`).
 pub async fn list_views(
+    sessions: &SessionCache,
     cfg: &ConnectionConfig,
     store: &dyn SecretStore,
     db: &str,
 ) -> Result<Vec<ViewInfo>> {
     let ctx = ExecutionContext::new(cfg.id.clone()).with_database(db);
-    let results = run(cfg, store, &ctx, SQL_LIST_VIEWS).await?;
+    let results = sessions.run(cfg, store, &ctx, SQL_LIST_VIEWS).await?;
     parse_views(&first_result(results)?)
 }
 
 /// Enumerate the columns of `schema.table` in `db`. A nonexistent schema/table
 /// yields an empty result set → `Ok(vec![])`, NOT an error.
 pub async fn list_columns(
+    sessions: &SessionCache,
     cfg: &ConnectionConfig,
     store: &dyn SecretStore,
     db: &str,
@@ -346,7 +350,7 @@ pub async fn list_columns(
 ) -> Result<Vec<ColumnInfo>> {
     let ctx = ExecutionContext::new(cfg.id.clone()).with_database(db);
     let sql = list_columns_sql(schema, table);
-    let results = run(cfg, store, &ctx, &sql).await?;
+    let results = sessions.run(cfg, store, &ctx, &sql).await?;
     parse_columns(&first_result(results)?)
 }
 
@@ -369,6 +373,9 @@ pub struct SchemaCache {
     tables: Mutex<HashMap<DbKey, Vec<TableInfo>>>,
     views: Mutex<HashMap<DbKey, Vec<ViewInfo>>>,
     columns: Mutex<HashMap<ColumnKey, Vec<ColumnInfo>>>,
+    /// Reused live connections for introspection (billz-lpb) — one login per
+    /// connection amortized across expands, instead of one per `sys.*` query.
+    sessions: SessionCache,
 }
 
 /// Return the cached value for `key`, or run `fetch` and cache a successful
@@ -408,7 +415,7 @@ impl SchemaCache {
         store: &dyn SecretStore,
     ) -> Result<Vec<DatabaseInfo>> {
         get_or_fetch(&self.databases, cfg.id.clone(), || {
-            list_databases(cfg, store)
+            list_databases(&self.sessions, cfg, store)
         })
         .await
     }
@@ -421,7 +428,7 @@ impl SchemaCache {
         db: &str,
     ) -> Result<Vec<TableInfo>> {
         get_or_fetch(&self.tables, (cfg.id.clone(), db.to_string()), || {
-            list_tables(cfg, store, db)
+            list_tables(&self.sessions, cfg, store, db)
         })
         .await
     }
@@ -434,7 +441,7 @@ impl SchemaCache {
         db: &str,
     ) -> Result<Vec<ViewInfo>> {
         get_or_fetch(&self.views, (cfg.id.clone(), db.to_string()), || {
-            list_views(cfg, store, db)
+            list_views(&self.sessions, cfg, store, db)
         })
         .await
     }
@@ -455,7 +462,7 @@ impl SchemaCache {
             table.to_string(),
         );
         get_or_fetch(&self.columns, key, || {
-            list_columns(cfg, store, db, schema, table)
+            list_columns(&self.sessions, cfg, store, db, schema, table)
         })
         .await
     }
@@ -475,11 +482,21 @@ impl SchemaCache {
         self.views.lock().unwrap().retain(|k, _| &k.0 != id);
         self.columns.lock().unwrap().retain(|k, _| &k.0 != id);
     }
+
+    /// Drop one connection's cached data AND its live session client. Use on
+    /// connection edit/delete (creds/server may have changed) — distinct from
+    /// [`Self::invalidate_connection`] (the Refresh path), which keeps the warm
+    /// client so a Refresh re-queries `sys.*` without re-logging in.
+    pub fn forget_connection(&self, id: &ConnectionId) {
+        self.invalidate_connection(id);
+        self.sessions.evict(id);
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::executor::run; // live tests use executor::run for DDL setup/teardown
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     // ---- §3. format_sql_type: exhaustive matrix ----
@@ -789,6 +806,21 @@ mod tests {
         assert!(cache.columns.lock().unwrap().is_empty());
     }
 
+    #[test]
+    fn forget_connection_clears_data_for_that_connection() {
+        let cache = SchemaCache::new();
+        let a = ConnectionId("a".into());
+        cache.databases.lock().unwrap().insert(a.clone(), vec![]);
+        cache
+            .tables
+            .lock()
+            .unwrap()
+            .insert((a.clone(), "db".into()), vec![]);
+        cache.forget_connection(&a); // clears cached data + evicts the live client
+        assert!(!cache.databases.lock().unwrap().contains_key(&a));
+        assert!(cache.tables.lock().unwrap().is_empty());
+    }
+
     // ---- §7. live (env-gated) smoke tests — clean-skip when MSSQL_* unset ----
 
     use crate::connection::{ConnectionId as CId, InMemorySecretStore};
@@ -821,7 +853,8 @@ mod tests {
             eprintln!("skipping live_list_databases: MSSQL_* env not set");
             return;
         };
-        let dbs = list_databases(&cfg, &store).await.unwrap();
+        let sessions = SessionCache::new();
+        let dbs = list_databases(&sessions, &cfg, &store).await.unwrap();
         assert!(!dbs.is_empty());
         let master = dbs
             .iter()
@@ -856,7 +889,10 @@ mod tests {
         .await
         .expect("create smoke table");
 
-        let cols = list_columns(&cfg, &store, &db, "dbo", table).await.unwrap();
+        let sessions = SessionCache::new();
+        let cols = list_columns(&sessions, &cfg, &store, &db, "dbo", table)
+            .await
+            .unwrap();
 
         // Teardown (best-effort) before assertions so a failure still cleans up.
         let _ = run(
@@ -893,7 +929,8 @@ mod tests {
             eprintln!("skipping live_list_columns_unknown_table: MSSQL_* env not set");
             return;
         };
-        let cols = list_columns(&cfg, &store, &db, "dbo", "__no_such_table_xyz__")
+        let sessions = SessionCache::new();
+        let cols = list_columns(&sessions, &cfg, &store, &db, "dbo", "__no_such_table_xyz__")
             .await
             .unwrap();
         assert!(cols.is_empty());

@@ -20,6 +20,7 @@ pub mod query;
 pub mod query_store;
 pub mod result;
 pub mod schema;
+pub mod session;
 pub mod types;
 
 pub use batch::{batch_at_line, split_batches};
@@ -39,4 +40,5 @@ pub use schema::{
     ColumnInfo, DatabaseInfo, SchemaCache, TableInfo, ViewInfo, list_columns, list_databases,
     list_tables, list_views,
 };
+pub use session::SessionCache;
 pub use types::friendly_type_name;
