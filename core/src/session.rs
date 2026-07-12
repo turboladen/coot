@@ -78,11 +78,13 @@ impl SessionCache {
 
     /// Reuse (or lazily open) the connection for `cfg.id`, apply `ctx`'s `USE`,
     /// run `sql`, and return every result set — WITHOUT closing (that is the
-    /// reuse). On any error, drop the possibly-dirty client and retry once on a
-    /// fresh connection; if BOTH attempts fail, the ORIGINAL error is surfaced
-    /// (the reconnect-retry's error tends to mask the real cause). If both fail,
-    /// the slot keeps a possibly-dirty client; the next call's first attempt
-    /// fails and its retry reconnects, so it self-heals within one call.
+    /// reuse). Error handling depends on whether the client was REUSED: a reused
+    /// client that fails is retried once on a fresh connection (healing a stale
+    /// socket idle-dropped since the last use), surfacing the retry's result; a
+    /// client we just freshly connected is NOT retried — its failure is
+    /// deterministic (query error, bad creds), so a retry would only repeat it
+    /// and cost a second login. A dirty client left after a failed retry
+    /// self-heals on the next call (which sees it as reused and reconnects).
     ///
     /// REUSE HAZARD: the retry re-executes the WHOLE `sql` batch. That is safe
     /// for the idempotent, read-only `sys.*` introspection this serves today, but
@@ -102,17 +104,16 @@ impl SessionCache {
 
         // Retry-once inline (a plain `match`, not a generic `AsyncFnMut` helper —
         // that defeats the `Send` proof the schema Tauri commands need; see
-        // `attempt`). On the first error, `attempt(.., true)` drops the stale
-        // client and reconnects before retrying. If the retry also fails, surface
-        // the FIRST error — the retry ran on a fresh connection and its error
-        // (e.g. a re-login failure) tends to mask the real cause the first
-        // attempt saw (permission denied, offline database, …).
+        // `attempt`). Only retry when attempt 1 ran on a REUSED client: a stale
+        // socket is plausible there, so `attempt(.., true)` reconnects and its
+        // result (run on a fresh connection) is the real cause, not stale-socket
+        // noise. A failure on a client we just freshly connected is deterministic,
+        // so surface it directly — no wasted second login, no masking.
+        let reused = guard.is_some();
         match attempt(&mut guard, cfg, store, ctx, sql, false).await {
             Ok(v) => Ok(v),
-            Err(first) => match attempt(&mut guard, cfg, store, ctx, sql, true).await {
-                Ok(v) => Ok(v),
-                Err(_second) => Err(first),
-            },
+            Err(_first) if reused => attempt(&mut guard, cfg, store, ctx, sql, true).await,
+            Err(first) => Err(first),
         }
     }
 }

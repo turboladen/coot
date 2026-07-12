@@ -63,14 +63,26 @@ async fn save_connection(
 ) -> AppResult<()> {
     // Set the secret first: an orphan secret is a smaller problem than metadata
     // pointing at a missing password.
+    // Does this save change HOW we connect? Only then must the reused
+    // introspection client (+ its cached schema) be dropped so the next use
+    // reconnects with fresh config. A metadata-only edit (rename, default-db)
+    // keeps the warm client — that amortized login is the whole point of
+    // billz-lpb. A new password ⇒ changed; server/user/TLS diff ⇒ changed; a
+    // brand-new connection has nothing cached, so this is a harmless no-op.
+    let connect_changed = password.is_some()
+        || state.connections.get(&cfg.id)?.is_some_and(|old| {
+            old.server != cfg.server
+                || old.username != cfg.username
+                || old.encrypt != cfg.encrypt
+                || old.trust_server_certificate != cfg.trust_server_certificate
+        });
     if let Some(pw) = password {
         state.secrets.set_password(&cfg.id, &pw)?;
     }
     state.connections.upsert(&cfg)?;
-    // Creds/server may have changed on an edit — drop any cached client + schema
-    // for this connection so the next use reconnects with fresh config (no-op for
-    // a brand-new connection). Fixes stale-schema-after-edit too.
-    state.schema.forget_connection(&cfg.id);
+    if connect_changed {
+        state.schema.forget_connection(&cfg.id);
+    }
     Ok(())
 }
 
