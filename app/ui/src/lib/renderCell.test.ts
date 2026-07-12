@@ -16,6 +16,16 @@ describe("renderCell", () => {
     });
   });
 
+  test("BigInt → string verbatim, right-aligned (no 2^53 precision loss)", () => {
+    // A bigint beyond Number.MAX_SAFE_INTEGER: must render the exact digits,
+    // never Number()-ed (billz-s7p).
+    const big = "9223372036854775807"; // i64::MAX
+    const r = renderCell({ kind: "BigInt", value: big });
+    expect(r.text).toBe(big);
+    expect(r.align).toBe("right");
+    expect(r.mono).toBe(true);
+  });
+
   test("Float → right-aligned, monospace", () => {
     expect(renderCell({ kind: "Float", value: 3.5 })).toEqual({
       text: "3.5",

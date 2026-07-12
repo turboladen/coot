@@ -256,11 +256,12 @@ fn cell_from_sql_value(v: &SqlValue) -> CellValue {
     match v {
         SqlValue::Null => CellValue::Null,
         SqlValue::Bool(b) => CellValue::Bool(*b),
-        // Integer families all widen into a single i64 cell.
+        // 8/16/32-bit integers widen into an i64 number cell (all fit f64 exactly).
         SqlValue::TinyInt(n) => CellValue::Int(i64::from(*n)),
         SqlValue::SmallInt(n) => CellValue::Int(i64::from(*n)),
         SqlValue::Int(n) => CellValue::Int(i64::from(*n)),
-        SqlValue::BigInt(n) => CellValue::Int(*n),
+        // bigint exceeds f64's safe integer range → string cell (billz-s7p).
+        SqlValue::BigInt(n) => CellValue::BigInt(n.to_string()),
         SqlValue::Float(f) => CellValue::Float(f64::from(*f)),
         SqlValue::Double(f) => CellValue::Float(*f),
         SqlValue::String(s) => CellValue::Text(s.clone()),
@@ -314,7 +315,7 @@ mod tests {
     }
 
     #[test]
-    fn integer_families_all_widen_to_int() {
+    fn small_integer_families_widen_to_int() {
         assert_eq!(
             cell_from_sql_value(&SqlValue::TinyInt(7)),
             CellValue::Int(7)
@@ -324,9 +325,15 @@ mod tests {
             CellValue::Int(-3)
         );
         assert_eq!(cell_from_sql_value(&SqlValue::Int(42)), CellValue::Int(42));
+    }
+
+    #[test]
+    fn bigint_maps_to_string_to_survive_json() {
+        // billz-s7p: a bigint beyond f64's safe integer range (2^53 + 1) must
+        // become a string cell, not an i64 number cell.
         assert_eq!(
-            cell_from_sql_value(&SqlValue::BigInt(9_000_000_000)),
-            CellValue::Int(9_000_000_000)
+            cell_from_sql_value(&SqlValue::BigInt(9_007_199_254_740_993)),
+            CellValue::BigInt("9007199254740993".into())
         );
     }
 

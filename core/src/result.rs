@@ -42,12 +42,14 @@ pub struct ColumnMeta {
 pub enum CellValue {
     Null,
     Bool(bool),
-    /// Widened: TinyInt/SmallInt/Int/BigInt all land here.
-    ///
-    /// Crosses JSON as a number. `|value| > 2^53` loses precision through JS
-    /// `JSON.parse`; string-encoding it (or a `BigInt(String)` variant) is
-    /// deferred to bead billz-s7p. Do not change the type without that bead.
+    /// Widened: TinyInt/SmallInt/Int land here (8/16/32-bit — all fit f64
+    /// exactly). Crosses JSON as a number. `bigint` does NOT map here; it exceeds
+    /// f64's safe integer range, so it goes to [`CellValue::BigInt`] (billz-s7p).
     Int(i64),
+    /// `bigint` (i64), string-encoded so a value beyond f64's safe integer range
+    /// (`|n| > 2^53` — snowflake IDs, bigint hashes) survives JS `JSON.parse`
+    /// without precision loss, exactly as `Decimal`/`Money` do (billz-s7p).
+    BigInt(String),
     /// Widened: f32 `REAL` + f64 `FLOAT`.
     Float(f64),
     /// String-encoded so no f64 precision is lost over JSON — `decimal`, `money`,
@@ -109,6 +111,19 @@ mod tests {
     }
 
     #[test]
+    fn bigint_value_is_a_json_string_not_a_number() {
+        // billz-s7p: a bigint beyond f64's safe integer range must not serialize
+        // as a JSON number (JS `JSON.parse` would corrupt it) — it carries quotes.
+        let v = CellValue::BigInt("9007199254740993".into()); // 2^53 + 1
+        let s = serde_json::to_string(&v).unwrap();
+        assert!(
+            s.contains(r#""value":"9007199254740993""#),
+            "bigint value must serialize as a JSON string, got {s}"
+        );
+        roundtrip(&v);
+    }
+
+    #[test]
     fn binary_is_hex_string() {
         let v = CellValue::Binary("0xdeadbeef".into());
         assert_eq!(
@@ -123,7 +138,8 @@ mod tests {
         for v in [
             CellValue::Null,
             CellValue::Bool(true),
-            CellValue::Int(-9_000_000_000),
+            CellValue::Int(-2_000_000_000),
+            CellValue::BigInt("-9223372036854775808".into()),
             CellValue::Float(2.5),
             CellValue::Decimal("0.0001".into()),
             CellValue::Text("héllo ☃".into()),

@@ -17,10 +17,12 @@ export function renderCell(cell: CellValue): Rendered {
     case "Null":
       return { text: "NULL", align: "left", nullish: true, mono: false };
     case "Int":
+    case "BigInt":
     case "Float":
     case "Decimal":
-      // Right-aligned + monospace so digits line up. Decimal is already a string
-      // from the wire — String() keeps it verbatim (no float rounding).
+      // Right-aligned + monospace so digits line up. Decimal and BigInt are
+      // already strings from the wire — String() keeps them verbatim (no float
+      // rounding, no 2^53 precision loss for bigint — billz-s7p).
       return { text: String((cell as { value: unknown }).value), align: "right", nullish: false, mono: true };
     case "Bool":
       return { text: (cell as { value: boolean }).value ? "true" : "false", align: "left", nullish: false, mono: false };
