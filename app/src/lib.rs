@@ -7,7 +7,7 @@
 use billz_core::{
     CachingSecretStore, ColumnInfo, ConnectionConfig, ConnectionId, ConnectionStore, CoreError,
     DatabaseInfo, ExecutionContext, KeychainSecretStore, QueryResult, QueryStore, SavedQuery,
-    SavedQueryId, SchemaCache, SecretStore, TableInfo, ViewInfo,
+    SavedQueryId, SchemaCache, SecretStore, TableInfo, ViewInfo, build_connection_string,
 };
 use tauri::{Manager, State};
 
@@ -71,10 +71,11 @@ async fn save_connection(
     // brand-new connection has nothing cached, so this is a harmless no-op.
     let connect_changed = password.is_some()
         || state.connections.get(&cfg.id)?.is_some_and(|old| {
-            old.server != cfg.server
-                || old.username != cfg.username
-                || old.encrypt != cfg.encrypt
-                || old.trust_server_certificate != cfg.trust_server_certificate
+            // Compare via the connection-string builder (the single source of
+            // truth for what affects a connection) with a fixed dummy password,
+            // so this can't drift as connect-affecting fields are added/changed —
+            // only cfg-derived params differ here (password is handled above).
+            build_connection_string(&old, "") != build_connection_string(&cfg, "")
         });
     if let Some(pw) = password {
         state.secrets.set_password(&cfg.id, &pw)?;

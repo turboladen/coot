@@ -53,7 +53,16 @@ pub(crate) async fn run_batch(
     sql: &str,
 ) -> Result<Vec<QueryResult>> {
     apply_use_statement(client, ctx).await?;
+    collect_multi(client, sql).await
+}
 
+/// Run a multi-result batch on a connected client and drain every result set
+/// into core's [`QueryResult`]s. Does NOT apply `USE` (the caller does) and does
+/// not close. Shared by [`run_batch`] and the no-bind branch of
+/// [`run_params_on_client`] so the collection logic — and any future
+/// `rows_affected` / PRINT capture (`billz-38l` / `billz-mfd`) — lives in ONE
+/// place instead of drifting between the two paths.
+async fn collect_multi(client: &mut Client<Ready>, sql: &str) -> Result<Vec<QueryResult>> {
     let multi = client
         .query_multiple(sql, &[])
         .await
@@ -132,16 +141,7 @@ async fn run_params_on_client(
 
     if named.is_empty() {
         // No bind params → keep the multi-result path (raw-text-only or no params).
-        let multi = client
-            .query_multiple(&sent_sql, &[])
-            .await
-            .map_err(|e| CoreError::Query(e.to_string()))?;
-        let streams = multi.into_query_streams();
-        let mut out = Vec::with_capacity(streams.len());
-        for stream in streams {
-            out.push(query_stream_to_result(stream)?);
-        }
-        Ok(out)
+        collect_multi(client, &sent_sql).await
     } else {
         // Bind params → `sp_executesql`, a single result set (F5).
         let stream = client
