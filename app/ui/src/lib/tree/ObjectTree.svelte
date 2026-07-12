@@ -1,39 +1,24 @@
 <script lang="ts">
-  import { type DatabaseInfo, listDatabases, refreshSchema } from "../api";
+  import { refreshSchema } from "../api";
   import { conns } from "../connections.svelte";
+  import { dbStore } from "../databases.svelte";
   import DatabaseNode from "./DatabaseNode.svelte";
   import LoadingNote from "./LoadingNote.svelte";
   import { bumpRefresh } from "./refresh.svelte";
 
   // The active connection is the module-level source of truth (no prop plumbing).
   // App.svelte wraps this in {#key conns.activeId} so switching connections
-  // remounts the whole tree — every node returns to idle and databases reload.
+  // remounts the whole tree — every node returns to idle. The databases list
+  // itself lives in the shared `dbStore` (cwt.10), loaded once by App.svelte's
+  // effect and shared with the DB picker; this component only READS it.
   const activeId = conns.activeId;
-
-  let status = $state<"idle" | "loading" | "loaded" | "error">("idle");
-  let error = $state<string | null>(null);
-  let databases = $state<DatabaseInfo[]>([]);
-
-  async function load() {
-    if (!activeId) return;
-    // Same double-fetch guard as the nodes: flip out of "idle" before the await.
-    status = "loading";
-    try {
-      databases = await listDatabases(activeId);
-      status = "loaded";
-    } catch (e) {
-      error = String(e);
-      status = "error";
-    }
-  }
-
-  // Root loads eagerly on mount (a connection is active). Node children stay lazy.
-  if (activeId) load();
 
   async function refresh() {
     if (!activeId) return;
-    // Invalidate core FIRST, then remount so the re-fetch misses the cache and
-    // re-queries SQL (order matters — bump before invalidate would re-fill from stale).
+    // Invalidate core FIRST, then bump: App.svelte's effect re-runs the shared
+    // load (missing the just-cleared cache → re-queries SQL) and the {#key}
+    // remounts the tree so every node returns to idle. Bumping before invalidate
+    // would re-fill from stale.
     await refreshSchema(activeId);
     bumpRefresh();
   }
@@ -47,18 +32,19 @@
 
   {#if !activeId}
     <p class="hint">Select a connection to browse its objects.</p>
-  {:else if status === "loading"}
-    <LoadingNote text="Loading databases…" />
-  {:else if status === "error"}
-    <p class="hint err">{error}</p>
-  {:else if databases.length === 0}
+  {:else if dbStore.status === "error"}
+    <p class="hint err">{dbStore.error}</p>
+  {:else if dbStore.status === "loaded" && dbStore.list.length === 0}
     <p class="hint">No databases.</p>
-  {:else}
+  {:else if dbStore.status === "loaded"}
     <ul>
-      {#each databases as db (db.databaseId)}
+      {#each dbStore.list as db (db.databaseId)}
         <DatabaseNode id={activeId} database={db} />
       {/each}
     </ul>
+  {:else}
+    <!-- idle (before App's effect fires) or loading -->
+    <LoadingNote text="Loading databases…" />
   {/if}
 </div>
 
