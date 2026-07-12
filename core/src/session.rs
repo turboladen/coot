@@ -78,13 +78,14 @@ impl SessionCache {
 
     /// Reuse (or lazily open) the connection for `cfg.id`, apply `ctx`'s `USE`,
     /// run `sql`, and return every result set — WITHOUT closing (that is the
-    /// reuse). Error handling depends on whether the client was REUSED: a reused
-    /// client that fails is retried once on a fresh connection (healing a stale
-    /// socket idle-dropped since the last use), surfacing the retry's result; a
-    /// client we just freshly connected is NOT retried — its failure is
-    /// deterministic (query error, bad creds), so a retry would only repeat it
-    /// and cost a second login. A dirty client left after a failed retry
-    /// self-heals on the next call (which sees it as reused and reconnects).
+    /// reuse). Retry policy (billz-lpb.1): retry once, on a fresh connection,
+    /// ONLY when a REUSED client hit a TRANSPORT error (dropped/closed socket,
+    /// TLS/TDS desync — a stale socket idle-dropped since the last use is
+    /// plausible), surfacing the retry's result. A server/query error is
+    /// deterministic — re-running just repeats it — and a freshly-connected
+    /// client's failure is likewise not transient, so both are surfaced as-is
+    /// with no wasted second login. A dirty client left after a failed retry
+    /// self-heals on the next call (its transport error there triggers a reconnect).
     ///
     /// REUSE HAZARD: the retry re-executes the WHOLE `sql` batch. That is safe
     /// for the idempotent, read-only `sys.*` introspection this serves today, but
@@ -104,16 +105,18 @@ impl SessionCache {
 
         // Retry-once inline (a plain `match`, not a generic `AsyncFnMut` helper —
         // that defeats the `Send` proof the schema Tauri commands need; see
-        // `attempt`). Only retry when attempt 1 ran on a REUSED client: a stale
-        // socket is plausible there, so `attempt(.., true)` reconnects and its
-        // result (run on a fresh connection) is the real cause, not stale-socket
-        // noise. A failure on a client we just freshly connected is deterministic,
-        // so surface it directly — no wasted second login, no masking.
+        // `attempt`). Retry ONLY when a REUSED client hit a TRANSPORT error: a
+        // stale socket is plausible there, so `attempt(.., true)` reconnects and
+        // its result (run on a fresh connection) is the real cause. A deterministic
+        // server error, or any failure on a just-freshly-connected client, is
+        // surfaced directly — no wasted second login, no masking (billz-lpb.1).
         let reused = guard.is_some();
         match attempt(&mut guard, cfg, store, ctx, sql, false).await {
             Ok(v) => Ok(v),
-            Err(_first) if reused => attempt(&mut guard, cfg, store, ctx, sql, true).await,
-            Err(first) => Err(first),
+            Err(e) if reused && e.is_transport() => {
+                attempt(&mut guard, cfg, store, ctx, sql, true).await
+            }
+            Err(e) => Err(e),
         }
     }
 }
