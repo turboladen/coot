@@ -91,6 +91,26 @@
     curSavedQuery ? deriveParams(curTab?.content ?? "", curSavedQuery.params) : [],
   );
 
+  // d28.10: the active saved-query tab has unsaved SQL edits (tab content differs
+  // from the stored definition). Gates the "Update saved query" button and doubles
+  // as the unsaved-edits signal. Exact-string compare — a trailing-newline-only
+  // diff reads as dirty (honest + simplest for a single-user tool).
+  const dirty = $derived(!!curSavedQuery && !!curTab && curTab.content !== curSavedQuery.sql);
+
+  // d28.10: explicit "redefine" counterpart to Run (d28.8: Run never redefines).
+  // Persist the tab's edited SQL + reconciled param declarations back to the linked
+  // saved query. deriveParams reconciles: surviving params keep type/scope/value,
+  // edited-in params become declared (later Runs remember them), removed drop.
+  // targetDatabase + param values untouched. Re-checks dirty (stale-click no-op).
+  async function updateSavedQuery() {
+    if (!curSavedQuery || !curTab || !dirty) return;
+    await saveQuery({
+      ...curSavedQuery,
+      sql: curTab.content,
+      params: deriveParams(curTab.content, curSavedQuery.params),
+    });
+  }
+
   // Which tier each param's displayed value resolves from (drives the badge).
   // Reads the stores reactively so a badge updates live when a store changes.
   const paramSources = $derived(
@@ -302,6 +322,15 @@
             {/each}
           </select>
           <button onclick={run} disabled={running}>{running ? "Running…" : "Run"}</button>
+          {#if curSavedQuery}
+            <button
+              onclick={updateSavedQuery}
+              disabled={!dirty}
+              title="Save the tab's edited SQL back to this saved query"
+            >
+              Update saved query
+            </button>
+          {/if}
         </div>
         <div class="grid-pane">
           <ResultTabs {results} {messages} bind:activeTab />
