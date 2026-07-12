@@ -16,13 +16,26 @@ function load(): Record<string, string> {
 
 export const globalParams = $state<Record<string, string>>(load());
 
-// Merge `writes` into the global store and persist (called on Run for
-// global-scoped params).
-export function setGlobalParams(writes: Record<string, string>): void {
-  for (const [k, v] of Object.entries(writes)) globalParams[k] = v;
+// Persist the current store to localStorage (degrade quietly on quota/serialize
+// failure — these are query inputs, not critical data).
+function persist(): void {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(globalParams));
   } catch (e) {
     console.warn("billz: failed to persist global params to localStorage", e);
   }
+}
+
+// Merge `writes` into the global store and persist (called on Run for
+// global-scoped params).
+export function setGlobalParams(writes: Record<string, string>): void {
+  for (const [k, v] of Object.entries(writes)) globalParams[k] = v;
+  persist();
+}
+
+// Clear one param's Global value + persist the removal (d28.9). delete is
+// reactive on the $state proxy.
+export function clearGlobalParam(name: string): void {
+  delete globalParams[name];
+  persist();
 }
