@@ -6,6 +6,7 @@ import {
   deriveParams,
   nextParamValues,
   parseStringMap,
+  persistDeclared,
   queriesReferencingTable,
   resolve,
   routeWrites,
@@ -247,5 +248,62 @@ describe("autoTypeParams", () => {
   test("unmappable column type (float) leaves the param raw-text (null)", () => {
     expect(autoTypeParams([p("@score", null)], columns).find((q) => q.name === "@score")!.sqlType)
       .toBe(null);
+  });
+});
+
+describe("persistDeclared (d28.8 — saved query is a stable template)", () => {
+  const stored = (sql: string, params: Param[]): SavedQuery => ({
+    id: "q1",
+    name: "q1",
+    sql,
+    targetDatabase: null,
+    params,
+  });
+  const local = (name: string, lastValue: string | null = null): Param => ({
+    name,
+    sqlType: null,
+    lastValue,
+    scope: "local",
+  });
+
+  test("orphan: an edited-in param (in values, not in stored sql) is never persisted", () => {
+    const q = stored("SELECT * FROM t WHERE a=@a", [local("@a")]);
+    const got = persistDeclared(q, { "@a": "1", "@b": "99" });
+    expect(got.params.map((p) => p.name)).toEqual(["@a"]);
+    expect(got.session).toEqual({});
+    expect(got.global).toEqual({});
+  });
+
+  test("normal fill: a declared local param's value is remembered (lastValue set)", () => {
+    const q = stored("WHERE a=@a", [local("@a")]);
+    const got = persistDeclared(q, { "@a": "42" });
+    expect(got.params.find((p) => p.name === "@a")!.lastValue).toBe("42");
+  });
+
+  test("edit-out is non-destructive: a declared param absent from values keeps its stored value", () => {
+    const q = stored("WHERE a=@a AND b=@b", [local("@a", "kept"), local("@b", "old")]);
+    // @b edited out of the tab → not in the bar's values.
+    const got = persistDeclared(q, { "@a": "new" });
+    expect(got.params.find((p) => p.name === "@a")!.lastValue).toBe("new");
+    expect(got.params.find((p) => p.name === "@b")!.lastValue).toBe("old");
+  });
+
+  test("tier routing: a declared session param routes to the session map, lastValue cleared", () => {
+    const q = stored("WHERE a=@a", [{ name: "@a", sqlType: null, lastValue: null, scope: "session" }]);
+    const got = persistDeclared(q, { "@a": "sv" });
+    expect(got.session).toEqual({ "@a": "sv" });
+    expect(got.params.find((p) => p.name === "@a")!.lastValue).toBe(null);
+  });
+
+  test("cleared-but-visible: a declared param set to '' persists '' (distinct from edit-out)", () => {
+    const q = stored("WHERE a=@a", [local("@a", "old")]);
+    const got = persistDeclared(q, { "@a": "" });
+    expect(got.params.find((p) => p.name === "@a")!.lastValue).toBe("");
+  });
+
+  test("consistency: returned param names are always a subset of the stored sql's params", () => {
+    const q = stored("WHERE a=@a", [local("@a")]);
+    const got = persistDeclared(q, { "@a": "1", "@b": "2", "@c": "3" });
+    expect(got.params.every((p) => q.sql.includes(p.name))).toBe(true);
   });
 });
