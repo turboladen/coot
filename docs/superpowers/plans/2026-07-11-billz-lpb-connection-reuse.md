@@ -21,6 +21,10 @@ runner is intentionally left connecting-per-call.
 - `cargo fmt` + `cargo clippy` clean before done. **Warnings are errors.**
 - `SqlValue` / any driver enum match needs a wildcard arm (not touched here, but hold).
 - Reused sessions carry state → `USE [db]` MUST be re-issued per call (via `run_batch`).
+- `SessionCache::run`'s future MUST be `Send` — it is awaited inside the four
+  `#[tauri::command]` schema commands (`SecretStore: Send + Sync`,
+  `core/src/connection.rs:92-95`). This forces the `async move` closure in Task 2
+  Step 3 and is guarded by the `run_future_is_send` test.
 - Integration tests hit the real DEV box, gated on `MSSQL_SERVER`/`MSSQL_USER`/
   `MSSQL_PASSWORD`/`MSSQL_DATABASE`; they must clean-skip when unset.
 - Crate name for cargo: `billz-core`.
@@ -247,8 +251,13 @@ pub mod types;
 
 Run: `cargo test -p billz-core session::tests::`
 Expected: PASS (3 tests). `with_retry` is exercised by tests; it is not yet used
-in non-test code, but do NOT run `clippy` yet (that comes after `run` uses it in
-Step 3).
+in non-test code.
+
+**Ordering trap — do NOT run `just lint` / `cargo clippy` between this step and
+Step 3.** `with_retry` is a private non-test `async fn` used only by
+`#[cfg(test)]` code until `run` (Step 3) calls it, so the lib target sees it as
+`dead_code` → `-D warnings` fails. `cargo test` here is safe (test cfg uses it);
+clippy is only valid once Step 3 lands. This is why the clippy gate is Step 7.
 
 - [ ] **Step 3: Add `SessionCache` (struct, `new`, `slot`, `evict`, `run`)**
 
@@ -287,7 +296,9 @@ impl SessionCache {
     /// Reuse (or lazily open) the connection for `cfg.id`, apply `ctx`'s `USE`,
     /// run `sql`, and return every result set — WITHOUT closing (that is the
     /// reuse). On any error, drop the possibly-dirty client and retry once on a
-    /// fresh connection.
+    /// fresh connection. If BOTH attempts fail, the slot keeps a possibly-dirty
+    /// client; the next call's first attempt fails and its retry reconnects, so
+    /// it self-heals within one call.
     pub async fn run(
         &self,
         cfg: &ConnectionConfig,
@@ -298,7 +309,14 @@ impl SessionCache {
         let slot = self.slot(&cfg.id);
         let mut guard = slot.lock().await; // serializes ops on this connection
 
-        with_retry(async |fresh: bool| {
+        // `async move`: move the guard into the closure. `guard` is used only
+        // here (never after `with_retry(..).await`), so moving is behaviour-
+        // identical — the lock releases when the closure drops as `run` returns.
+        // It is also REQUIRED for `Send`: an `async` (non-move) closure that
+        // captures `&mut guard` and is passed through the generic `AsyncFnMut`
+        // bound produces a future the compiler cannot prove `Send`, which would
+        // break the four schema Tauri commands (their futures must be `Send`).
+        with_retry(async move |fresh: bool| {
             // fresh=true (the retry) overwrites — and thus drops — the stale
             // client; connect also runs when the slot was never populated.
             if fresh || guard.is_none() {
@@ -324,6 +342,29 @@ Add to the `tests` module in `core/src/session.rs`:
     fn evict_absent_id_is_noop() {
         let sessions = SessionCache::new();
         sessions.evict(&ConnectionId("never-connected".into())); // must not panic
+    }
+
+    #[test]
+    fn run_future_is_send() {
+        // The four schema Tauri commands await SessionCache::run transitively, and
+        // those command futures MUST be Send (core/src/connection.rs:92-95). Assert
+        // it HERE in `core` so a regression (e.g. dropping `async move`) fails with
+        // a local error instead of a cryptic Send error in the `app` crate. Type-
+        // check only — the future is never polled, so no runtime and no DB contact.
+        fn assert_send<T: Send>(_: T) {}
+        let sessions = SessionCache::new();
+        let store = InMemorySecretStore::default();
+        let cfg = ConnectionConfig {
+            id: ConnectionId("send-check".into()),
+            name: "send-check".into(),
+            server: "unused".into(),
+            username: "unused".into(),
+            default_database: None,
+            encrypt: false,
+            trust_server_certificate: true,
+        };
+        let ctx = ExecutionContext::new(cfg.id.clone());
+        assert_send(sessions.run(&cfg, &store, &ctx, "SELECT 1"));
     }
 
     /// Live `(cfg, store)` from `MSSQL_*`, or `None` (runtime skip, NOT #[ignore])
@@ -395,8 +436,9 @@ pub use session::SessionCache;
 - [ ] **Step 7: Run headless tests + full lint/format**
 
 Run: `cargo test -p billz-core session:: && just lint && just fmt`
-Expected: PASS (4 headless tests: 3 × `with_retry`, 1 × `evict`; the live test
-clean-skips). Clippy clean, no warnings.
+Expected: PASS (5 headless tests: 3 × `with_retry`, `evict_absent_id_is_noop`,
+`run_future_is_send`; the live test clean-skips). Clippy clean, no warnings —
+this is the first point clippy is valid (see the Step 2 ordering trap).
 
 - [ ] **Step 8: Commit**
 
@@ -760,8 +802,9 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
   signatures unchanged → Task 3. ✓
 - Lifecycle: Refresh keeps warm client (`invalidate_connection` data-only); edit
   /delete evict (`forget_connection`) → Task 3 + Task 4. ✓
-- Testing: headless `with_retry` + `evict` + `forget_connection`; env-gated live
-  reuse/reconnect; live-test signature ripple → Tasks 2 & 3. ✓
+- Testing: headless `with_retry` + `evict` + `run_future_is_send` (Send guard) +
+  `forget_connection`; env-gated live reuse/reconnect; live-test signature ripple
+  → Tasks 2 & 3. ✓
 - `lib.rs` module wiring + `SessionCache` export → Task 2 Steps 1 & 6. ✓
 - No frontend changes → confirmed (no `app/ui` files touched). ✓
 
