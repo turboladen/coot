@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { Param } from "./api";
-import { deriveParams, rememberValues, toResolvedParams } from "./paramBarLogic";
+import { deriveParams, nextParamValues, rememberValues, toResolvedParams } from "./paramBarLogic";
 
 const bind = (name: string, lastValue: string | null = null): Param => ({
   name,
@@ -53,5 +53,32 @@ describe("toResolvedParams / rememberValues", () => {
     const got = rememberValues(params, { "@cust": "42" });
     expect(got[0].lastValue).toBe("42");
     expect(got[1].lastValue).toBe(null);
+  });
+});
+
+describe("nextParamValues", () => {
+  const p = (name: string, lastValue: string | null = null): Param => ({
+    name,
+    sqlType: null,
+    lastValue,
+    scope: "local",
+  });
+
+  test("tab switch resets each field fresh from lastValue (drops typed values)", () => {
+    expect(nextParamValues(true, [p("@a", "av"), p("@b")], { "@a": "typed" })).toEqual({
+      "@a": "av",
+      "@b": "",
+    });
+  });
+
+  test("same-tab preserves typed values, seeds newly-appeared params from lastValue", () => {
+    expect(nextParamValues(false, [p("@a", "av"), p("@new", "nv")], { "@a": "typed" })).toEqual({
+      "@a": "typed",
+      "@new": "nv",
+    });
+  });
+
+  test("same-tab preserves a user-cleared empty value ('' is not replaced)", () => {
+    expect(nextParamValues(false, [p("@a", "av")], { "@a": "" })).toEqual({ "@a": "" });
   });
 });

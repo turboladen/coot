@@ -10,7 +10,7 @@
   import TabBar from "./lib/TabBar.svelte";
   import ResultTabs from "./lib/ResultTabs.svelte";
   import { type Message, summarize } from "./lib/resultSummary";
-  import { deriveParams, rememberValues, toResolvedParams } from "./lib/paramBarLogic";
+  import { deriveParams, nextParamValues, rememberValues, toResolvedParams } from "./lib/paramBarLogic";
   import { conns, refresh } from "./lib/connections.svelte";
   import { library, refresh as refreshLibrary, save as saveQuery } from "./lib/savedQueries.svelte";
   import { activeContent, flushSave, restore, setActiveContent, setActiveDatabase, tabsState } from "./lib/tabs.svelte";
@@ -101,14 +101,11 @@
   $effect(() => {
     const id = tabsState.activeId; // tab switch → full reset
     const params = curParams; // track: late library load + new @names on edit
-    const switched = id !== valuesTabId;
-    const next: Record<string, string> = {};
-    for (const p of params) {
-      const kept = untrack(() => paramValues[p.name]);
-      next[p.name] = switched ? (p.lastValue ?? "") : (kept ?? p.lastValue ?? "");
-    }
+    // Snapshot prior values via untrack (a plain copy — reading the proxy's keys
+    // outside untrack would subscribe and re-arm this effect on our own write).
+    const prev = untrack(() => ({ ...paramValues }));
+    paramValues = nextParamValues(id !== valuesTabId, params, prev);
     valuesTabId = id;
-    paramValues = next;
   });
 
   async function run() {
@@ -325,7 +322,6 @@
   }
   .workspace {
     display: grid;
-    /* tab bar (auto) · editor · toolbar (auto) · grid */
     /* tab bar · param bar · editor · toolbar · grid */
     grid-template-rows: auto auto minmax(8rem, 40%) auto 1fr;
     height: 100%;

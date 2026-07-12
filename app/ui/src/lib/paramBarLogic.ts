@@ -38,3 +38,21 @@ export function toResolvedParams(params: Param[], values: Record<string, string>
 export function rememberValues(params: Param[], values: Record<string, string>): Param[] {
   return params.map((p) => (p.name in values ? { ...p, lastValue: values[p.name] } : p));
 }
+
+// The next param-bar field values, keyed by name. On a tab `switched`, each field
+// resets fresh from its `lastValue` (never bleed one query's values into another).
+// Otherwise (same-tab recompute — an SQL edit added/removed a param, or the
+// library loaded late) a value already in `prev` (typed but not yet run) is
+// PRESERVED, and a newly-appeared param seeds from its `lastValue`. Note: `??`
+// falls through only on null/undefined, so a user-cleared "" is preserved.
+export function nextParamValues(
+  switched: boolean,
+  params: Param[],
+  prev: Record<string, string>,
+): Record<string, string> {
+  const next: Record<string, string> = {};
+  for (const p of params) {
+    next[p.name] = switched ? (p.lastValue ?? "") : (prev[p.name] ?? p.lastValue ?? "");
+  }
+  return next;
+}
