@@ -79,9 +79,17 @@ impl SessionCache {
     /// Reuse (or lazily open) the connection for `cfg.id`, apply `ctx`'s `USE`,
     /// run `sql`, and return every result set — WITHOUT closing (that is the
     /// reuse). On any error, drop the possibly-dirty client and retry once on a
-    /// fresh connection. If BOTH attempts fail, the slot keeps a possibly-dirty
-    /// client; the next call's first attempt fails and its retry reconnects, so
-    /// it self-heals within one call.
+    /// fresh connection; if BOTH attempts fail, the ORIGINAL error is surfaced
+    /// (the reconnect-retry's error tends to mask the real cause). If both fail,
+    /// the slot keeps a possibly-dirty client; the next call's first attempt
+    /// fails and its retry reconnects, so it self-heals within one call.
+    ///
+    /// REUSE HAZARD: the retry re-executes the WHOLE `sql` batch. That is safe
+    /// for the idempotent, read-only `sys.*` introspection this serves today, but
+    /// a future caller wiring this to non-idempotent statements (INSERT/UPDATE —
+    /// the `billz-0gh.1` fan-out TODO) would double-apply side effects on a
+    /// mid-batch failure. Keep this path for idempotent reads, or add idempotency
+    /// handling before reusing it for writes.
     pub async fn run(
         &self,
         cfg: &ConnectionConfig,
@@ -95,10 +103,16 @@ impl SessionCache {
         // Retry-once inline (a plain `match`, not a generic `AsyncFnMut` helper —
         // that defeats the `Send` proof the schema Tauri commands need; see
         // `attempt`). On the first error, `attempt(.., true)` drops the stale
-        // client and reconnects before retrying.
+        // client and reconnects before retrying. If the retry also fails, surface
+        // the FIRST error — the retry ran on a fresh connection and its error
+        // (e.g. a re-login failure) tends to mask the real cause the first
+        // attempt saw (permission denied, offline database, …).
         match attempt(&mut guard, cfg, store, ctx, sql, false).await {
             Ok(v) => Ok(v),
-            Err(_first) => attempt(&mut guard, cfg, store, ctx, sql, true).await,
+            Err(first) => match attempt(&mut guard, cfg, store, ctx, sql, true).await {
+                Ok(v) => Ok(v),
+                Err(_second) => Err(first),
+            },
         }
     }
 }

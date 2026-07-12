@@ -95,7 +95,24 @@ pub async fn run_with_params(
     params: &[ResolvedParam],
 ) -> Result<Vec<QueryResult>> {
     let mut client = connect(cfg, store).await?;
-    apply_use_statement(&mut client, ctx).await?;
+    // Close even on error (matches `run`): capture the result, close, return it.
+    let out = run_params_on_client(&mut client, ctx, sql, params).await;
+    let _ = client.close().await;
+    out
+}
+
+/// Splice raw-text params, bind typed params, apply `ctx`'s `USE`, and run on an
+/// ALREADY-connected client — neither connects nor closes. Named-empty keeps the
+/// multi-result path (raw-text-only or no params); named-present uses
+/// `sp_executesql` (single result set, F5). Split out of [`run_with_params`] so
+/// that fn can `close()` the client even when this errors.
+async fn run_params_on_client(
+    client: &mut Client<Ready>,
+    ctx: &ExecutionContext,
+    sql: &str,
+    params: &[ResolvedParam],
+) -> Result<Vec<QueryResult>> {
+    apply_use_statement(client, ctx).await?;
 
     let (raw, bind) = partition(params);
     let sent_sql = splice_raw_text(sql, &raw);
@@ -113,7 +130,7 @@ pub async fn run_with_params(
         named.push(NamedParam::new(p.name.clone(), sql_value_from_bind(value)));
     }
 
-    let out = if named.is_empty() {
+    if named.is_empty() {
         // No bind params → keep the multi-result path (raw-text-only or no params).
         let multi = client
             .query_multiple(&sent_sql, &[])
@@ -124,18 +141,15 @@ pub async fn run_with_params(
         for stream in streams {
             out.push(query_stream_to_result(stream)?);
         }
-        out
+        Ok(out)
     } else {
         // Bind params → `sp_executesql`, a single result set (F5).
         let stream = client
             .query_named(&sent_sql, &named)
             .await
             .map_err(|e| CoreError::Query(e.to_string()))?;
-        vec![query_stream_to_result(stream)?]
-    };
-
-    let _ = client.close().await;
-    Ok(out)
+        Ok(vec![query_stream_to_result(stream)?])
+    }
 }
 
 /// Connect per call: resolve the stored password, build the driver `Config`, and
