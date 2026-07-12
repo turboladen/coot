@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, untrack } from "svelte";
-  import { type ConnectionConfig, type ParamScope, type QueryResult, runParams, runSql } from "./lib/api";
+  import { type ConnectionConfig, type ParamScope, type QueryResult, type SqlType, runParams, runSql } from "./lib/api";
   import ConnectionForm from "./lib/ConnectionForm.svelte";
   import ConnectionList from "./lib/ConnectionList.svelte";
   import ObjectTree from "./lib/tree/ObjectTree.svelte";
@@ -102,6 +102,15 @@
   async function onScopeChange(name: string, scope: ParamScope) {
     if (!curSavedQuery) return;
     const params = curParams.map((p) => (p.name === name ? { ...p, scope } : p));
+    await saveQuery({ ...curSavedQuery, params });
+  }
+
+  // Persist a type change immediately (mirrors onScopeChange). A typed param
+  // routes through d28.2's sp_executesql bind path on the next Run; raw-text
+  // (null) splices. Declares a newly-derived param in the process.
+  async function onTypeChange(name: string, sqlType: SqlType | null) {
+    if (!curSavedQuery) return;
+    const params = curParams.map((p) => (p.name === name ? { ...p, sqlType } : p));
     await saveQuery({ ...curSavedQuery, params });
   }
 
@@ -258,7 +267,7 @@
         <!-- Always a grid child (empty placeholder when no params) so the 5-track
              .workspace template stays aligned (d28.3). -->
         {#if curParams.length > 0}
-          <ParamBar params={curParams} values={paramValues} sources={paramSources} onScopeChange={onScopeChange} />
+          <ParamBar params={curParams} values={paramValues} sources={paramSources} onScopeChange={onScopeChange} onTypeChange={onTypeChange} />
         {:else}
           <div class="param-bar-slot"></div>
         {/if}

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { Param, ParamScope } from "./api";
+  import type { Param, ParamScope, SqlType } from "./api";
 
   // Fields-only param bar (d28.3/d28.4). Parent owns `values` (a $state record);
   // we mutate it in place on input. Scope changes bubble via `onScopeChange` (App
@@ -11,11 +11,13 @@
     values,
     sources = {},
     onScopeChange = () => {},
+    onTypeChange = () => {},
   }: {
     params: Param[];
     values: Record<string, string>;
     sources?: Record<string, "local" | "session" | "global" | null>;
     onScopeChange?: (name: string, scope: ParamScope) => void;
+    onTypeChange?: (name: string, sqlType: SqlType | null) => void;
   } = $props();
 </script>
 
@@ -27,9 +29,25 @@
         value={values[p.name] ?? ""}
         oninput={(e) => (values[p.name] = e.currentTarget.value)}
       />
-      {#if p.sqlType}
-        <span class="chip">{p.sqlType}</span>
-      {:else}
+      <select
+        class="type"
+        value={p.sqlType ?? ""}
+        onchange={(e) =>
+          onTypeChange(p.name, e.currentTarget.value === "" ? null : (e.currentTarget.value as SqlType))}
+        title="Bind type — raw-text is spliced literally (injectable); a typed value binds via sp_executesql"
+      >
+        <option value="">raw-text</option>
+        <option value="int">int</option>
+        <option value="bigint">bigint</option>
+        <option value="nvarchar">nvarchar</option>
+        <option value="bit">bit</option>
+        <option value="date">date</option>
+        <option value="datetime2">datetime2</option>
+        <option value="decimal">decimal</option>
+        <option value="uniqueidentifier">uniqueidentifier</option>
+        <option value="money">money</option>
+      </select>
+      {#if !p.sqlType}
         <span class="chip raw" title="raw-text — spliced literally into the SQL (injectable)">raw!</span>
       {/if}
       <select
@@ -82,7 +100,8 @@
     font-weight: 700;
     border: 1px solid #f3b4b4;
   }
-  .scope {
+  .scope,
+  .type {
     font: 0.7rem system-ui, sans-serif;
     padding: 0.1rem 0.25rem;
     border: 1px solid #c8c8c8;

@@ -1,6 +1,6 @@
 // Pure, rune-free param logic for the saved-query param bar (d28.3). Unit-tested
 // via paramBarLogic.test.ts; ParamBar.svelte / App.svelte are the runes wrappers.
-import type { Param, ResolvedParam } from "./api";
+import type { Param, ResolvedParam, SqlType } from "./api";
 
 // Matches T-SQL param placeholders. `(?<!@)` skips server globals like
 // @@ROWCOUNT / @@IDENTITY (the doubled @). NOTE (billz-u2t / PLAN §6): a regex
@@ -87,6 +87,47 @@ export function routeWrites(
     return { ...p, lastValue: value };
   });
   return { params: outParams, session, global };
+}
+
+// Map a catalog canonical type (ColumnInfo.data_type, e.g. "nvarchar(50)",
+// "decimal(19,4)", "int") into the capped SqlType set, or null (→ raw-text) for
+// types outside it. Widens (smallint→int, datetime→datetime2, varchar→nvarchar):
+// SqlType is the deliberately capped "things you filter by" set, and the driver
+// derives the sp_executesql declaration from the bound value at runtime, so a
+// widened tag still binds correctly. Exported for d28.7's right-click auto-fill.
+export function catalogTypeToSqlType(dataType: string): SqlType | null {
+  const base = dataType.split("(")[0].trim().toLowerCase();
+  switch (base) {
+    case "int":
+    case "tinyint":
+    case "smallint":
+      return "int";
+    case "bigint":
+      return "bigint";
+    case "nvarchar":
+    case "nchar":
+    case "varchar":
+    case "char":
+      return "nvarchar";
+    case "bit":
+      return "bit";
+    case "date":
+      return "date";
+    case "datetime2":
+    case "datetime":
+    case "smalldatetime":
+      return "datetime2";
+    case "decimal":
+    case "numeric":
+      return "decimal";
+    case "money":
+    case "smallmoney":
+      return "money";
+    case "uniqueidentifier":
+      return "uniqueidentifier";
+    default:
+      return null;
+  }
 }
 
 // Tolerant parse of a persisted name→value map (globalParams). null / malformed
