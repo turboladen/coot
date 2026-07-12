@@ -18,6 +18,7 @@ export type CellValue =
   | { kind: "Null" }
   | { kind: "Bool"; value: boolean }
   | { kind: "Int"; value: number }
+  | { kind: "BigInt"; value: string } // bigint as a string (billz-s7p; no f64 precision loss)
   | { kind: "Float"; value: number }
   | { kind: "Decimal"; value: string }
   | { kind: "Text"; value: string }
