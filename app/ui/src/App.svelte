@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { type ConnectionConfig, type DatabaseInfo, listDatabases, type QueryResult, runSql } from "./lib/api";
+  import { type ConnectionConfig, type QueryResult, runSql } from "./lib/api";
   import ConnectionForm from "./lib/ConnectionForm.svelte";
   import ConnectionList from "./lib/ConnectionList.svelte";
   import ObjectTree from "./lib/tree/ObjectTree.svelte";
@@ -13,6 +13,7 @@
   import { refresh as refreshLibrary } from "./lib/savedQueries.svelte";
   import { activeContent, flushSave, restore, setActiveContent, setActiveDatabase, tabsState } from "./lib/tabs.svelte";
   import { treeRefresh } from "./lib/tree/refresh.svelte";
+  import { dbStore, load as loadDatabases } from "./lib/databases.svelte";
 
   // Sidebar lower region toggles between the object tree and the saved-query
   // library (d28.6) — the library gets its own full-height home per PLAN §5.
@@ -50,28 +51,13 @@
   let messages = $state<Message[]>([]);
   let activeTab = $state<number | "messages">(0);
 
-  // Databases for the per-tab DB picker (cwt.9). Loaded for the active connection
-  // and refreshed alongside the tree (treeRefresh.nonce), swallowing errors like
-  // the tree does. Reusing list_databases — no new backend.
-  let databases = $state<DatabaseInfo[]>([]);
+  // Single trigger for the shared databases store (cwt.10): App is always
+  // mounted, so it owns the load; the tree's root and the DB picker both just
+  // read `dbStore`. Reloads on connection switch and on a schema Refresh
+  // (treeRefresh.nonce); the store drops out-of-order responses.
   $effect(() => {
-    const id = conns.activeId;
-    treeRefresh.nonce; // track: a schema Refresh also repopulates the picker
-    if (!id) {
-      databases = [];
-      return;
-    }
-    // Guard against an out-of-order resolve: on a rapid connection switch a
-    // slower prior fetch must not overwrite the newer connection's list. The
-    // cleanup runs before the next effect run (or on unmount) and drops the
-    // stale response.
-    let cancelled = false;
-    listDatabases(id)
-      .then((dbs) => !cancelled && (databases = dbs))
-      .catch(() => !cancelled && (databases = []));
-    return () => {
-      cancelled = true;
-    };
+    treeRefresh.nonce; // track: a Refresh re-issues the load
+    loadDatabases(conns.activeId);
   });
 
   // The active tab's stored target DB (null = connection default). Derived so the
@@ -87,7 +73,7 @@
   // silent USE [db] against the wrong server. The stored value is left untouched,
   // so returning to its own connection restores the selection.
   const effectiveDb = $derived(
-    activeDb !== null && databases.some((d) => d.name === activeDb) ? activeDb : null,
+    activeDb !== null && dbStore.list.some((d) => d.name === activeDb) ? activeDb : null,
   );
 
   async function run() {
@@ -225,7 +211,7 @@
             onchange={(e) => setActiveDatabase(e.currentTarget.value || null)}
           >
             <option value="">(default database)</option>
-            {#each databases as db (db.databaseId)}
+            {#each dbStore.list as db (db.databaseId)}
               <option value={db.name} disabled={db.stateDesc !== "ONLINE"}>
                 {db.name}{db.stateDesc !== "ONLINE" ? ` (${db.stateDesc.toLowerCase()})` : ""}
               </option>
