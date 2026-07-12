@@ -1,10 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import type { Param } from "./api";
+import type { ColumnInfo, Param, SavedQuery } from "./api";
 import {
+  autoTypeParams,
   catalogTypeToSqlType,
   deriveParams,
   nextParamValues,
   parseStringMap,
+  queriesReferencingTable,
   resolve,
   routeWrites,
   toResolvedParams,
@@ -187,5 +189,63 @@ describe("nextParamValues", () => {
       "@a": "S",
       "@b": "L",
     });
+  });
+});
+
+const savedQuery = (id: string, sql: string): SavedQuery => ({
+  id,
+  name: id,
+  sql,
+  targetDatabase: null,
+  params: [],
+});
+const col = (name: string, dataType: string): ColumnInfo => ({
+  name,
+  dataType,
+  nullable: true,
+  isPrimaryKey: false,
+  isForeignKey: false,
+  ordinal: 0,
+});
+
+describe("queriesReferencingTable", () => {
+  test("keeps queries that reference @table, drops others", () => {
+    const qs = [
+      savedQuery("a", "SELECT * FROM @table"),
+      savedQuery("b", "SELECT 1"),
+      savedQuery("c", "SELECT * FROM @table WHERE id=@id"),
+    ];
+    expect(queriesReferencingTable(qs).map((q) => q.id)).toEqual(["a", "c"]);
+  });
+  test("word-boundary: @table2 / @tablename do NOT count; @@table does not", () => {
+    expect(queriesReferencingTable([savedQuery("a", "FROM @table2")])).toEqual([]);
+    expect(queriesReferencingTable([savedQuery("a", "FROM @tablename")])).toEqual([]);
+    expect(queriesReferencingTable([savedQuery("a", "PRINT @@table")])).toEqual([]);
+  });
+});
+
+describe("autoTypeParams", () => {
+  const p = (name: string, sqlType: import("./api").SqlType | null): Param => ({
+    name,
+    sqlType,
+    lastValue: null,
+    scope: "local",
+  });
+  const columns = [col("cust", "int"), col("region", "nvarchar(20)"), col("score", "float")];
+
+  test("fills an unset param from a name-matching column (case-insensitive)", () => {
+    const got = autoTypeParams([p("@cust", null), p("@Region", null)], columns);
+    expect(got.find((q) => q.name === "@cust")!.sqlType).toBe("int");
+    expect(got.find((q) => q.name === "@Region")!.sqlType).toBe("nvarchar");
+  });
+  test("skips @table, already-typed params, and non-matching names", () => {
+    const got = autoTypeParams([p("@table", null), p("@cust", "bigint"), p("@nope", null)], columns);
+    expect(got.find((q) => q.name === "@table")!.sqlType).toBe(null);
+    expect(got.find((q) => q.name === "@cust")!.sqlType).toBe("bigint");
+    expect(got.find((q) => q.name === "@nope")!.sqlType).toBe(null);
+  });
+  test("unmappable column type (float) leaves the param raw-text (null)", () => {
+    expect(autoTypeParams([p("@score", null)], columns).find((q) => q.name === "@score")!.sqlType)
+      .toBe(null);
   });
 });
