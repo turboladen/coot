@@ -22,6 +22,20 @@
   // `{#key}` on the form remounts it when the target changes so fields re-init.
   let editing = $state<ConnectionConfig | null | undefined>(undefined);
 
+  // If the connection being edited is deleted from the list (dsq), close the now
+  // stale form — otherwise clicking Save would re-create the deleted connection
+  // via upsert. Reacts to the removal wherever it originates (the list deletes
+  // directly through the store). `editing` truthy ⇒ it's a config with an `id`;
+  // `null` (new) / `undefined` (closed) are left alone.
+  $effect(() => {
+    // Capture in a const so the narrowing survives into the `.some()` closure
+    // (TS widens the mutable `editing` back to its union otherwise).
+    const cfg = editing;
+    if (cfg && !conns.list.some((c) => c.id === cfg.id)) {
+      editing = undefined;
+    }
+  });
+
   // The editor-over-grid workspace (shown when no connection form is open). The
   // editor text lives in the tabsState module (one scratch tab each, autosaved);
   // `editor` bind:this points at the active tab's remounted CM (run() reads it).
