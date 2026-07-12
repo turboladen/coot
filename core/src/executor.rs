@@ -9,7 +9,9 @@
 //! (`PLAN.md` §3, `CLAUDE.md`). Errors are stringified into [`CoreError`];
 //! the driver's `Error` is never `#[from]`.
 
-use mssql_client::{Client, Column, Config, NamedParam, QueryStream, Ready, SqlValue};
+use mssql_client::{
+    Client, Column, Config, Error as DriverError, NamedParam, QueryStream, Ready, SqlValue,
+};
 
 use crate::connection::{ConnectionConfig, SecretStore, build_connection_string};
 use crate::context::ExecutionContext;
@@ -66,7 +68,7 @@ async fn collect_multi(client: &mut Client<Ready>, sql: &str) -> Result<Vec<Quer
     let multi = client
         .query_multiple(sql, &[])
         .await
-        .map_err(|e| CoreError::Query(e.to_string()))?;
+        .map_err(map_driver_error)?;
 
     // Streams borrow `&mut client`; the borrow ends once they're all consumed
     // below, so callers can reuse or close the client afterward.
@@ -147,7 +149,7 @@ async fn run_params_on_client(
         let stream = client
             .query_named(&sent_sql, &named)
             .await
-            .map_err(|e| CoreError::Query(e.to_string()))?;
+            .map_err(map_driver_error)?;
         Ok(vec![query_stream_to_result(stream)?])
     }
 }
@@ -171,6 +173,28 @@ pub(crate) async fn connect(
         .map_err(|e| CoreError::Config(e.to_string()))
 }
 
+/// Map a driver error to a [`CoreError`], distinguishing **transport-level**
+/// failures (dropped/closed socket, TLS, TDS protocol/codec desync — retryable
+/// on a fresh connection) from deterministic server/query errors. This is the
+/// ONE place `mssql_client::Error`'s variants are inspected; the driver type
+/// never escapes. Drives the session's retry-only-on-transport decision
+/// (`billz-lpb.1`). `Error` is `#[non_exhaustive]`, so the wildcard arm is
+/// mandatory — an unknown future variant is treated as deterministic (no retry).
+fn map_driver_error(e: DriverError) -> CoreError {
+    match &e {
+        DriverError::Io(_)
+        | DriverError::Connection(_)
+        | DriverError::ConnectionClosed
+        | DriverError::Tls(_)
+        | DriverError::ProtocolError(_)
+        | DriverError::Protocol(_)
+        | DriverError::Codec(_) => CoreError::Transport(e.to_string()),
+        // Server/Query/Authentication/Type/ResponseTooLarge/… are deterministic:
+        // re-running would just repeat them, so they are NOT retried.
+        _ => CoreError::Query(e.to_string()),
+    }
+}
+
 /// Apply the database context as a separate statement so the user's SQL stays
 /// unmodified (accurate server error line numbers). `use_statement` does the
 /// identifier bracket-quoting — never hand-splice `USE` here.
@@ -179,7 +203,7 @@ async fn apply_use_statement(client: &mut Client<Ready>, ctx: &ExecutionContext)
         client
             .execute(&use_stmt, &[])
             .await
-            .map_err(|e| CoreError::Query(e.to_string()))?;
+            .map_err(map_driver_error)?;
     }
     Ok(())
 }
@@ -193,7 +217,7 @@ fn query_stream_to_result(stream: QueryStream<'_>) -> Result<QueryResult> {
     let columns: Vec<ColumnMeta> = stream.columns().iter().map(column_meta).collect();
     let mut rows: Vec<Vec<CellValue>> = Vec::new();
     for row in stream {
-        let row = row.map_err(|e| CoreError::Query(e.to_string()))?;
+        let row = row.map_err(map_driver_error)?;
         let cells = (0..row.len())
             .map(|i| {
                 // `get_raw` returns `None` on out-of-range *or* decode error
@@ -469,6 +493,20 @@ mod tests {
         assert_eq!(meta.sql_type, "nvarchar");
         assert!(meta.nullable);
         assert_eq!(meta.precision, None);
+    }
+
+    #[test]
+    fn map_driver_error_classifies_transport_vs_deterministic() {
+        // Transport (retryable — a reused stale socket): dropped/closed socket,
+        // TDS protocol/codec desync.
+        assert!(map_driver_error(DriverError::ConnectionClosed).is_transport());
+        assert!(map_driver_error(DriverError::Connection("reset by peer".into())).is_transport());
+        assert!(map_driver_error(DriverError::Protocol("token desync".into())).is_transport());
+        // Deterministic (NOT retried — re-running just repeats it).
+        assert!(!map_driver_error(DriverError::Query("permission denied".into())).is_transport());
+        assert!(
+            !map_driver_error(DriverError::ResponseTooLarge { size: 10, limit: 5 }).is_transport()
+        );
     }
 
     #[test]

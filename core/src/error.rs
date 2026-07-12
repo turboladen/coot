@@ -33,6 +33,14 @@ pub enum CoreError {
     /// (`PLAN.md` §3, `CLAUDE.md`).
     #[error("query error: {0}")]
     Query(String),
+    /// A **transport-level** failure — a dropped/closed socket, TLS, or a TDS
+    /// protocol/codec desync — as opposed to a deterministic server/query error.
+    /// The executor classifies the driver's transport-ish `mssql_client::Error`
+    /// variants here (never `#[from]`). Retryable: a reused connection that hits
+    /// this may just have a stale socket, so the caller can drop it and reconnect
+    /// once (`billz-lpb.1`). See [`CoreError::is_transport`].
+    #[error("connection transport error: {0}")]
+    Transport(String),
     /// Reading or writing the on-disk connection metadata failed. `io::Error` /
     /// `serde_json::Error` are stringified here by `ConnectionStore` so this
     /// variant stays backend-agnostic (no `#[from]`), matching `Secret`/`Query`.
@@ -47,9 +55,38 @@ pub enum CoreError {
     Param(String),
 }
 
+impl CoreError {
+    /// Whether this is a transport-level failure worth retrying on a fresh
+    /// connection (`billz-lpb.1`). Only [`CoreError::Transport`] qualifies — a
+    /// `Query`/server error is deterministic, so re-running it would just repeat
+    /// the failure and cost a wasted login.
+    pub fn is_transport(&self) -> bool {
+        matches!(self, CoreError::Transport(_))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn is_transport_only_true_for_transport() {
+        assert!(CoreError::Transport("socket closed".into()).is_transport());
+        assert!(!CoreError::Query("permission denied".into()).is_transport());
+        assert!(!CoreError::Config("no server".into()).is_transport());
+        assert!(!CoreError::Secret("boom".into()).is_transport());
+        assert!(!CoreError::Store("bad json".into()).is_transport());
+        assert!(!CoreError::Param("bad int".into()).is_transport());
+    }
+
+    #[test]
+    fn transport_display_mentions_transport() {
+        let e = CoreError::Transport("connection closed".into());
+        assert_eq!(
+            e.to_string(),
+            "connection transport error: connection closed"
+        );
+    }
 
     #[test]
     fn secret_display_mentions_secret_store() {
