@@ -1,4 +1,5 @@
-//! The executor — the ONE module where `mssql-client` is used in non-test code.
+//! The executor — one of two modules (with `session`) where `mssql-client` is
+//! used in non-test code.
 //!
 //! [`run`] connects (per call), applies the [`ExecutionContext`]'s `USE`, runs a
 //! SQL batch, and maps the driver's `SqlValue`→[`CellValue`] and
@@ -34,21 +35,46 @@ pub async fn run(
     sql: &str,
 ) -> Result<Vec<QueryResult>> {
     let mut client = connect(cfg, store).await?;
-    apply_use_statement(&mut client, ctx).await?;
+    // Close even on error: capture the result, close, then return it.
+    let out = run_batch(&mut client, ctx, sql).await;
+    let _ = client.close().await;
+    out
+}
 
+/// Apply `ctx`'s `USE` and run `sql` on an ALREADY-connected client, returning
+/// every result set. Neither connects nor closes — shared by [`run`]
+/// (connect → run_batch → close) and [`crate::session::SessionCache`] (reuse a
+/// live client → run_batch, no close). `pub(crate)`: the driver stays inside
+/// `core`. A reused session carries state, so applying the context's `USE` here
+/// (every call) is mandatory, not optional.
+pub(crate) async fn run_batch(
+    client: &mut Client<Ready>,
+    ctx: &ExecutionContext,
+    sql: &str,
+) -> Result<Vec<QueryResult>> {
+    apply_use_statement(client, ctx).await?;
+    collect_multi(client, sql).await
+}
+
+/// Run a multi-result batch on a connected client and drain every result set
+/// into core's [`QueryResult`]s. Does NOT apply `USE` (the caller does) and does
+/// not close. Shared by [`run_batch`] and the no-bind branch of
+/// [`run_params_on_client`] so the collection logic — and any future
+/// `rows_affected` / PRINT capture (`billz-38l` / `billz-mfd`) — lives in ONE
+/// place instead of drifting between the two paths.
+async fn collect_multi(client: &mut Client<Ready>, sql: &str) -> Result<Vec<QueryResult>> {
     let multi = client
         .query_multiple(sql, &[])
         .await
         .map_err(|e| CoreError::Query(e.to_string()))?;
 
     // Streams borrow `&mut client`; the borrow ends once they're all consumed
-    // below, so the best-effort `close` afterward is safe.
+    // below, so callers can reuse or close the client afterward.
     let streams = multi.into_query_streams();
     let mut out = Vec::with_capacity(streams.len());
     for stream in streams {
         out.push(query_stream_to_result(stream)?);
     }
-    let _ = client.close().await;
     Ok(out)
 }
 
@@ -78,7 +104,24 @@ pub async fn run_with_params(
     params: &[ResolvedParam],
 ) -> Result<Vec<QueryResult>> {
     let mut client = connect(cfg, store).await?;
-    apply_use_statement(&mut client, ctx).await?;
+    // Close even on error (matches `run`): capture the result, close, return it.
+    let out = run_params_on_client(&mut client, ctx, sql, params).await;
+    let _ = client.close().await;
+    out
+}
+
+/// Splice raw-text params, bind typed params, apply `ctx`'s `USE`, and run on an
+/// ALREADY-connected client — neither connects nor closes. Named-empty keeps the
+/// multi-result path (raw-text-only or no params); named-present uses
+/// `sp_executesql` (single result set, F5). Split out of [`run_with_params`] so
+/// that fn can `close()` the client even when this errors.
+async fn run_params_on_client(
+    client: &mut Client<Ready>,
+    ctx: &ExecutionContext,
+    sql: &str,
+    params: &[ResolvedParam],
+) -> Result<Vec<QueryResult>> {
+    apply_use_statement(client, ctx).await?;
 
     let (raw, bind) = partition(params);
     let sent_sql = splice_raw_text(sql, &raw);
@@ -96,36 +139,27 @@ pub async fn run_with_params(
         named.push(NamedParam::new(p.name.clone(), sql_value_from_bind(value)));
     }
 
-    let out = if named.is_empty() {
+    if named.is_empty() {
         // No bind params → keep the multi-result path (raw-text-only or no params).
-        let multi = client
-            .query_multiple(&sent_sql, &[])
-            .await
-            .map_err(|e| CoreError::Query(e.to_string()))?;
-        let streams = multi.into_query_streams();
-        let mut out = Vec::with_capacity(streams.len());
-        for stream in streams {
-            out.push(query_stream_to_result(stream)?);
-        }
-        out
+        collect_multi(client, &sent_sql).await
     } else {
         // Bind params → `sp_executesql`, a single result set (F5).
         let stream = client
             .query_named(&sent_sql, &named)
             .await
             .map_err(|e| CoreError::Query(e.to_string()))?;
-        vec![query_stream_to_result(stream)?]
-    };
-
-    let _ = client.close().await;
-    Ok(out)
+        Ok(vec![query_stream_to_result(stream)?])
+    }
 }
 
 /// Connect per call: resolve the stored password, build the driver `Config`, and
 /// connect. Shared by [`run`] and [`run_with_params`]. A missing stored password
 /// is a *configuration* gap, not a store *failure* (`get_password` returned
 /// `Ok(None)`), so it maps to `Config`, not `Secret`.
-async fn connect(cfg: &ConnectionConfig, store: &dyn SecretStore) -> Result<Client<Ready>> {
+pub(crate) async fn connect(
+    cfg: &ConnectionConfig,
+    store: &dyn SecretStore,
+) -> Result<Client<Ready>> {
     let password = store.get_password(&cfg.id)?.ok_or_else(|| {
         CoreError::Config(format!("no stored password for connection {}", cfg.id.0))
     })?;
