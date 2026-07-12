@@ -6,8 +6,9 @@
 
 use billz_core::{
     CachingSecretStore, ColumnInfo, ConnectionConfig, ConnectionId, ConnectionStore, CoreError,
-    DatabaseInfo, ExecutionContext, KeychainSecretStore, QueryResult, QueryStore, SavedQuery,
-    SavedQueryId, SchemaCache, SecretStore, TableInfo, ViewInfo, build_connection_string,
+    DatabaseInfo, ExecutionContext, KeychainSecretStore, QueryResult, QueryStore, ResolvedParam,
+    SavedQuery, SavedQueryId, SchemaCache, SecretStore, TableInfo, ViewInfo,
+    build_connection_string,
 };
 use tauri::{Manager, State};
 
@@ -151,6 +152,29 @@ async fn run_sql(
     Ok(out)
 }
 
+/// The parameterized run path (d28.3). Like `run_sql` but binds/splices `params`
+/// via `run_with_params` and sends a SINGLE batch (no `GO`-splitting — a
+/// parameterized query spanning `GO` is out of scope). `database` maps to the
+/// `ExecutionContext` exactly as `run_sql`.
+#[tauri::command]
+async fn run_params(
+    id: ConnectionId,
+    database: Option<String>,
+    sql: String,
+    params: Vec<ResolvedParam>,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<QueryResult>> {
+    let cfg = state
+        .connections
+        .get(&id)?
+        .ok_or_else(|| CoreError::Config(format!("no connection {}", id.0)))?;
+    let mut ctx = ExecutionContext::new(cfg.id.clone());
+    if let Some(db) = database {
+        ctx = ctx.with_database(db);
+    }
+    Ok(billz_core::run_with_params(&cfg, &state.secrets, &ctx, &sql, &params).await?)
+}
+
 /// Object-tree data (rqb.2). The four schema commands mirror `test_connection`'s
 /// idiom: resolve `cfg` by id (`?` → `AppError::Core`), then delegate to the
 /// managed [`SchemaCache`], which dedups + caches per key. Returns are all
@@ -272,6 +296,7 @@ pub fn run() {
             delete_connection,
             test_connection,
             run_sql,
+            run_params,
             list_databases,
             list_tables,
             list_views,
