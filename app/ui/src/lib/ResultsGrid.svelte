@@ -73,6 +73,9 @@
   // template's $rowVirtualizer reads keep it subscribed (which runs _didMount /
   // attaches the resize observer for its mounted lifetime).
   let scrollEl = $state<HTMLDivElement>();
+  // billz-c6e: the body owns horizontal scroll; the header (a flex sibling that
+  // stays vertically pinned) mirrors this via translateX so columns stay aligned.
+  let bodyScrollLeft = $state(0);
   const rowVirtualizer = createVirtualizer<HTMLDivElement, HTMLDivElement>({
     count: 0, // real count fed by the re-bind $effect below (avoids a reactive read here)
     getScrollElement: () => scrollEl ?? null,
@@ -102,6 +105,9 @@
   });
 
   const gridTemplate = $derived(headerGroup ? headerGroup.headers.map((h) => `${h.getSize()}px`).join(" ") : "");
+  // billz-c6e: exact total column width. Pinning header + body content to this
+  // makes the horizontal scroll extent precise (no width:100%-vs-overflow drift).
+  const totalWidth = $derived(headerGroup ? headerGroup.headers.reduce((sum, h) => sum + h.getSize(), 0) : 0);
 </script>
 
 {#if result.columns.length === 0}
@@ -115,49 +121,64 @@
   </div>
 {:else}
   <div class="grid">
-    <!-- Sticky header — same column widths as the body rows. -->
-    <div class="header-row" style:grid-template-columns={gridTemplate}>
-      {#each headerGroup?.headers ?? [] as header, i (header.id)}
-        <div class="th" style:width="{header.getSize()}px">
-          {header.column.columnDef.header}<span class="htype">{result.columns[i].sqlType}</span>
-        </div>
-      {/each}
+    <!-- Sticky header. The clip wrapper stays vertically pinned (flex:none) and
+         owns the bottom border; the inner header-row is pinned to the total
+         content width and mirrors the body's horizontal scroll via translateX
+         so headers track their columns (billz-c6e). -->
+    <div class="header-clip">
+      <div
+        class="header-row"
+        style:grid-template-columns={gridTemplate}
+        style:width="{totalWidth}px"
+        style:transform="translateX(-{bodyScrollLeft}px)"
+      >
+        {#each headerGroup?.headers ?? [] as header, i (header.id)}
+          <div class="th" style:width="{header.getSize()}px">
+            {header.column.columnDef.header}<span class="htype">{result.columns[i].sqlType}</span>
+          </div>
+        {/each}
+      </div>
     </div>
 
-    <!-- Scroll container: fills remaining height, owns the vertical scroll. -->
-    <div class="body" bind:this={scrollEl}>
+    <!-- Scroll container: fills remaining height, owns BOTH scroll axes.
+         bind:scrollLeft drives the header's translateX above. -->
+    <div class="body" bind:this={scrollEl} onscroll={(e) => (bodyScrollLeft = e.currentTarget.scrollLeft)}>
       {#if rows.length === 0}
         <div class="no-rows">
           <Search size={20} />
           <span>No rows.</span>
         </div>
       {:else}
-        <!-- Spacer sized to the full virtual height; rows absolutely positioned. -->
-        <div class="spacer" style:height="{$rowVirtualizer.getTotalSize()}px">
-          {#each $rowVirtualizer.getVirtualItems() as vi (vi.key)}
-            {@const row = rows[vi.index]}
-            <div
-              class="tr"
-              class:stripe={vi.index % 2 === 1}
-              style:grid-template-columns={gridTemplate}
-              style:height="{ROW_H}px"
-              style:transform="translateY({vi.start}px)"
-            >
-              {#each row.getVisibleCells() as cell (cell.id)}
-                {@const r = renderCell(cell.getValue<CellValue>())}
-                <div
-                  class="td"
-                  class:nullish={r.nullish}
-                  class:mono={r.mono}
-                  class:num={r.align === "right"}
-                  style:width="{cell.column.getSize()}px"
-                  style:text-align={r.align}
-                >
-                  {r.text}
-                </div>
-              {/each}
-            </div>
-          {/each}
+        <!-- Inner pinned to the total column width so both the horizontal scroll
+             extent and the rows share the header's exact width. -->
+        <div class="body-inner" style:width="{totalWidth}px">
+          <!-- Spacer sized to the full virtual height; rows absolutely positioned. -->
+          <div class="spacer" style:height="{$rowVirtualizer.getTotalSize()}px">
+            {#each $rowVirtualizer.getVirtualItems() as vi (vi.key)}
+              {@const row = rows[vi.index]}
+              <div
+                class="tr"
+                class:stripe={vi.index % 2 === 1}
+                style:grid-template-columns={gridTemplate}
+                style:height="{ROW_H}px"
+                style:transform="translateY({vi.start}px)"
+              >
+                {#each row.getVisibleCells() as cell (cell.id)}
+                  {@const r = renderCell(cell.getValue<CellValue>())}
+                  <div
+                    class="td"
+                    class:nullish={r.nullish}
+                    class:mono={r.mono}
+                    class:num={r.align === "right"}
+                    style:width="{cell.column.getSize()}px"
+                    style:text-align={r.align}
+                  >
+                    {r.text}
+                  </div>
+                {/each}
+              </div>
+            {/each}
+          </div>
         </div>
       {/if}
     </div>
@@ -172,11 +193,17 @@
     min-height: 0;
     font-size: 13px;
   }
+  /* Clips the horizontally-translated header and owns the full-width bottom
+     border so it spans the pane even when the table is narrower than it. */
+  .header-clip {
+    flex: none;
+    overflow: hidden;
+    background: var(--panel);
+    border-bottom: 2px solid var(--border-strong);
+  }
   .header-row {
     display: grid;
-    border-bottom: 2px solid var(--border-strong);
     background: var(--panel);
-    flex: none;
   }
   .th {
     padding: 4px 8px;
@@ -199,6 +226,11 @@
     flex: 1 1 auto;
     min-height: 0;
     overflow: auto;
+    position: relative;
+  }
+  /* Pinned to the exact total column width (inline) so the body's horizontal
+     scroll extent matches the header and the rows below. */
+  .body-inner {
     position: relative;
   }
   .spacer {
