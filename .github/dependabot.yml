@@ -1,0 +1,38 @@
+# Dependabot version updates — keep deps current with low PR noise.
+# Weekly per ecosystem; minor+patch bumps are batched into ONE grouped PR, while
+# MAJOR bumps come as individual PRs so each breaking upgrade gets its own review
+# (e.g. the typescript 6->7 / svelte-check situation — see billz-0gh.8).
+# Security updates are separate and always-on (GitHub repo setting), independent
+# of this file. Advisories that can't be fixed here (glib/gtk3 via Tauri) are
+# handled in deny.toml / billz-0gh.9, not here.
+version: 2
+updates:
+  # Rust workspace (root Cargo.toml + core/ and app/ members).
+  - package-ecosystem: "cargo"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      cargo-minor-patch:
+        update-types:
+          - "minor"
+          - "patch"
+
+  # Frontend (Svelte + Vite, bun.lock).
+  - package-ecosystem: "bun"
+    directory: "/app/ui"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      frontend-minor-patch:
+        update-types:
+          - "minor"
+          - "patch"
