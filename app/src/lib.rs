@@ -7,8 +7,8 @@
 use billz_core::{
     CachingSecretStore, ColumnInfo, ConnectionConfig, ConnectionId, ConnectionStore, CoreError,
     DatabaseInfo, ExecutionContext, KeychainSecretStore, QueryResult, QueryStore, ResolvedParam,
-    SavedQuery, SavedQueryId, SchemaCache, SecretStore, TableInfo, ViewInfo,
-    build_connection_string,
+    SavedQuery, SavedQueryId, SchemaCache, SecretStore, SessionOverlaySecretStore, TableInfo,
+    ViewInfo, build_connection_string,
 };
 use tauri::{Manager, State};
 
@@ -38,7 +38,7 @@ type AppResult<T> = Result<T, AppError>;
 /// tab / `GO` batch reuses the in-memory copy. Both `Send + Sync + 'static`.
 struct AppState {
     connections: ConnectionStore,
-    secrets: CachingSecretStore<KeychainSecretStore>,
+    secrets: SessionOverlaySecretStore<CachingSecretStore<KeychainSecretStore>>,
     schema: SchemaCache, // in-memory introspection cache (rqb.2)
     queries: QueryStore, // saved-query library (d28.6) — saved_queries.json
 }
@@ -70,16 +70,30 @@ async fn save_connection(
     // keeps the warm client — that amortized login is the whole point of
     // billz-lpb. A new password ⇒ changed; server/user/TLS diff ⇒ changed; a
     // brand-new connection has nothing cached, so this is a harmless no-op.
+    let old = state.connections.get(&cfg.id)?;
     let connect_changed = password.is_some()
-        || state.connections.get(&cfg.id)?.is_some_and(|old| {
+        || old.as_ref().is_some_and(|old| {
             // Compare via the connection-string builder (the single source of
             // truth for what affects a connection) with a fixed dummy password,
             // so this can't drift as connect-affecting fields are added/changed —
             // only cfg-derived params differ here (password is handled above).
-            build_connection_string(&old, "") != build_connection_string(&cfg, "")
+            // Also fire when the remember flag flips (85b): the creds *source*
+            // changed (Keychain ↔ session) even if the connection string didn't.
+            build_connection_string(old, "") != build_connection_string(&cfg, "")
+                || old.remember_password != cfg.remember_password
         });
-    if let Some(pw) = password {
-        state.secrets.set_password(&cfg.id, &pw)?;
+    // 85b: route the password by the remember flag. remember-on → Keychain (durable,
+    // write-through). remember-off → clear any stale Keychain entry (durable only, so
+    // a live session password on a metadata re-save survives) + stash session-only.
+    if cfg.remember_password {
+        if let Some(pw) = password {
+            state.secrets.set_password(&cfg.id, &pw)?;
+        }
+    } else {
+        state.secrets.clear_durable(&cfg.id)?;
+        if let Some(pw) = password {
+            state.secrets.set_session_password(&cfg.id, &pw);
+        }
     }
     state.connections.upsert(&cfg)?;
     if connect_changed {
@@ -91,8 +105,20 @@ async fn save_connection(
 #[tauri::command]
 async fn delete_connection(id: ConnectionId, state: State<'_, AppState>) -> AppResult<()> {
     state.connections.delete(&id)?;
-    state.secrets.delete_password(&id)?; // idempotent
+    state.secrets.delete_password(&id)?; // idempotent — clears session + Keychain
     state.schema.forget_connection(&id); // drop cached client + schema
+    Ok(())
+}
+
+/// Store a session-only password in memory for `id` (billz-85b). Never persisted.
+/// Called by the UI's unlock prompt for a `rememberPassword=false` connection.
+#[tauri::command]
+async fn set_session_password(
+    id: ConnectionId,
+    password: String,
+    state: State<'_, AppState>,
+) -> AppResult<()> {
+    state.secrets.set_session_password(&id, &password);
     Ok(())
 }
 
@@ -283,7 +309,7 @@ pub fn run() {
                 connections: store,
                 // Keychain reads are cached for the session (read once per
                 // connection, then reused) so a query never re-prompts.
-                secrets: CachingSecretStore::new(KeychainSecretStore),
+                secrets: SessionOverlaySecretStore::new(CachingSecretStore::new(KeychainSecretStore)),
                 schema: SchemaCache::new(),
                 queries: QueryStore::new(dir.join("saved_queries.json")),
             });
@@ -294,6 +320,7 @@ pub fn run() {
             list_connections,
             save_connection,
             delete_connection,
+            set_session_password,
             test_connection,
             run_sql,
             run_params,
@@ -314,7 +341,17 @@ pub fn run() {
 mod tests {
     use billz_core::{
         ConnectionConfig, ConnectionId, ExecutionContext, InMemorySecretStore, SecretStore,
+        SessionOverlaySecretStore,
     };
+
+    #[test]
+    fn session_overlay_command_path_stores_retrievably() {
+        // What the set_session_password command does: stash a session-only pw.
+        let overlay = SessionOverlaySecretStore::new(InMemorySecretStore::default());
+        let id = ConnectionId("c1".into());
+        overlay.set_session_password(&id, "pw");
+        assert_eq!(overlay.get_password(&id).unwrap().as_deref(), Some("pw"));
+    }
 
     /// Pins Tauri's *actual* async runtime: `block_on` uses the SAME global
     /// runtime as a `#[tauri::command] async fn`'s `spawn`, so a green run here
