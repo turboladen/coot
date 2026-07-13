@@ -220,6 +220,67 @@ impl<S: SecretStore> SecretStore for CachingSecretStore<S> {
     }
 }
 
+/// A [`SecretStore`] decorator that layers an ephemeral, in-memory **session**
+/// password map over any inner store. `get_password` prefers a session password
+/// (set via [`set_session_password`]); otherwise it falls through to the inner
+/// (durable) store. This backs the "don't remember password" path (billz-85b): a
+/// session-only password lives ONLY in this map for the process lifetime and is
+/// NEVER written to the inner store / Keychain (`CLAUDE.md` disk invariant).
+///
+/// `set_password` still writes through to the inner store (the remember-on path);
+/// `delete_password` clears both layers; [`clear_durable`] clears only the inner
+/// (Keychain) side, leaving a live session password intact on a metadata re-save.
+///
+/// [`set_session_password`]: Self::set_session_password
+/// [`clear_durable`]: Self::clear_durable
+pub struct SessionOverlaySecretStore<S: SecretStore> {
+    session: Mutex<HashMap<String, String>>,
+    pub(crate) inner: S,
+}
+
+impl<S: SecretStore> SessionOverlaySecretStore<S> {
+    pub fn new(inner: S) -> Self {
+        Self {
+            session: Mutex::new(HashMap::new()),
+            inner,
+        }
+    }
+
+    /// Store a password in the SESSION map only — never the durable inner store.
+    pub fn set_session_password(&self, id: &ConnectionId, password: &str) {
+        self.session
+            .lock()
+            .unwrap()
+            .insert(id.0.clone(), password.to_string());
+    }
+
+    /// Clear ONLY the durable (inner) secret, leaving the session map intact.
+    /// Used when a connection is switched to remember-off (drop any stale Keychain
+    /// entry) without disturbing a live session password on a plain metadata
+    /// re-save (rename/retarget of an already-unlocked session-only connection).
+    pub fn clear_durable(&self, id: &ConnectionId) -> Result<()> {
+        self.inner.delete_password(id)
+    }
+}
+
+impl<S: SecretStore> SecretStore for SessionOverlaySecretStore<S> {
+    fn set_password(&self, id: &ConnectionId, password: &str) -> Result<()> {
+        self.inner.set_password(id, password)
+    }
+
+    fn get_password(&self, id: &ConnectionId) -> Result<Option<String>> {
+        if let Some(pw) = self.session.lock().unwrap().get(&id.0) {
+            return Ok(Some(pw.clone())); // ephemeral session password wins
+        }
+        self.inner.get_password(id)
+    }
+
+    fn delete_password(&self, id: &ConnectionId) -> Result<()> {
+        self.session.lock().unwrap().remove(&id.0);
+        self.inner.delete_password(id)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -302,6 +363,68 @@ mod tests {
         // Delete evicts the cache too.
         store.delete_password(&id).unwrap();
         assert_eq!(store.get_password(&id).unwrap(), None);
+    }
+
+    #[test]
+    fn session_overlay_prefers_session_over_inner() {
+        let inner = InMemorySecretStore::default();
+        let id = ConnectionId("c1".into());
+        inner.set_password(&id, "durable").unwrap();
+        let overlay = SessionOverlaySecretStore::new(inner);
+        overlay.set_session_password(&id, "ephemeral");
+        assert_eq!(overlay.get_password(&id).unwrap().as_deref(), Some("ephemeral"));
+    }
+
+    #[test]
+    fn session_overlay_set_session_password_never_reaches_inner() {
+        let overlay = SessionOverlaySecretStore::new(InMemorySecretStore::default());
+        let id = ConnectionId("c1".into());
+        overlay.set_session_password(&id, "ephemeral");
+        // Prove nothing was written to the durable inner store — read it directly.
+        assert!(overlay.inner.get_password(&id).unwrap().is_none());
+    }
+
+    #[test]
+    fn session_overlay_set_password_writes_through_to_inner() {
+        let overlay = SessionOverlaySecretStore::new(InMemorySecretStore::default());
+        let id = ConnectionId("c1".into());
+        overlay.set_password(&id, "durable").unwrap();
+        assert_eq!(overlay.inner.get_password(&id).unwrap().as_deref(), Some("durable"));
+    }
+
+    #[test]
+    fn session_overlay_delete_clears_both_layers() {
+        let inner = InMemorySecretStore::default();
+        let id = ConnectionId("c1".into());
+        inner.set_password(&id, "durable").unwrap();
+        let overlay = SessionOverlaySecretStore::new(inner);
+        overlay.set_session_password(&id, "ephemeral");
+        overlay.delete_password(&id).unwrap();
+        assert!(overlay.get_password(&id).unwrap().is_none());
+        assert!(overlay.inner.get_password(&id).unwrap().is_none());
+    }
+
+    #[test]
+    fn session_overlay_falls_through_to_inner_when_no_session() {
+        let inner = InMemorySecretStore::default();
+        let id = ConnectionId("c1".into());
+        inner.set_password(&id, "durable").unwrap();
+        let overlay = SessionOverlaySecretStore::new(inner);
+        assert_eq!(overlay.get_password(&id).unwrap().as_deref(), Some("durable"));
+    }
+
+    #[test]
+    fn session_overlay_clear_durable_keeps_session() {
+        // Re-saving an already-session-only connection must not wipe the live
+        // session password: clear_durable removes only the Keychain side.
+        let inner = InMemorySecretStore::default();
+        let id = ConnectionId("c1".into());
+        inner.set_password(&id, "durable").unwrap();
+        let overlay = SessionOverlaySecretStore::new(inner);
+        overlay.set_session_password(&id, "ephemeral");
+        overlay.clear_durable(&id).unwrap();
+        assert!(overlay.inner.get_password(&id).unwrap().is_none()); // durable gone
+        assert_eq!(overlay.get_password(&id).unwrap().as_deref(), Some("ephemeral")); // session kept
     }
 
     #[test]

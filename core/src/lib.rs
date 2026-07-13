@@ -26,7 +26,7 @@ pub mod types;
 pub use batch::{batch_at_line, split_batches};
 pub use connection::{
     CachingSecretStore, ConnectionConfig, ConnectionId, InMemorySecretStore, KeychainSecretStore,
-    SecretStore, build_connection_string,
+    SecretStore, SessionOverlaySecretStore, build_connection_string,
 };
 pub use connection_store::ConnectionStore;
 pub use context::ExecutionContext;
