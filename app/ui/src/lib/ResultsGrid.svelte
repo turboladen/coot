@@ -23,6 +23,7 @@
       header: c.name,
       accessorFn: (row) => row[i],
       size: 160,
+      minSize: 56, // drag floor — keep the header name + type tag legible
     })),
   );
 
@@ -43,6 +44,13 @@
     },
     renderFallbackValue: null,
     getCoreRowModel: getCoreRowModel(),
+    // Drag-to-resize columns (billz-a4e). Static options — they ride through the
+    // setOptions({ ...prev }) merge in the bridge below, and add columnSizing/
+    // columnSizingInfo to initialState so the state merge forwards them. A drag
+    // routes table-core's setColumnSizing through onStateChange above, so widths
+    // update live via getSize(). "onChange" = resize while dragging (vs "onEnd").
+    enableColumnResizing: true,
+    columnResizeMode: "onChange",
   });
 
   // THE reactivity bridge, done the genuinely-reactive way: $derived.by reads
@@ -135,6 +143,23 @@
         {#each headerGroup?.headers ?? [] as header, i (header.id)}
           <div class="th" style:width="{header.getSize()}px">
             {header.column.columnDef.header}<span class="htype">{result.columns[i].sqlType}</span>
+            {#if header.column.getCanResize()}
+              <!-- Handle at the cell's right border; table-core's handler tracks
+                   clientX deltas so the header's translateX scroll-mirror doesn't
+                   interfere. Works for both mouse and touch. A pointer-drag-only
+                   affordance (keyboard resize is deferred, TODO(later)), so the
+                   non-interactive-element a11y lint doesn't apply here. -->
+              <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+              <div
+                class="resizer"
+                class:resizing={header.column.getIsResizing()}
+                onmousedown={header.getResizeHandler()}
+                ontouchstart={header.getResizeHandler()}
+                role="separator"
+                aria-orientation="vertical"
+                aria-label="Resize column"
+              ></div>
+            {/if}
           </div>
         {/each}
       </div>
@@ -207,6 +232,7 @@
     background: var(--panel);
   }
   .th {
+    position: relative; /* anchor the .resizer handle to the cell's right edge */
     padding: 4px 8px;
     font-weight: 600;
     white-space: nowrap;
@@ -216,6 +242,22 @@
     color: var(--muted);
     font-family: var(--font-ui);
     box-sizing: border-box;
+  }
+  /* Drag handle over the column's right border (billz-a4e). Invisible until
+     hover/active; touch-action:none keeps a touch drag from scrolling the pane. */
+  .resizer {
+    position: absolute;
+    top: 0;
+    right: 0;
+    height: 100%;
+    width: 6px;
+    cursor: col-resize;
+    touch-action: none;
+    user-select: none;
+  }
+  .resizer:hover,
+  .resizer.resizing {
+    background: var(--brand);
   }
   .htype {
     margin-left: var(--sp-1);
