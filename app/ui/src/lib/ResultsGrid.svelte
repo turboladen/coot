@@ -141,7 +141,8 @@
     </div>
 
     <!-- Scroll container: fills remaining height, owns BOTH scroll axes.
-         bind:scrollLeft drives the header's translateX above. -->
+         The onscroll handler mirrors scrollLeft onto the header's translateX
+         above. (svelte 5 has no bind:scrollLeft element binding.) -->
     <div class="body" bind:this={scrollEl} onscroll={(e) => (bodyScrollLeft = e.currentTarget.scrollLeft)}>
       {#if rows.length === 0}
         <div class="no-rows">
@@ -228,11 +229,9 @@
     overflow: auto;
     position: relative;
   }
-  /* Pinned to the exact total column width (inline) so the body's horizontal
-     scroll extent matches the header and the rows below. */
-  .body-inner {
-    position: relative;
-  }
+  /* .body-inner is pinned to the exact total column width via an inline style
+     (so the body's horizontal scroll extent matches the header and the rows);
+     it needs no rules here — the rows position against .spacer below. */
   .spacer {
     position: relative;
     width: 100%;
