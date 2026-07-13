@@ -160,6 +160,20 @@ fn session_overlay_falls_through_to_inner_when_no_session() {
     let overlay = SessionOverlaySecretStore::new(inner);
     assert_eq!(overlay.get_password(&id).unwrap().as_deref(), Some("durable"));
 }
+
+#[test]
+fn session_overlay_clear_durable_keeps_session() {
+    // Re-saving an already-session-only connection must not wipe the live session
+    // password: clear_durable removes only the Keychain side.
+    let inner = InMemorySecretStore::default();
+    let id = ConnectionId("c1".into());
+    inner.set_password(&id, "durable").unwrap();
+    let overlay = SessionOverlaySecretStore::new(inner);
+    overlay.set_session_password(&id, "ephemeral");
+    overlay.clear_durable(&id).unwrap();
+    assert!(overlay.inner.get_password(&id).unwrap().is_none()); // durable gone
+    assert_eq!(overlay.get_password(&id).unwrap().as_deref(), Some("ephemeral")); // session kept
+}
 ```
 
 (The tests read `overlay.inner`, so keep the field `pub(crate)` or add a
@@ -199,6 +213,14 @@ impl<S: SecretStore> SessionOverlaySecretStore<S> {
     /// Store a password in the SESSION map only — never the durable inner store.
     pub fn set_session_password(&self, id: &ConnectionId, password: &str) {
         self.session.lock().unwrap().insert(id.0.clone(), password.to_string());
+    }
+
+    /// Clear ONLY the durable (inner) secret, leaving the session map intact.
+    /// Used when a connection is switched to remember-off (drop any stale Keychain
+    /// entry) without disturbing a live session password on a plain metadata
+    /// re-save (rename/retarget of an already-unlocked session-only connection).
+    pub fn clear_durable(&self, id: &ConnectionId) -> Result<()> {
+        self.inner.delete_password(id)
     }
 }
 
@@ -282,7 +304,9 @@ Capture `old` once:
 Second, replace the `if let Some(pw) = password { … }` secret-write block with a
 branch that **clears any stale durable secret when remember is off** (the fix for
 the on→off gap: otherwise the old Keychain entry survives and `get_password` falls
-through to it, silently defeating "don't remember"):
+through to it, silently defeating "don't remember"). Use `clear_durable` (Task 2),
+which clears ONLY the Keychain side — so re-saving an already-session-only
+connection (e.g. a rename) never wipes its live in-memory session password:
 
 ```rust
     if cfg.remember_password {
@@ -290,17 +314,17 @@ through to it, silently defeating "don't remember"):
             state.secrets.set_password(&cfg.id, &pw)?; // durable → Keychain
         }
     } else {
-        // Session-only: drop any prior Keychain entry (idempotent; also clears the
-        // session map) BEFORE stashing the new session password.
-        state.secrets.delete_password(&cfg.id)?;
+        // Session-only: drop any stale Keychain entry (durable only; idempotent —
+        // leaves a live session password untouched on a metadata re-save).
+        state.secrets.clear_durable(&cfg.id)?;
         if let Some(pw) = password {
             state.secrets.set_session_password(&cfg.id, &pw); // memory only
         }
     }
 ```
 
-(Order matters: `delete_password` clears both layers, so `set_session_password`
-must run after it.)
+(No ordering hazard: `clear_durable` touches only the inner store, never the
+session map.)
 
 - [ ] **Step 3: Add the command + register it**
 
@@ -581,7 +605,8 @@ password).
 
 Concretely:
 1. In `ConnectionForm.svelte` (extends Task 4), add an
-   `onSessionUnlock?: (id: string) => void` prop (default no-op, like `onclose`).
+   `onSessionUnlock` prop with a real default no-op so it's always safe to call:
+   `let { editing, onclose, onSessionUnlock = () => {} }: { editing: ConnectionConfig | null; onclose: () => void; onSessionUnlock?: (id: string) => void } = $props();`
    In `onSave` and `onTest`, AFTER `await save(cfg, pw)` succeeds, call it when the
    password was session-only:
    ```ts
