@@ -101,6 +101,9 @@
   .row {
     display: flex;
     align-items: center;
+    /* Reset the global button base's justify-content:center (app.css) — without
+       this the chevron+icon+label cluster centers in the full-width row. */
+    justify-content: flex-start;
     gap: 0.3rem;
     width: 100%;
     padding: 0.1rem 0.3rem 0.1rem 0.7rem;
