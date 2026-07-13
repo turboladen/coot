@@ -379,7 +379,7 @@
               </option>
             {/each}
           </select>
-          <button onclick={run} disabled={running}><Play size={14} /> {running ? "Running…" : "Run"}</button>
+          <button class="primary" onclick={run} disabled={running}><Play size={14} /> {running ? "Running…" : "Run"}</button>
           {#if curSavedQuery}
             <button
               onclick={updateSavedQuery}
@@ -496,6 +496,8 @@
     border-bottom: 1px solid var(--border);
   }
   .toolbar :global(svg) { color: var(--muted); flex: none; }
+  /* The primary Run button's Play icon must read on the teal fill, not muted. */
+  .toolbar button.primary :global(svg) { color: var(--accent-fg); }
   .toolbar button {
     display: inline-flex;
     align-items: center;

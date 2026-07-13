@@ -88,3 +88,34 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* Global button base — a tokenized outline button so every native <button>
+   reads as part of the design system. Components with their own button styling
+   (segmented toggle, tabs, tree rows, icon buttons, modal buttons) reset
+   background/border in their scoped rules, which win over this element selector.
+   `.primary` is the filled-teal call-to-action (Run, Save, Unlock). */
+button {
+  font: inherit;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-1);
+  padding: 0.3rem 0.7rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm);
+  background: var(--raised);
+  color: var(--text);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+button:hover:not(:disabled) { border-color: var(--accent); }
+button:disabled { opacity: 0.5; cursor: default; }
+button.primary {
+  background: var(--accent);
+  color: var(--accent-fg);
+  border-color: transparent;
+  font-weight: 500;
+}
+button.primary:hover:not(:disabled) { background: var(--accent-press); border-color: transparent; }
+button.primary svg { color: var(--accent-fg); }
