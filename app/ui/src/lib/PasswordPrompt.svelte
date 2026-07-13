@@ -2,6 +2,8 @@
   // Session-only password prompt (billz-85b). window.prompt is unreliable in the
   // Tauri v2 WKWebView, so this is an inline modal mirroring ConnectionForm's
   // field pattern. Parent supplies the connection name + submit/cancel.
+  import { Lock } from "./icons";
+
   let {
     name,
     onsubmit,
@@ -30,7 +32,7 @@
      pattern as tree/TableNode.svelte's .menu-backdrop. -->
 <button class="backdrop" aria-label="Cancel" onclick={oncancel}></button>
 <div class="modal" role="dialog" aria-modal="true" aria-label="Unlock connection">
-  <h3>Password for {name}</h3>
+  <h3><Lock size={16} /> Password for {name}</h3>
   <p class="hint">Session-only — held in memory until you quit, never saved.</p>
   <form
     onsubmit={(e) => {
@@ -51,7 +53,7 @@
     position: fixed;
     inset: 0;
     z-index: 50;
-    background: rgba(0, 0, 0, 0.25);
+    background: var(--scrim);
     border: none;
     padding: 0;
     cursor: default;
@@ -62,35 +64,62 @@
     left: 50%;
     transform: translateX(-50%);
     z-index: 51;
-    background: #fff;
-    border: 1px solid #ccc;
-    border-radius: 8px;
-    padding: 1rem 1.2rem;
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+    background: var(--raised);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--r-xl);
+    padding: var(--sp-4) var(--sp-5);
+    box-shadow: var(--shadow-md);
     min-width: 18rem;
+    font-family: var(--font-ui);
+    color: var(--text);
   }
   h3 {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-1);
     margin: 0 0 0.3rem;
-    font-size: 0.95rem;
+    font-size: var(--fs-md);
+    color: var(--text);
   }
   .hint {
     margin: 0 0 0.6rem;
-    font-size: 0.75rem;
-    color: #888;
+    font-size: var(--fs-xs);
+    color: var(--muted);
   }
   input {
     width: 100%;
     box-sizing: border-box;
-    padding: 0.3rem;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--r-sm);
+    background: var(--raised);
+    color: var(--text);
+    padding: var(--sp-1) var(--sp-2);
     margin-bottom: 0.6rem;
+    font: inherit;
   }
   .actions {
     display: flex;
-    gap: 0.4rem;
+    gap: var(--sp-1);
     justify-content: flex-end;
   }
   button {
-    font-size: 0.85rem;
+    font-size: var(--fs-sm);
     cursor: pointer;
+    padding: var(--sp-1) var(--sp-3);
+    border-radius: var(--r-sm);
+    border: 1px solid var(--border-strong);
+    background: var(--raised);
+    color: var(--text);
+    font-family: inherit;
+    transition: background var(--dur-fast) var(--ease);
+  }
+  button[type="submit"] {
+    background: var(--accent);
+    color: var(--accent-fg);
+    border-color: var(--accent);
+  }
+  button:disabled {
+    opacity: 0.5;
+    cursor: default;
   }
 </style>

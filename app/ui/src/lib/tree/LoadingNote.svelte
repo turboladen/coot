@@ -18,14 +18,14 @@
     gap: 0.4rem;
     padding: 0.15rem 0 0.15rem 0.7rem;
     font-size: 0.8rem;
-    color: #888;
+    color: var(--muted);
   }
   .spinner {
     width: 0.7rem;
     height: 0.7rem;
     flex: none;
-    border: 2px solid #ddd;
-    border-top-color: #3b82f6;
+    border: 2px solid var(--border);
+    border-top-color: var(--accent);
     border-radius: 50%;
     animation: spin 0.6s linear infinite;
   }

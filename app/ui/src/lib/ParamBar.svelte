@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { Param, ParamScope, SqlType } from "./api";
+  import { Clock, Globe, X } from "./icons";
 
   // Fields-only param bar (d28.3/d28.4). Parent owns `values` (a $state record);
   // we mutate it in place on input. Scope changes bubble via `onScopeChange` (App
@@ -63,23 +64,23 @@
         <option value="global">Global</option>
       </select>
       {#if sources[p.name] === "session"}
-        <span class="inh session" title="value inherited from the Session tier">↳ session</span>
+        <span class="badge session" title="value inherited from the Session tier"><Clock size={11} /> session</span>
         <button
           type="button"
           class="clear-tier"
           aria-label="Clear Session value for {p.name}"
           title="Clear this Session value"
           onclick={() => onClearTier(p.name, "session")}
-        >×</button>
+        ><X size={12} /></button>
       {:else if sources[p.name] === "global"}
-        <span class="inh global" title="value inherited from the Global tier">↳ global</span>
+        <span class="badge global" title="value inherited from the Global tier"><Globe size={11} /> global</span>
         <button
           type="button"
           class="clear-tier"
           aria-label="Clear Global value for {p.name}"
           title="Clear this Global value"
           onclick={() => onClearTier(p.name, "global")}
-        >×</button>
+        ><X size={12} /></button>
       {/if}
     </label>
   {/each}
@@ -92,67 +93,76 @@
     align-items: center;
     gap: 0.5rem;
     padding: 0.4rem 0.6rem;
-    border-bottom: 1px solid #ccc;
-    background: #f7f9fc;
+    border-bottom: 1px solid var(--border);
+    background: var(--panel);
   }
   .param { display: flex; align-items: center; gap: 0.3rem; }
-  .pname { font: 600 0.8rem ui-monospace, monospace; color: #333; }
+  .pname { font: 600 0.8rem var(--font-mono); color: var(--text); }
   .param input {
-    font: 0.8rem ui-monospace, monospace;
+    font: 0.8rem var(--font-mono);
     padding: 0.15rem 0.4rem;
-    border: 1px solid #c8c8c8;
-    border-radius: 4px;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--r-sm);
+    background: var(--raised);
+    color: var(--text);
+  }
+  .param input:focus-visible {
+    border: 1.5px solid var(--accent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 15%, transparent);
+    outline: none;
   }
   .chip {
     font-size: 0.65rem;
     padding: 0.05rem 0.35rem;
-    border-radius: 999px;
-    background: #eef2f7;
-    color: #556;
+    border-radius: var(--r-pill);
+    background: color-mix(in srgb, var(--muted) 12%, var(--raised));
+    color: var(--muted);
   }
   .chip.raw {
-    background: #fde8e8;
-    color: #b91c1c;
+    background: color-mix(in srgb, var(--danger) 12%, var(--raised));
+    color: var(--danger);
     font-weight: 700;
-    border: 1px solid #f3b4b4;
+    border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent);
   }
   .scope,
   .type {
-    font: 0.7rem system-ui, sans-serif;
+    font: 0.7rem var(--font-ui);
     padding: 0.1rem 0.25rem;
-    border: 1px solid #c8c8c8;
-    border-radius: 4px;
-    background: #fff;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--r-sm);
+    background: var(--raised);
+    color: var(--text);
   }
-  .inh {
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.2rem;
     font-size: 0.6rem;
     padding: 0.06rem 0.34rem;
-    border-radius: 999px;
-    border: 1px solid transparent;
+    border-radius: var(--r-pill);
   }
-  .inh.session {
-    background: #eef7ee;
-    color: #2f7d32;
-    border-color: #bfe0c0;
+  .badge.session {
+    background: color-mix(in srgb, var(--tier-session) 16%, var(--raised));
+    color: var(--tier-session);
   }
-  .inh.global {
-    background: #eef2fb;
-    color: #3557b7;
-    border-color: #c3d0f0;
+  .badge.global {
+    background: color-mix(in srgb, var(--tier-global) 16%, var(--raised));
+    color: var(--tier-global);
   }
   .clear-tier {
-    font-size: 0.7rem;
+    display: inline-flex;
+    align-items: center;
     line-height: 1;
     padding: 0.05rem 0.28rem;
-    border: 1px solid #d5d5d5;
-    border-radius: 999px;
-    background: #fff;
-    color: #999;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--r-pill);
+    background: var(--raised);
+    color: var(--muted);
     cursor: pointer;
   }
   .clear-tier:hover {
-    color: #b91c1c;
-    border-color: #f3b4b4;
-    background: #fde8e8;
+    color: var(--danger);
+    border-color: color-mix(in srgb, var(--danger) 35%, transparent);
+    background: color-mix(in srgb, var(--danger) 12%, var(--raised));
   }
 </style>

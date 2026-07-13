@@ -2,6 +2,7 @@
   import { refreshSchema } from "../api";
   import { conns } from "../connections.svelte";
   import { dbStore } from "../databases.svelte";
+  import { Database, RefreshCw } from "../icons";
   import DatabaseNode from "./DatabaseNode.svelte";
   import LoadingNote from "./LoadingNote.svelte";
   import { bumpRefresh } from "./refresh.svelte";
@@ -27,15 +28,21 @@
 <div class="tree">
   <div class="header">
     <h2>Objects</h2>
-    <button class="refresh" onclick={refresh} disabled={!activeId} title="Refresh">↻</button>
+    <button class="refresh" onclick={refresh} disabled={!activeId} title="Refresh"><RefreshCw size={13} /></button>
   </div>
 
   {#if !activeId}
-    <p class="hint">Select a connection to browse its objects.</p>
+    <div class="empty-tree">
+      <Database size={20} />
+      <p class="hint">Select a connection to browse its objects.</p>
+    </div>
   {:else if dbStore.status === "error"}
     <p class="hint err">{dbStore.error}</p>
   {:else if dbStore.status === "loaded" && dbStore.list.length === 0}
-    <p class="hint">No databases.</p>
+    <div class="empty-tree">
+      <Database size={20} />
+      <p class="hint">No databases.</p>
+    </div>
   {:else if dbStore.status === "loaded"}
     <ul>
       {#each dbStore.list as db (db.databaseId)}
@@ -53,16 +60,32 @@
   .header { display: flex; align-items: center; justify-content: space-between; }
   h2 { font-size: 1rem; margin: 0.5rem 0; }
   .refresh {
+    display: inline-flex;
+    align-items: center;
     background: none;
     border: none;
     font: inherit;
-    font-size: 1rem;
-    color: #555;
+    color: var(--muted);
     cursor: pointer;
     padding: 0 0.3rem;
   }
-  .refresh:disabled { color: #ccc; cursor: default; }
-  .hint { color: #888; font-size: 0.9rem; }
-  .err { color: #b91c1c; }
+  .refresh:disabled { color: var(--faint); cursor: default; }
+  .hint { color: var(--muted); font-size: 0.9rem; }
+  .err { color: var(--danger); }
+  .empty-tree {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: var(--sp-2);
+    padding: var(--sp-5) var(--sp-2);
+    text-align: center;
+  }
+  .empty-tree :global(svg) {
+    color: var(--faint);
+  }
+  .empty-tree .hint {
+    margin: 0;
+  }
   ul { list-style: none; margin: 0; padding: 0; }
 </style>
