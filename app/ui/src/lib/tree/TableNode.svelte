@@ -1,5 +1,6 @@
 <script lang="ts">
   import { type ColumnInfo, listColumns, type SavedQuery, type TableInfo } from "../api";
+  import { ChevronDown, ChevronRight, Table2 } from "../icons";
   import { openScopedQuery } from "../openScopedQuery.svelte";
   import { queriesReferencingTable } from "../paramBarLogic";
   import { library } from "../savedQueries.svelte";
@@ -60,7 +61,8 @@
   <!-- Double-click also fires two onclicks (toggle is idempotent — expanded
        returns to its prior state), harmless for a single-user tool. -->
   <button class="row" onclick={toggle} ondblclick={openSelect} oncontextmenu={openMenu}>
-    <span class="twisty">{expanded ? "▼" : "▶"}</span>
+    <span class="twisty">{#if expanded}<ChevronDown size={12} />{:else}<ChevronRight size={12} />{/if}</span>
+    <Table2 size={13} />
     <span class="label">{table.schema}.{table.name}</span>
   </button>
   {#if expanded}
@@ -98,23 +100,35 @@
   li { list-style: none; }
   .row {
     display: flex;
-    align-items: baseline;
+    align-items: center;
     gap: 0.3rem;
     width: 100%;
-    padding: 0.1rem 0 0.1rem 0.7rem;
+    padding: 0.1rem 0.3rem 0.1rem 0.7rem;
     background: none;
     border: none;
+    border-radius: var(--r-sm);
     font: inherit;
     font-size: 0.85rem;
     text-align: left;
     cursor: pointer;
     white-space: nowrap;
+    color: var(--muted);
+    transition: background var(--dur-fast) var(--ease);
   }
-  .twisty { color: #888; font-size: 0.7rem; width: 0.8rem; }
-  .label { color: #333; }
+  .row:hover { background: color-mix(in srgb, var(--brand) 8%, transparent); }
+  .twisty {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--muted);
+    width: 0.8rem;
+    flex: none;
+  }
+  .row :global(svg) { color: var(--muted); flex: none; }
+  .label { color: var(--text); }
   ul { list-style: none; margin: 0; padding: 0; }
-  .note { padding: 0.1rem 0 0.1rem 1.4rem; font-size: 0.8rem; color: #888; }
-  .err { color: #b91c1c; white-space: normal; }
+  .note { padding: 0.1rem 0 0.1rem 1.4rem; font-size: 0.8rem; color: var(--muted); }
+  .err { color: var(--danger); white-space: normal; }
   .menu-backdrop {
     position: fixed;
     inset: 0;
@@ -128,21 +142,21 @@
     position: fixed;
     z-index: 41;
     min-width: 12rem;
-    background: #fff;
-    border: 1px solid #ccc;
-    border-radius: 6px;
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+    background: var(--raised);
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    box-shadow: var(--shadow-md);
     padding: 0.25rem;
     font-size: 0.85rem;
   }
   .ctx-header {
     padding: 0.2rem 0.5rem;
-    color: #888;
+    color: var(--muted);
     font-size: 0.72rem;
-    border-bottom: 1px solid #eee;
+    border-bottom: 1px solid var(--border);
     white-space: nowrap;
   }
-  .ctx-empty { padding: 0.35rem 0.5rem; color: #888; font-size: 0.8rem; }
+  .ctx-empty { padding: 0.35rem 0.5rem; color: var(--muted); font-size: 0.8rem; }
   .ctx-item {
     display: block;
     width: 100%;
@@ -153,7 +167,8 @@
     font: inherit;
     font-size: 0.85rem;
     cursor: pointer;
-    border-radius: 4px;
+    border-radius: var(--r-sm);
+    color: var(--text);
   }
-  .ctx-item:hover { background: rgba(59, 130, 246, 0.1); }
+  .ctx-item:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
 </style>

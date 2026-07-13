@@ -8,6 +8,7 @@
   import { basicSetup } from "codemirror";
   import { sql, MSSQL } from "@codemirror/lang-sql";
   import { toggleComment } from "@codemirror/commands";
+  import { billzHighlight, editorTheme } from "./theme/highlight";
 
   let {
     value = "", // INIT-ONLY doc text (per {#key activeId} remount); CM's doc is the
@@ -33,10 +34,8 @@
     ]),
     basicSetup, // line numbers, history, brackets, default keymap, highlighting, autocomplete
     sql({ dialect: MSSQL }), // T-SQL keywords + syntax highlighting
-    EditorView.theme({
-      "&": { height: "100%", fontSize: "13px" },
-      ".cm-scroller": { overflow: "auto", fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" },
-    }),
+    editorTheme,
+    billzHighlight,
     // CM's own edits flow OUT via the onchange callback (one-directional data
     // flow: module → value init → CM → onchange → module → debounced save).
     EditorView.updateListener.of((u) => {

@@ -3,6 +3,7 @@
   import type { ConnectionConfig } from "./api";
   import { testConnection } from "./api";
   import { save } from "./connections.svelte";
+  import { X } from "./icons";
 
   // `editing` = the config to edit, or null for a new connection. The parent
   // wraps this in {#key} so a new target remounts the form (fields re-init).
@@ -126,25 +127,62 @@
   </label>
 
   <div class="actions">
-    <button onclick={onSave} disabled={busy}>Save</button>
+    <button class="primary" onclick={onSave} disabled={busy}>Save</button>
     <button onclick={onTest} disabled={busy}>Test</button>
     <button onclick={onclose} disabled={busy}>Cancel</button>
   </div>
 
   {#if status}
-    <p class="status {status.kind}">{status.text}</p>
+    <p class="status {status.kind}">{#if status.kind === "error"}<span class="status-icon" aria-hidden="true"><X size={13} /></span>{/if}{status.text}</p>
   {/if}
 </div>
 
 <style>
-  .form { display: flex; flex-direction: column; gap: 0.5rem; padding: 0.5rem; max-width: 24rem; }
-  h2 { font-size: 1rem; margin: 0.5rem 0; }
-  label { display: flex; flex-direction: column; font-size: 0.85rem; gap: 0.2rem; }
-  label.check { flex-direction: row; align-items: center; gap: 0.4rem; }
-  input[type="password"], input:not([type]) { padding: 0.3rem; }
-  .actions { display: flex; gap: 0.4rem; margin-top: 0.5rem; }
-  button { cursor: pointer; padding: 0.3rem 0.6rem; }
-  .status { font-size: 0.85rem; }
-  .status.ok { color: #16a34a; }
-  .status.error { color: #dc2626; white-space: pre-wrap; }
+  .form {
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-2);
+    padding: var(--sp-2);
+    max-width: 24rem;
+    font-family: var(--font-ui);
+  }
+  h2 { font-size: var(--fs-md); margin: var(--sp-2) 0; color: var(--text); }
+  label {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    color: var(--muted);
+    font-size: var(--fs-sm);
+  }
+  label.check { flex-direction: row; align-items: center; gap: var(--sp-1); }
+  input[type="password"],
+  input:not([type]) {
+    border: 1px solid var(--border-strong);
+    border-radius: var(--r-sm);
+    background: var(--raised);
+    color: var(--text);
+    padding: var(--sp-1) var(--sp-2);
+    font: inherit;
+  }
+  .actions { display: flex; gap: var(--sp-1); margin-top: var(--sp-2); }
+  button {
+    cursor: pointer;
+    padding: var(--sp-1) var(--sp-3);
+    border-radius: var(--r-sm);
+    border: 1px solid var(--border-strong);
+    background: var(--raised);
+    color: var(--text);
+    font: inherit;
+    transition: background var(--dur-fast) var(--ease);
+  }
+  button.primary {
+    background: var(--accent);
+    color: var(--accent-fg);
+    border-color: var(--accent);
+  }
+  button:disabled { opacity: 0.5; cursor: default; }
+  .status { font-size: var(--fs-sm); }
+  .status.ok { color: var(--ok); }
+  .status.error { color: var(--danger); white-space: pre-wrap; }
+  .status-icon { margin-right: var(--sp-1); }
 </style>

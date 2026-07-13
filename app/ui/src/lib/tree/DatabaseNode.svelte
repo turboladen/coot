@@ -1,5 +1,6 @@
 <script lang="ts">
   import { type DatabaseInfo, listTables, listViews, type TableInfo, type ViewInfo } from "../api";
+  import { ChevronDown, ChevronRight, Database } from "../icons";
   import LoadingNote from "./LoadingNote.svelte";
   import TableNode from "./TableNode.svelte";
   import ViewNode from "./ViewNode.svelte";
@@ -41,7 +42,12 @@
 
 <li>
   <button class="row" class:muted={!isOnline} onclick={toggle} disabled={!isOnline}>
-    <span class="twisty">{isOnline ? (expanded ? "▼" : "▶") : ""}</span>
+    <span class="twisty">
+      {#if isOnline}
+        {#if expanded}<ChevronDown size={12} />{:else}<ChevronRight size={12} />{/if}
+      {/if}
+    </span>
+    <Database size={13} />
     <span class="label">{database.name}</span>
     {#if !isOnline}<span class="state">({database.stateDesc})</span>{/if}
   </button>
@@ -74,31 +80,43 @@
   li { list-style: none; }
   .row {
     display: flex;
-    align-items: baseline;
+    align-items: center;
     gap: 0.3rem;
     width: 100%;
-    padding: 0.15rem 0;
+    padding: 0.15rem 0.3rem;
     background: none;
     border: none;
+    border-radius: var(--r-sm);
     font: inherit;
     font-size: 0.9rem;
     text-align: left;
     cursor: pointer;
     white-space: nowrap;
+    color: var(--muted);
+    transition: background var(--dur-fast) var(--ease);
   }
-  .twisty { color: #888; font-size: 0.7rem; width: 0.8rem; }
-  .label { color: #333; font-weight: 500; }
+  .row:not(:disabled):hover { background: color-mix(in srgb, var(--brand) 8%, transparent); }
+  .twisty {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--muted);
+    width: 0.8rem;
+    flex: none;
+  }
+  .row :global(svg) { color: var(--muted); flex: none; }
+  .label { color: var(--text); font-weight: 500; }
   /* B1: greys the NAME too — the .label rule above otherwise wins on the muted row. */
-  .row.muted .label { color: #aaa; }
-  .state { color: #aaa; font-size: 0.75rem; }
+  .row.muted .label { color: var(--faint); }
+  .state { color: var(--faint); font-size: 0.75rem; }
   ul { list-style: none; margin: 0; padding: 0; }
   .group {
     padding: 0.1rem 0 0.1rem 0.7rem;
     font-size: 0.75rem;
-    color: #888;
+    color: var(--muted);
     text-transform: uppercase;
     letter-spacing: 0.03em;
   }
-  .note { padding: 0.1rem 0 0.1rem 0.7rem; font-size: 0.8rem; color: #888; }
-  .err { color: #b91c1c; white-space: normal; }
+  .note { padding: 0.1rem 0 0.1rem 0.7rem; font-size: 0.8rem; color: var(--muted); }
+  .err { color: var(--danger); white-space: normal; }
 </style>

@@ -20,6 +20,7 @@
   import { activeContent, flushSave, restore, setActiveContent, setActiveDatabase, tabsState } from "./lib/tabs.svelte";
   import { treeRefresh } from "./lib/tree/refresh.svelte";
   import { dbStore, load as loadDatabases } from "./lib/databases.svelte";
+  import { Database, Play, Save } from "./lib/icons";
 
   // Sidebar lower region toggles between the object tree and the saved-query
   // library (d28.6) — the library gets its own full-height home per PLAN §5.
@@ -73,6 +74,13 @@
     return c && !c.rememberPassword && !unlocked.has(c.id) ? c : null;
   });
   const showPrompt = $derived(!!lockedConn && !dismissed.has(lockedConn.id));
+
+  // ids that are session-only and not yet unlocked this session → "locked"
+  // (xhv.2: surfaces existing unlocked/rememberPassword state as the
+  // ConnectionList row status dot — no new state, no behavior change.)
+  const lockedIds = $derived(
+    new Set(conns.list.filter((c) => !c.rememberPassword && !unlocked.has(c.id)).map((c) => c.id)),
+  );
 
   async function unlock(id: string, password: string) {
     await setSessionPassword(id, password); // await BEFORE marking unlocked (no desync)
@@ -289,7 +297,8 @@
 
 <main>
   <aside>
-    <ConnectionList onnew={openNew} onedit={openEdit} />
+    <div class="brand"><Database size={16} /> <span>billz</span></div>
+    <ConnectionList lockedIds={lockedIds} onnew={openNew} onedit={openEdit} />
     <!-- Segmented toggle: the lower region shows the object tree OR the saved-query
          library (d28.6). Objects need a connection; the library is independent. -->
     <div class="mode-toggle">
@@ -355,6 +364,7 @@
              result tabs. The picker sets the active tab's target DB (cwt.9);
              its value feeds runSql, where the executor issues USE [db]. -->
         <div class="toolbar">
+          <Database size={14} />
           <select
             class="db-picker"
             title="Target database — the runner issues USE [db] before your batch"
@@ -369,14 +379,14 @@
               </option>
             {/each}
           </select>
-          <button onclick={run} disabled={running}>{running ? "Running…" : "Run"}</button>
+          <button class="primary" onclick={run} disabled={running}><Play size={14} /> {running ? "Running…" : "Run"}</button>
           {#if curSavedQuery}
             <button
               onclick={updateSavedQuery}
               disabled={!dirty}
               title="Save the tab's edited SQL back to this saved query"
             >
-              Update saved query
+              <Save size={14} /> Update saved query
             </button>
           {/if}
         </div>
@@ -393,7 +403,6 @@
     display: grid;
     grid-template-columns: 20rem 1fr;
     height: 100vh;
-    font-family: system-ui, sans-serif;
   }
   /* Two-row sidebar: ConnectionList at natural height, the tree scrolling below
      it. min-height:0 on the tree region lets it shrink so it scrolls internally
@@ -401,31 +410,52 @@
   aside {
     display: flex;
     flex-direction: column;
-    border-right: 1px solid #ccc;
+    border-right: 1px solid var(--border);
+    background: var(--panel);
     overflow: hidden;
   }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-2);
+    padding: var(--sp-3) var(--sp-3);
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    border-bottom: 1px solid var(--border);
+    color: var(--text);
+  }
+  .brand :global(svg) { color: var(--brand); }
   /* Segmented [Objects | Library] toggle between the connection list and the
      scrolling lower region. */
   .mode-toggle {
     display: flex;
     gap: 0.25rem;
     padding: 0.3rem 0.5rem;
-    border-top: 1px solid #ccc;
+    border-top: 1px solid var(--border);
   }
   .mode-toggle button {
     flex: 1;
-    font-size: 0.8rem;
+    font: inherit;
+    font-size: var(--fs-sm);
+    padding: var(--sp-1) var(--sp-2);
+    border: 1px solid var(--border);
+    border-radius: var(--r-sm);
+    background: var(--raised);
+    color: var(--muted);
     cursor: pointer;
+    transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
   }
   .mode-toggle button.active {
+    background: color-mix(in srgb, var(--accent) 14%, var(--raised));
+    color: var(--accent-press);
+    border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
     font-weight: 600;
-    border-color: #3b82f6;
   }
   .lower-pane {
     flex: 1;
     min-height: 0;
     overflow: auto;
-    border-top: 1px solid #ccc;
+    border-top: 1px solid var(--border);
   }
   /* min-height:0 lets the section's children shrink so they scroll internally. */
   section {
@@ -438,9 +468,9 @@
     gap: 0.5rem;
     padding: 0.3rem 0.6rem;
     font-size: 0.8rem;
-    color: #92400e;
-    background: #fef3c7;
-    border-bottom: 1px solid #fcd34d;
+    color: var(--warn);
+    background: color-mix(in srgb, var(--warn) 12%, var(--raised));
+    border-bottom: 1px solid color-mix(in srgb, var(--warn) 30%, var(--border));
   }
   .locked-note button {
     font-size: 0.75rem;
@@ -454,7 +484,7 @@
     min-height: 0;
   }
   .editor-pane {
-    border-bottom: 1px solid #ccc;
+    border-bottom: 1px solid var(--border);
     min-height: 0;
     overflow: hidden;
   }
@@ -463,15 +493,27 @@
     align-items: center;
     gap: 0.75rem;
     padding: 0.4rem 0.6rem;
-    border-bottom: 1px solid #ccc;
+    border-bottom: 1px solid var(--border);
+  }
+  .toolbar :global(svg) { color: var(--muted); flex: none; }
+  /* The primary Run button's Play icon must read on the teal fill, not muted. */
+  .toolbar button.primary :global(svg) { color: var(--accent-fg); }
+  .toolbar button {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--sp-1);
   }
   .db-picker {
     font: inherit;
     font-size: 0.85rem;
     max-width: 16rem;
     padding: 0.15rem 0.3rem;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--r-sm);
+    background: var(--raised);
+    color: var(--text);
   }
-  .db-picker:disabled { color: #ccc; }
+  .db-picker:disabled { color: var(--faint); }
   .grid-pane {
     min-height: 0;
     overflow: hidden;
