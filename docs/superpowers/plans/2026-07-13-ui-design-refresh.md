@@ -24,12 +24,12 @@
 
 **Created:**
 - `app/ui/src/lib/theme/highlight.ts` — CodeMirror `HighlightStyle` mapping Lezer tags → `var(--syn-*)` (Task 3).
-- `app/ui/src/lib/icons.ts` — re-exports the ~12 used Lucide icons from `lucide-svelte`, so imports are centralized and the used-set is auditable (Task 2).
+- `app/ui/src/lib/icons.ts` — re-exports the used Lucide icons from `lucide-svelte`, so imports are centralized and the used-set is auditable. **Created in Task 1** (shared by Tasks 2/4/5 — hoisting it into the foundation is what makes those tasks truly order-independent).
 - `app/ui/src/app.css.test.ts` — token-contract test (Task 1).
 
 **Modified (by phase):**
-- Task 1: `app/ui/src/app.css`, `app/ui/package.json` (+ `bun.lock`), `app/ui/src/main.ts` (font imports).
-- Task 2: `App.svelte`, `lib/ConnectionList.svelte`, `lib/TabBar.svelte`, `lib/tree/*.svelte`.
+- Task 1: `app/ui/src/app.css`, `app/ui/package.json` (+ `bun.lock`), `app/ui/src/main.ts` (font imports). Also creates `lib/icons.ts` (see above) and adds the `lucide-svelte` dependency.
+- Task 2: `App.svelte`, `lib/ConnectionList.svelte`, `lib/TabBar.svelte`, `lib/tree/*.svelte` (consumes `lib/icons.ts` from Task 1).
 - Task 3: `lib/SqlEditor.svelte`, `lib/theme/highlight.ts`.
 - Task 4: `lib/ResultsGrid.svelte`, `lib/ResultTabs.svelte`, `lib/ParamBar.svelte`, `lib/SavedQueryLibrary.svelte`, `lib/tree/ColumnLeaf.svelte`.
 - Task 5: `lib/ConnectionForm.svelte`, `lib/PasswordPrompt.svelte`, `lib/tree/LoadingNote.svelte`, empty-state markup in `ResultsGrid`/`ObjectTree`/`SavedQueryLibrary`.
@@ -44,18 +44,30 @@ Bead map: Task 1 = `billz-xhv.1`, Task 2 = `.2`, Task 3 = `.3`, Task 4 = `.4`, T
 - Modify: `app/ui/package.json` (+ `bun.lock`)
 - Modify: `app/ui/src/main.ts`
 - Modify: `app/ui/src/app.css`
+- Create: `app/ui/src/lib/icons.ts`
 - Create: `app/ui/src/app.css.test.ts`
 
 **Interfaces:**
-- Produces: the full CSS custom-property set (names below) available globally; the `--font-ui`/`--font-mono` families; a `data-theme="dark"` override hook on `:root`. Every later task consumes these token names.
+- Produces: the full CSS custom-property set (names below) available globally; the `--font-ui`/`--font-mono` families; a `data-theme="dark"` override hook on `:root`; and the `lib/icons.ts` re-export module (consumed by Tasks 2/4/5). Every later task consumes these token names and the icon module.
 
-- [ ] **Step 1: Add font dependencies**
+- [ ] **Step 1: Add dependencies + the shared icon module**
 
 Run (from `app/ui`):
 ```bash
-bun add @fontsource/ibm-plex-sans @fontsource/ibm-plex-mono
+bun add @fontsource/ibm-plex-sans @fontsource/ibm-plex-mono lucide-svelte
 ```
-Expected: both added to `package.json` dependencies; `bun.lock` updated.
+Expected: all three added to `package.json` dependencies; `bun.lock` updated. (`lucide-svelte@1.x` peers `svelte ^5` — verified compatible.)
+
+Then create `app/ui/src/lib/icons.ts` — the single audit point for every Lucide icon the app uses, so Tasks 2/4/5 all import from one place and the used-set stays visible. Include the full set now (extras like `Check`/`Clock`/`Globe` are used by later tasks; declaring them here keeps 2–5 order-independent):
+```ts
+// Central re-export of the ONLY Lucide icons the app uses. Tree-shaken by Vite
+// to just these. Add here first if a component needs a new one.
+export {
+  Database, Table2, Columns3, Eye, Play, Save, RefreshCw,
+  Plus, Lock, ChevronDown, ChevronRight, Search, X,
+  Check, Clock, Globe,
+} from "lucide-svelte";
+```
 
 - [ ] **Step 2: Import only the used weights in `main.ts`**
 
@@ -205,11 +217,12 @@ Run `just dev`. Confirm: font is IBM Plex (not system), background is the violet
 - [ ] **Step 8: Commit**
 
 ```bash
-git add app/ui/package.json app/ui/bun.lock app/ui/src/main.ts app/ui/src/app.css app/ui/src/app.css.test.ts
-git commit -m "xhv.1: design-token foundation + IBM Plex fonts
+git add app/ui/package.json app/ui/bun.lock app/ui/src/main.ts app/ui/src/app.css app/ui/src/app.css.test.ts app/ui/src/lib/icons.ts
+git commit -m "xhv.1: design-token foundation + IBM Plex fonts + icon module
 
 CSS custom-property palette (light + OS-follow dark + data-theme hook),
-scale tokens, base reset, self-hosted IBM Plex Sans/Mono. Token-contract test.
+scale tokens, base reset, self-hosted IBM Plex Sans/Mono, shared lucide-svelte
+icon re-export (icons.ts). Token-contract test.
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ```
@@ -219,30 +232,20 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ## Task 2: Shell chrome restyle + icons (`billz-xhv.2`)
 
 **Files:**
-- Create: `app/ui/src/lib/icons.ts`
-- Modify: `app/ui/src/App.svelte` (styles in the `<style>` block, lines ~391–479; markup for the sidebar header + segmented toggle + toolbar icons)
+- Modify: `app/ui/src/App.svelte` (styles in the `<style>` block, lines ~391–479; markup for the sidebar header + segmented toggle + toolbar icons; **also** compute + pass a `lockedIds` prop to `<ConnectionList>` — see Step 5)
 - Modify: `app/ui/src/lib/ConnectionList.svelte`, `app/ui/src/lib/TabBar.svelte`
 - Modify: `app/ui/src/lib/tree/DatabaseNode.svelte`, `TableNode.svelte`, `ViewNode.svelte`, `ObjectTree.svelte`
 
 **Interfaces:**
-- Consumes: all Task 1 tokens.
-- Produces: `icons.ts` re-exports (consumed by Tasks 4/5 too).
+- Consumes: all Task 1 tokens + `lib/icons.ts` (both created in Task 1).
 
-- [ ] **Step 1: Add the icon dependency**
+- [ ] **Step 1: Confirm the Task 1 foundation is present**
 
-Run (from `app/ui`): `bun add lucide-svelte`
+`lucide-svelte` and `lib/icons.ts` were added in Task 1. Verify: `rg "from \"lucide-svelte\"" app/ui/src/lib/icons.ts` returns the export block. If a component below needs an icon not in that list, add it to `icons.ts` first (don't import from `lucide-svelte` directly elsewhere).
 
-- [ ] **Step 2: Create the centralized icon module**
+- [ ] **Step 2: (folded into Task 1 — icon module already exists)**
 
-Create `app/ui/src/lib/icons.ts`:
-```ts
-// Central re-export of the ONLY Lucide icons the app uses, so the used-set is
-// auditable and imports are one-line. Tree-shaken by Vite to just these.
-export {
-  Database, Table2, Columns3, Eye, Play, Save, RefreshCw,
-  Plus, Lock, ChevronDown, ChevronRight, Search, X,
-} from "lucide-svelte";
-```
+No action; proceed to Step 3.
 
 - [ ] **Step 3: Tokenize `App.svelte` styles**
 
@@ -285,22 +288,42 @@ import { Database, Play, Save } from "./lib/icons";
 ```
 (Adjust the relative path: from `App.svelte` it is `./lib/icons`.)
 
-- [ ] **Step 5: Tokenize `ConnectionList.svelte` + CVD-safe status**
+- [ ] **Step 5: Tokenize `ConnectionList.svelte` + CVD-safe lock status**
 
-Swap its ~4 hex literals to tokens. The active connection row: `background: color-mix(in srgb, var(--accent) 12%, transparent); font-weight:600;`. Replace any status coloring with the CVD-safe dot:
+`ConnectionList` currently only knows `active` (`ConnectionList.svelte:26`, `class:active={conns.activeId === cfg.id}`). The real per-row status the app tracks is **session-lock**: a connection needs a password when it's session-only and not yet unlocked. That state lives in `App.svelte` (`unlocked` SvelteSet, `App.svelte:68`), NOT in `ConnectionList`. So thread it down as a prop — surfacing existing state, inventing none. The dot means **ready (filled teal) vs. locked/needs-password (hollow ring)** — an honest label, and CVD-safe (fill *and* shape differ).
+
+First, in `App.svelte`, add a derived set and pass it in:
+```ts
+// ids that are session-only and not yet unlocked this session → "locked"
+const lockedIds = $derived(
+  new Set(conns.list.filter((c) => !c.rememberPassword && !unlocked.has(c.id)).map((c) => c.id)),
+);
+```
 ```svelte
-{#if connected}
-  <span class="dot on"><Check size={8} /></span>   <!-- or inline check; filled teal -->
+<ConnectionList lockedIds={lockedIds} onnew={openNew} onedit={openEdit} />
+```
+Then in `ConnectionList.svelte`, accept the prop (default empty so it still stands alone) and render the dot per row:
+```svelte
+<!-- script: add to the $props() destructure -->
+let { lockedIds = new Set<string>(), onnew, onedit } = $props();
+```
+```svelte
+<!-- markup: dot before each connection name -->
+{#if lockedIds.has(cfg.id)}
+  <span class="dot off" title="Session password needed"></span>
 {:else}
-  <span class="dot off"></span>                     <!-- hollow ring -->
+  <span class="dot on" title="Ready"><Check size={8} /></span>
 {/if}
 ```
 ```css
-.dot { width:.6rem; height:.6rem; border-radius:var(--r-pill); flex:none; }
+.dot { display:inline-flex; align-items:center; justify-content:center; width:.7rem; height:.7rem; border-radius:var(--r-pill); flex:none; }
 .dot.on { background: var(--ok); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 22%, transparent); }
+.dot.on :global(svg) { color: var(--accent-fg); width:7px; height:7px; }
 .dot.off { background: transparent; border: 1.5px solid var(--faint); }
 ```
-(If `ConnectionList` doesn't currently show a status, add the dot next to each name using the existing `active`/connected signal; do not invent new state.)
+Also swap `ConnectionList`'s ~4 existing hex literals to tokens, and the active row → `background: color-mix(in srgb, var(--accent) 12%, transparent); font-weight:600;`. Import `Check` from `./icons`.
+
+Note: `lockedIds` recomputes from existing reactive state — no behavior change, just a display of state App already owns. Verify in Step 8 that the dot flips to filled after entering a session password.
 
 - [ ] **Step 6: Tokenize `TabBar.svelte`**
 
@@ -339,7 +362,13 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 - Consumes: Task 1 `--syn-*` tokens, `--font-mono`.
 - Produces: `billzHighlight` extension + `editorTheme` extension.
 
-- [ ] **Step 1: Write the highlight + editor theme module**
+- [ ] **Step 1: Declare the CodeMirror deps, then write the highlight + editor theme module**
+
+`highlight.ts` imports directly from `@codemirror/language` and `@lezer/highlight`. Both resolve today only as *hoisted transitives* of `@codemirror/lang-sql`/`codemirror` — fragile for a direct import. Declare them:
+```bash
+bun add @codemirror/language @lezer/highlight
+```
+Expected: both added to `package.json`; `bun.lock` updated. Commit the lockfile with this task.
 
 Create `app/ui/src/lib/theme/highlight.ts`:
 ```ts
@@ -386,11 +415,11 @@ In the `extensions` array, **remove** the existing inline `EditorView.theme({...
     editorTheme,
     billzHighlight,
 ```
-Leave `basicSetup` (it supplies the default highlighter too, but a later `syntaxHighlighting` takes precedence for the mapped tags; unmapped tags fall back to basicSetup's defaults — safe).
+Leave `basicSetup` in place. Mechanism (verified against `@codemirror/language`'s `getHighlighters` = `main.length ? main : fallback`): `basicSetup`'s default highlighter is registered as a *fallback* (`{fallback: true}`), while `billzHighlight` is a *main* highlighter — so once billz is present it wins cleanly and basicSetup's default is bypassed entirely. Unmapped Lezer tags therefore render as plain `var(--text)` (NOT basicSetup colors). This is why there's no double-highlighter conflict; it's the intended behavior.
 
 - [ ] **Step 3: Gate**
 
-Run `just verify`. Expected: `svelte-check` + Rust green. (`@lezer/highlight` is already a transitive dep of `@codemirror/lang-sql`; if `bun` can't resolve it, `bun add -d @lezer/highlight` and note it.)
+Run `just verify`. Expected: `svelte-check` + Rust green. (`@codemirror/language` + `@lezer/highlight` are now declared deps from Step 1, so the direct imports resolve robustly.)
 
 - [ ] **Step 4: Visual check**
 
@@ -399,7 +428,7 @@ Run `just verify`. Expected: `svelte-check` + Rust green. (`@lezer/highlight` is
 - [ ] **Step 5: Commit**
 
 ```bash
-git add app/ui/src/lib/theme/highlight.ts app/ui/src/lib/SqlEditor.svelte
+git add app/ui/src/lib/theme/highlight.ts app/ui/src/lib/SqlEditor.svelte app/ui/package.json app/ui/bun.lock
 git commit -m "xhv.3: CSS-var-driven CodeMirror theme
 
 HighlightStyle mapping Lezer tags to --syn-* tokens + gutter/active-line/
@@ -483,7 +512,7 @@ Session/Global badges get a small icon (`Clock`/`Globe` — add to `icons.ts` re
 
 - [ ] **Step 6: Tokenize `SavedQueryLibrary` + `ColumnLeaf`**
 
-`SavedQueryLibrary` (3 hex) → tokens; list rows hover/active like the tree. `ColumnLeaf.svelte` (5 hex) → tokens; add the inline blue type tag next to the column name using `.htype`-style rule with `var(--type-tag)`.
+`SavedQueryLibrary` (3 hex) → tokens; list rows hover/active like the tree. `ColumnLeaf.svelte` (~7 hex) → tokens. It **already renders** a `.type` span (`: {label.dataType}`, `ColumnLeaf.svelte:13,29`), so this is a **retint**, not an add: point that span's `color` at `var(--type-tag)` (blue, never red) and swap the remaining hex (`#333/#888/#aaa/#b8860b/#3b82f6`) to tokens.
 
 - [ ] **Step 7: Gate + visual check**
 
@@ -554,6 +583,12 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 
 **Placeholder scan:** No TBD/TODO; every code step shows real code; mechanical swaps enumerate the exact selectors/values. The one soft spot — "confirm in `renderCell.ts`" (Task 4 Step 3) — is a verify-then-use instruction, not a placeholder; the fallback (`r.align === 'right'`) is concrete.
 
-**Type consistency:** Token names identical across Task 1 definitions and Tasks 2–5 usages (`--syn-*`, `--tier-*`, `--type-tag`, `--num-cell`, `--null-cell`, `--accent-*`). `icons.ts` export list is the superset consumed by 2/4/5 (note: `Clock`/`Globe`/`Check` referenced in later tasks must be added to the `icons.ts` re-export if used — called out inline). Module paths (`./theme/highlight`, `./icons`, `./lib/icons`) are relative-correct per file location.
+**Type consistency:** Token names identical across Task 1 definitions and Tasks 2–5 usages (`--syn-*`, `--tier-*`, `--type-tag`, `--num-cell`, `--null-cell`, `--accent-*`). `icons.ts` is created in Task 1 with the full 16-icon set (including `Check`/`Clock`/`Globe`), so every later task's `./icons` import resolves regardless of merge order. Module paths (`./theme/highlight`, `./icons`, `./lib/icons`) are relative-correct per file location.
 
-**Fixes applied inline:** Added the note that `Check`/`Clock`/`Globe` must join the `icons.ts` re-export list if a task uses them (Task 2 Step 2 exports the core 13; extras are additive).
+**Plan-review revisions (2026-07-13, adversarial `general-purpose` agent — verdict NEEDS-CHANGES, all addressed):**
+1. *BLOCKER* — `icons.ts` + `lucide-svelte` hoisted from Task 2 into **Task 1**, so Tasks 2–5 are genuinely order-independent; full icon set (incl. `Check`/`Clock`/`Globe`) declared at creation.
+2. *SHOULD-FIX* — `ConnectionList` has no `connected` signal (only `active`); rewired Task 2 Step 5 to thread a `lockedIds` prop (derived from App's existing `unlocked` state) and reframed the dot as **ready vs. locked**, honest + CVD-safe.
+3. *SHOULD-FIX* — `@codemirror/language` + `@lezer/highlight` now explicitly declared in Task 3 Step 1 (were fragile hoisted transitives).
+4. *NIT* — corrected the Task 3 fallback comment (billz highlighter wins entirely; unmapped tags → plain `--text`, not basicSetup colors).
+5. *NIT* — `ColumnLeaf` corrected to ~7 hex and a **retint** of the existing `.type` span (`label.dataType`), not a new tag.
+Reviewer independently *confirmed correct* (read installed source): CM `var()` theming + billz-beats-basicSetup, `lucide-svelte` Svelte-5 support, the three-layer dark cascade specificity, `vi.index % 2` striping, header/`result.columns[i]` index alignment, and `renderCell.align === 'right'` for numerics.
