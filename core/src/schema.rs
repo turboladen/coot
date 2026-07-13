@@ -24,6 +24,7 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::hash::Hash;
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde::{Deserialize, Serialize};
 
@@ -376,6 +377,11 @@ pub struct SchemaCache {
     /// Reused live connections for introspection (billz-lpb) — one login per
     /// connection amortized across expands, instead of one per `sys.*` query.
     sessions: SessionCache,
+    /// Bumped by every cache-clearing op; `get_or_fetch` refuses to write a
+    /// result fetched across a bump (rqb.7 — no stale re-cache after a mid-fetch
+    /// edit/Refresh). One global counter: a cross-connection false invalidation
+    /// just costs a harmless re-fetch on this single-user tool.
+    generation: AtomicU64,
 }
 
 /// Return the cached value for `key`, or run `fetch` and cache a successful
@@ -385,6 +391,7 @@ pub struct SchemaCache {
 /// (the next call retries).
 async fn get_or_fetch<K, V, Fut>(
     map: &Mutex<HashMap<K, V>>,
+    generation: &AtomicU64,
     key: K,
     fetch: impl FnOnce() -> Fut,
 ) -> Result<V>
@@ -393,14 +400,24 @@ where
     V: Clone,
     Fut: Future<Output = Result<V>>,
 {
+    let gen0 = generation.load(Ordering::Acquire); // stamp the epoch at entry
     if let Some(v) = map.lock().unwrap().get(&key) {
         return Ok(v.clone()); // guard dropped at the end of this `if`
     }
     let v = fetch().await; // no guard held across the await
     if let Ok(val) = &v {
-        map.lock().unwrap().insert(key, val.clone());
+        // rqb.7 (airtight): check the generation UNDER the insert lock, so
+        // "observed gen0" and "inserted" are atomic w.r.t. this map. A clear bumps
+        // the generation BEFORE clearing the maps, so either (a) its bump is
+        // visible here and we skip, or (b) our insert precedes the clear's
+        // map.lock().clear(), which then removes our entry. No stale row persists.
+        // (The atomic load doesn't block; no `.await` is held across the guard.)
+        let mut guard = map.lock().unwrap();
+        if generation.load(Ordering::Acquire) == gen0 {
+            guard.insert(key, val.clone());
+        }
     }
-    v
+    v // the in-flight caller still gets its value (return-but-don't-cache)
 }
 
 impl SchemaCache {
@@ -414,7 +431,7 @@ impl SchemaCache {
         cfg: &ConnectionConfig,
         store: &dyn SecretStore,
     ) -> Result<Vec<DatabaseInfo>> {
-        get_or_fetch(&self.databases, cfg.id.clone(), || {
+        get_or_fetch(&self.databases, &self.generation, cfg.id.clone(), || {
             list_databases(&self.sessions, cfg, store)
         })
         .await
@@ -427,9 +444,12 @@ impl SchemaCache {
         store: &dyn SecretStore,
         db: &str,
     ) -> Result<Vec<TableInfo>> {
-        get_or_fetch(&self.tables, (cfg.id.clone(), db.to_string()), || {
-            list_tables(&self.sessions, cfg, store, db)
-        })
+        get_or_fetch(
+            &self.tables,
+            &self.generation,
+            (cfg.id.clone(), db.to_string()),
+            || list_tables(&self.sessions, cfg, store, db),
+        )
         .await
     }
 
@@ -440,9 +460,12 @@ impl SchemaCache {
         store: &dyn SecretStore,
         db: &str,
     ) -> Result<Vec<ViewInfo>> {
-        get_or_fetch(&self.views, (cfg.id.clone(), db.to_string()), || {
-            list_views(&self.sessions, cfg, store, db)
-        })
+        get_or_fetch(
+            &self.views,
+            &self.generation,
+            (cfg.id.clone(), db.to_string()),
+            || list_views(&self.sessions, cfg, store, db),
+        )
         .await
     }
 
@@ -461,7 +484,7 @@ impl SchemaCache {
             schema.to_string(),
             table.to_string(),
         );
-        get_or_fetch(&self.columns, key, || {
+        get_or_fetch(&self.columns, &self.generation, key, || {
             list_columns(&self.sessions, cfg, store, db, schema, table)
         })
         .await
@@ -469,6 +492,7 @@ impl SchemaCache {
 
     /// Clear every cached map — the Refresh seam (rqb.5).
     pub fn invalidate(&self) {
+        self.generation.fetch_add(1, Ordering::Release); // rqb.7: bump BEFORE clearing
         self.databases.lock().unwrap().clear();
         self.tables.lock().unwrap().clear();
         self.views.lock().unwrap().clear();
@@ -477,6 +501,7 @@ impl SchemaCache {
 
     /// Drop every entry belonging to one connection (e.g. on disconnect).
     pub fn invalidate_connection(&self, id: &ConnectionId) {
+        self.generation.fetch_add(1, Ordering::Release); // rqb.7: bump BEFORE clearing
         self.databases.lock().unwrap().retain(|k, _| k != id);
         self.tables.lock().unwrap().retain(|k, _| &k.0 != id);
         self.views.lock().unwrap().retain(|k, _| &k.0 != id);
@@ -490,6 +515,11 @@ impl SchemaCache {
     pub fn forget_connection(&self, id: &ConnectionId) {
         self.invalidate_connection(id);
         self.sessions.evict(id);
+    }
+
+    #[cfg(test)]
+    fn generation(&self) -> u64 {
+        self.generation.load(Ordering::Relaxed)
     }
 }
 
@@ -723,6 +753,7 @@ mod tests {
     #[tokio::test]
     async fn get_or_fetch_runs_closure_once_per_key() {
         let map: Mutex<HashMap<String, i32>> = Mutex::new(HashMap::new());
+        let generation = AtomicU64::new(0);
         let calls = AtomicUsize::new(0);
         let fetch = || {
             calls.fetch_add(1, Ordering::SeqCst);
@@ -730,7 +761,9 @@ mod tests {
         };
         for _ in 0..3 {
             assert_eq!(
-                get_or_fetch(&map, "k".to_string(), fetch).await.unwrap(),
+                get_or_fetch(&map, &generation, "k".to_string(), fetch)
+                    .await
+                    .unwrap(),
                 99
             );
         }
@@ -740,28 +773,80 @@ mod tests {
     #[tokio::test]
     async fn get_or_fetch_refetches_after_clear() {
         let map: Mutex<HashMap<String, i32>> = Mutex::new(HashMap::new());
+        let generation = AtomicU64::new(0);
         let calls = AtomicUsize::new(0);
         let fetch = || {
             calls.fetch_add(1, Ordering::SeqCst);
             async { Ok(1) }
         };
-        get_or_fetch(&map, "k".to_string(), fetch).await.unwrap();
+        get_or_fetch(&map, &generation, "k".to_string(), fetch)
+            .await
+            .unwrap();
         map.lock().unwrap().clear(); // == invalidate
-        get_or_fetch(&map, "k".to_string(), fetch).await.unwrap();
+        get_or_fetch(&map, &generation, "k".to_string(), fetch)
+            .await
+            .unwrap();
         assert_eq!(calls.load(Ordering::SeqCst), 2);
     }
 
     #[tokio::test]
     async fn get_or_fetch_does_not_cache_err() {
         let map: Mutex<HashMap<String, i32>> = Mutex::new(HashMap::new());
+        let generation = AtomicU64::new(0);
         let calls = AtomicUsize::new(0);
         let fetch = || {
             calls.fetch_add(1, Ordering::SeqCst);
             async { Err(CoreError::Query("boom".into())) }
         };
-        assert!(get_or_fetch(&map, "k".to_string(), fetch).await.is_err());
-        assert!(get_or_fetch(&map, "k".to_string(), fetch).await.is_err());
+        assert!(
+            get_or_fetch(&map, &generation, "k".to_string(), fetch)
+                .await
+                .is_err()
+        );
+        assert!(
+            get_or_fetch(&map, &generation, "k".to_string(), fetch)
+                .await
+                .is_err()
+        );
         assert_eq!(calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn get_or_fetch_skips_cache_when_generation_bumped_during_fetch() {
+        // rqb.7: a clear (generation bump) mid-fetch must NOT leave the result
+        // cached — but the in-flight caller still receives its value.
+        let map: Mutex<HashMap<String, i32>> = Mutex::new(HashMap::new());
+        let generation = AtomicU64::new(0);
+        let fetch = || async {
+            generation.fetch_add(1, Ordering::Release); // a clear happened mid-fetch
+            Ok(42)
+        };
+        let got = get_or_fetch(&map, &generation, "k".to_string(), fetch).await;
+        assert_eq!(got.unwrap(), 42); // caller still gets the value
+        assert!(map.lock().unwrap().get("k").is_none()); // but it is NOT cached
+    }
+
+    #[tokio::test]
+    async fn get_or_fetch_caches_when_generation_stable() {
+        let map: Mutex<HashMap<String, i32>> = Mutex::new(HashMap::new());
+        let generation = AtomicU64::new(0);
+        let got = get_or_fetch(&map, &generation, "k".to_string(), || async { Ok(7) }).await;
+        assert_eq!(got.unwrap(), 7);
+        assert_eq!(map.lock().unwrap().get("k"), Some(&7)); // cached (no clear)
+    }
+
+    #[test]
+    fn clear_ops_bump_the_generation() {
+        let cache = SchemaCache::new();
+        let g0 = cache.generation();
+        cache.invalidate();
+        let g1 = cache.generation();
+        assert!(g1 > g0, "invalidate must bump the generation");
+        cache.invalidate_connection(&ConnectionId("nope".into()));
+        assert!(
+            cache.generation() > g1,
+            "invalidate_connection must bump too"
+        );
     }
 
     #[test]
