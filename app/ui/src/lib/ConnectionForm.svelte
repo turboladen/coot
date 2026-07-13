@@ -6,7 +6,18 @@
 
   // `editing` = the config to edit, or null for a new connection. The parent
   // wraps this in {#key} so a new target remounts the form (fields re-init).
-  let { editing, onclose }: { editing: ConnectionConfig | null; onclose: () => void } = $props();
+  // `onSessionUnlock` (85b): called with the connection id after a session-only
+  // save (remember off + a typed password), so App marks it unlocked and doesn't
+  // re-prompt. Real no-op default so it's always safe to call.
+  let {
+    editing,
+    onclose,
+    onSessionUnlock = () => {},
+  }: {
+    editing: ConnectionConfig | null;
+    onclose: () => void;
+    onSessionUnlock?: (id: string) => void;
+  } = $props();
 
   // One-time snapshot of the prop to seed the fields below. `untrack` makes the
   // "capture initial value only" intent explicit (the parent's {#key} remounts
@@ -28,10 +39,10 @@
   let encrypt = $state(seed?.encrypt ?? false);
   let trustServerCertificate = $state(seed?.trustServerCertificate ?? true);
 
-  // Wave B implements remember=true → Keychain only.
-  // TODO(phase1): session-only password (prompt at connect) — billz-85b.
   let password = $state("");
-  let rememberPassword = $state(true);
+  // Seeded from the saved config so editing shows the correct state (85b); default
+  // true for a new connection (store in Keychain).
+  let rememberPassword = $state(seed?.rememberPassword ?? true);
 
   let status = $state<{ kind: "ok" | "error"; text: string } | null>(null);
   let busy = $state(false);
@@ -45,6 +56,7 @@
       defaultDatabase: defaultDatabase.trim() === "" ? null : defaultDatabase.trim(),
       encrypt,
       trustServerCertificate,
+      rememberPassword,
     };
   }
 
@@ -52,10 +64,15 @@
     busy = true;
     status = null;
     try {
-      // Pass the password only when non-empty AND Remember is checked; otherwise
-      // null leaves the Keychain entry untouched (e.g. editing without a change).
-      const pw = password !== "" && rememberPassword ? password : null;
-      await save(buildConfig(), pw);
+      // Send the password whenever one was typed; the backend routes it by the
+      // rememberPassword flag (Keychain vs session-only). null = no change (e.g.
+      // editing without a new password) — leaves the stored secret untouched.
+      const pw = password !== "" ? password : null;
+      const cfg = buildConfig();
+      await save(cfg, pw);
+      // 85b: a session-only save with a typed password is already stashed in the
+      // backend session map — mark it unlocked so App doesn't re-prompt.
+      if (pw !== null && !rememberPassword) onSessionUnlock(cfg.id);
       onclose();
     } catch (e) {
       status = { kind: "error", text: String(e) };
@@ -65,18 +82,20 @@
   }
 
   async function onTest() {
-    // Test needs a saved connection (the password lives in the Keychain, keyed
-    // by id). Save first if this is a brand-new, unsaved connection.
+    // Test needs a saved connection (the password lives in the Keychain or the
+    // session map, keyed by id). Save first if this is a brand-new connection.
     busy = true;
     status = null;
     try {
       const cfg = buildConfig();
-      const pw = password !== "" && rememberPassword ? password : null;
+      const pw = password !== "" ? password : null;
       await save(cfg, pw);
+      if (pw !== null && !rememberPassword) onSessionUnlock(cfg.id);
       await testConnection(cfg.id);
       status = { kind: "ok", text: "Connection OK (SELECT 1 succeeded)." };
     } catch (e) {
-      // Surfaces e.g. Config("no stored password…") legibly when Remember was off.
+      // Surfaces e.g. Config("no stored password…") legibly when Remember was off
+      // and no password has been entered this session.
       status = { kind: "error", text: String(e) };
     } finally {
       busy = false;
@@ -96,7 +115,7 @@
   </label>
   <label class="check">
     <input type="checkbox" bind:checked={rememberPassword} />
-    Remember password (store in Keychain)
+    Remember password in Keychain (else prompt each session)
   </label>
   <label>Default database (optional)<input bind:value={defaultDatabase} /></label>
   <label class="check">

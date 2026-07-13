@@ -10,6 +10,7 @@ export type ConnectionConfig = {
   defaultDatabase: string | null;
   encrypt: boolean;
   trustServerCertificate: boolean;
+  rememberPassword: boolean;
 };
 
 // Mirrors of core's result types, for run_sql's return. Minimal — the grid UI
@@ -98,6 +99,9 @@ export const saveConnection = (cfg: ConnectionConfig, password: string | null) =
   invoke<void>("save_connection", { cfg, password });
 
 export const deleteConnection = (id: string) => invoke<void>("delete_connection", { id });
+
+export const setSessionPassword = (id: string, password: string) =>
+  invoke<void>("set_session_password", { id, password });
 
 export const testConnection = (id: string) => invoke<void>("test_connection", { id });
 
