@@ -1,2 +1,86 @@
-:root { color-scheme: light dark; }
-body { margin: 0; }
+/* ============ Design tokens ============ */
+:root {
+  color-scheme: light;
+
+  /* surfaces (violet-tinted neutrals) */
+  --canvas:#e7e6f4; --panel:#f6f5fc; --raised:#ffffff;
+  --border:#e0ddef; --border-strong:#cfcbe4;
+  /* text */
+  --text:#252032; --muted:#726c82; --faint:#a09aae;
+  /* brand + action */
+  --brand:#7c3aed; --accent:#0d9488; --accent-press:#0f766e; --accent-fg:#ffffff;
+  /* syntax */
+  --syn-kw:#7c3aed; --syn-fn:#2563eb; --syn-str:#c2410c; --syn-num:#0f766e;
+  --syn-comment:#8b86a0; --syn-var:#7c3aed;
+  /* data semantics */
+  --type-tag:#1d4ed8;
+  --tier-local:#64748b; --tier-session:#0d9488; --tier-global:#7c3aed;
+  --num-cell:#0f766e; --null-cell:#a09aae;
+  /* status + feedback (CVD-safe, icon-paired) */
+  --ok:#0d9488; --warn:#c2410c; --danger:#dc2626;
+
+  /* scale */
+  --sp-1:.25rem; --sp-2:.5rem; --sp-3:.75rem; --sp-4:1rem; --sp-5:1.5rem;
+  --r-sm:6px; --r-md:8px; --r-lg:10px; --r-xl:14px; --r-pill:999px;
+  --fs-xs:.72rem; --fs-sm:.8rem; --fs-base:.86rem; --fs-md:.95rem; --fs-lg:1.15rem;
+  --font-ui:'IBM Plex Sans', system-ui, sans-serif;
+  --font-mono:'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  --dur-fast:120ms; --dur:150ms; --ease:cubic-bezier(.2,.6,.2,1);
+  --shadow-sm:0 1px 2px rgba(40,30,80,.08); --shadow-md:0 6px 20px rgba(40,30,80,.12);
+}
+
+/* Dark: OS-follow AND an explicit override hook (attribute wins for the
+   deferred toggle, billz-xhv.6). The dark token values below are
+   intentionally duplicated between the `prefers-color-scheme` block and the
+   `[data-theme="dark"]` block: this is plain CSS with no preprocessor, so
+   there's no `@mixin`/variable-sharing across selectors. Keep both blocks in
+   sync by hand if a dark value ever changes. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) { color-scheme: dark; }
+  :root:not([data-theme="light"]) {
+    --canvas:#17151f; --panel:#1e1b28; --raised:#24202f;
+    --border:#302b3d; --border-strong:#3b3550;
+    --text:#e9e6f2; --muted:#9d97ac; --faint:#6f6982;
+    --brand:#a78bfa; --accent:#2dd4bf; --accent-press:#14b8a6; --accent-fg:#0b0f0e;
+    --syn-kw:#c4b5fd; --syn-fn:#7dd3fc; --syn-str:#fdba74; --syn-num:#5eead4;
+    --syn-comment:#6f6982; --syn-var:#c4b5fd;
+    --type-tag:#7dd3fc;
+    --tier-local:#94a3b8; --tier-session:#2dd4bf; --tier-global:#a78bfa;
+    --num-cell:#5eead4; --null-cell:#6f6982;
+    --ok:#2dd4bf; --warn:#fdba74; --danger:#f87171;
+  }
+}
+/* Duplicate of the dark values above, deliberately: this selector is the
+   explicit `data-theme="dark"` override hook (wins regardless of OS
+   preference), and plain CSS has no way to share a token block across two
+   different selectors without a preprocessor. Keep in sync with the
+   `@media (prefers-color-scheme: dark)` block above. */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --canvas:#17151f; --panel:#1e1b28; --raised:#24202f;
+  --border:#302b3d; --border-strong:#3b3550;
+  --text:#e9e6f2; --muted:#9d97ac; --faint:#6f6982;
+  --brand:#a78bfa; --accent:#2dd4bf; --accent-press:#14b8a6; --accent-fg:#0b0f0e;
+  --syn-kw:#c4b5fd; --syn-fn:#7dd3fc; --syn-str:#fdba74; --syn-num:#5eead4;
+  --syn-comment:#6f6982; --syn-var:#c4b5fd;
+  --type-tag:#7dd3fc;
+  --tier-local:#94a3b8; --tier-session:#2dd4bf; --tier-global:#a78bfa;
+  --num-cell:#5eead4; --null-cell:#6f6982;
+  --ok:#2dd4bf; --warn:#fdba74; --danger:#f87171;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root { --dur:0ms; --dur-fast:0ms; }
+}
+
+/* ============ Base ============ */
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font-family: var(--font-ui);
+  font-size: var(--fs-base);
+  color: var(--text);
+  background: var(--canvas);
+  -webkit-font-smoothing: antialiased;
+}
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
