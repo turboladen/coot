@@ -1,0 +1,56 @@
+# cargo-deny config — supply-chain / advisory gate for the Rust workspace.
+# Run with `just audit` (or `cargo deny check`). Personal macOS-first app that
+# keeps Linux viable, so we audit ALL target platforms (default graph), but
+# suppress advisories that are transitive and upstream-blocked (not fixable here).
+
+[advisories]
+# Real vulnerabilities and yanked crates still fail the gate (cargo-deny defaults).
+yanked = "deny"
+
+# "unmaintained" is informational, not a vulnerability. The whole gtk3-rs stack
+# (gtk/gdk/atk/… 0.18.x) is unmaintained because gtk-rs moved to gtk4, but Tauri's
+# Linux webview backend (tao/wry, both latest) still targets gtk3 + webkit2gtk — so
+# these are pulled transitively and are unfixable until Tauri migrates to gtk4
+# (see billz-0gh.9). Same story for a few transitive unic-*/proc-macro-error crates.
+# "workspace" only flags crates WE directly depend on, dropping the transitive noise
+# while still catching an unmaintained dep we add ourselves.
+unmaintained = "workspace"
+
+ignore = [
+  # glib VariantStrIter Iterator unsoundness (alias GHSA-wrw7-89jp-8q8g).
+  # Linux-only, via gtk 0.18.2 <- tao/wry <- tauri. Fixed in glib 0.20, which needs
+  # gtk4-rs; unreachable until Tauri's Linux backend moves to gtk4/webkitgtk-6.0.
+  # Low practical risk; Linux still builds on glib 0.18. Revisit: billz-0gh.9.
+  # (cargo-deny treats `unsound` as a warning, not an error, so this is belt-and-
+  # suspenders — it also documents the exception if the policy is ever tightened.)
+  "RUSTSEC-2024-0429",
+]
+
+[bans]
+multiple-versions = "allow"
+
+[licenses]
+# Permissive-license allowlist. Personal single-user tool; this keeps the gate
+# honest without turning into a licensing project. Extend if `cargo deny check
+# licenses` flags a dep on a license not listed here.
+# unused-allowed-license = "allow" so the list can stay a bit broad (covering
+# licenses a future dep might introduce) without warning about currently-unused ones.
+unused-allowed-license = "allow"
+allow = [
+  "MIT",
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "ISC",
+  "Unicode-3.0",
+  "Zlib",
+  "MPL-2.0",
+  "CC0-1.0",
+  "CDLA-Permissive-2.0", # webpki-roots (via mssql-tls -> mssql-client)
+]
+
+# Our own crates (billz-core/billz-app) carry no license field — correct for a
+# private, non-distributed personal app (both are `publish = false`). Skip them.
+[licenses.private]
+ignore = true
