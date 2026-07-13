@@ -22,8 +22,11 @@
 ### Task 1: `ConnectionConfig.remember_password` field (core)
 
 **Files:**
-- Modify: `core/src/connection.rs` — the struct + `sample_config` test fixture + a new deserialize test.
-- Modify (struct-literal fixups): `core/src/session.rs:146,166`, `core/tests/dev_box.rs:40`, `core/src/schema.rs:836`, `core/src/executor.rs:539`, `core/src/connection_store.rs:107`, `app/src/lib.rs:330`.
+- Modify: `core/src/connection.rs` — the struct + `sample_config` test fixture + a new deserialize test + the `config_serde_round_trips_and_holds_no_password` guard (line 306).
+- Modify: `core/src/connection_store.rs` — the `config` literal (line 107) + the `persisted_json_contains_no_password` guard (line 197).
+- Modify (struct-literal fixups): `core/src/session.rs:146,166`, `core/tests/dev_box.rs:40`, `core/src/schema.rs:836`, `core/src/executor.rs:539`, `app/src/lib.rs:330`.
+
+**⚠ Two existing disk-invariant guards WILL break** the moment the field is added: both assert `!s.to_lowercase().contains("password")`, and the new key lowercases to `rememberpassword`, which contains the substring `password`. Step 3 fixes both to a **quote-delimited** check `!…contains("\"password\"")` — the real password field (never present) would serialize as the JSON key `"password"`, whereas `"rememberpassword"` never contains quote-`password`-quote. This keeps the invariant tight while allowing the new metadata key.
 
 **Interfaces:**
 - Produces: `ConnectionConfig.remember_password: bool` (serde `rememberPassword`, default `true`).
@@ -73,6 +76,10 @@ In `core/src/connection.rs`, add to `ConnectionConfig` (after `trust_server_cert
 Add `remember_password: true,` to every `ConnectionConfig { … }` literal:
 `core/src/connection.rs` `sample_config` (~line 223), `core/src/session.rs:146` & `:166`, `core/tests/dev_box.rs:40`, `core/src/schema.rs:836`, `core/src/executor.rs:539`, `core/src/connection_store.rs:107` (the `config` helper), `app/src/lib.rs:330` (the `env_connection` test helper).
 
+Then fix the two disk-invariant guards so the new metadata key doesn't trip them:
+- `core/src/connection.rs:306` — `assert!(!s.to_lowercase().contains("\"password\""), "serialized: {s}");`
+- `core/src/connection_store.rs:197` — `!raw.to_lowercase().contains("\"password\""),`
+
 - [ ] **Step 4: Run — verify it passes**
 
 Run: `cargo test -p billz-core remember_password && cargo test -p billz-core && cargo test -p billz-app`
@@ -83,6 +90,8 @@ Expected: PASS (new tests + no literal left unfixed).
 ```bash
 git add core/src/connection.rs core/src/session.rs core/tests/dev_box.rs core/src/schema.rs core/src/executor.rs core/src/connection_store.rs app/src/lib.rs
 git commit -m "85b: ConnectionConfig.remember_password flag (serde default true)
+
+(includes tightening two disk-invariant guards to quote-delimited \"password\")
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ```
@@ -119,9 +128,8 @@ fn session_overlay_set_session_password_never_reaches_inner() {
     let overlay = SessionOverlaySecretStore::new(InMemorySecretStore::default());
     let id = ConnectionId("c1".into());
     overlay.set_session_password(&id, "ephemeral");
-    // Prove nothing was written to the durable inner store: reach past the
-    // session map by clearing it via delete, then read inner directly.
-    overlay.inner.get_password(&id).map(|v| assert!(v.is_none())).unwrap();
+    // Prove nothing was written to the durable inner store — read it directly.
+    assert!(overlay.inner.get_password(&id).unwrap().is_none());
 }
 
 #[test]
@@ -256,22 +264,43 @@ In `setup`, build it:
                 secrets: SessionOverlaySecretStore::new(CachingSecretStore::new(KeychainSecretStore)),
 ```
 
-- [ ] **Step 2: Branch `save_connection` on `remember_password`**
+- [ ] **Step 2: Branch `save_connection` on `remember_password` (incl. on→off cleanup)**
 
-Replace the `if let Some(pw) = password { … }` block in `save_connection` with:
+Two changes. First, extend `connect_changed` so flipping the remember flag drops
+the warm client (the creds *source* changed even if the connection string didn't).
+Capture `old` once:
 
 ```rust
-    if let Some(pw) = password {
-        if cfg.remember_password {
+    let old = state.connections.get(&cfg.id)?;
+    let connect_changed = password.is_some()
+        || old.as_ref().is_some_and(|o| {
+            build_connection_string(o, "") != build_connection_string(&cfg, "")
+                || o.remember_password != cfg.remember_password // 85b: creds source changed
+        });
+```
+
+Second, replace the `if let Some(pw) = password { … }` secret-write block with a
+branch that **clears any stale durable secret when remember is off** (the fix for
+the on→off gap: otherwise the old Keychain entry survives and `get_password` falls
+through to it, silently defeating "don't remember"):
+
+```rust
+    if cfg.remember_password {
+        if let Some(pw) = password {
             state.secrets.set_password(&cfg.id, &pw)?; // durable → Keychain
-        } else {
-            state.secrets.set_session_password(&cfg.id, &pw); // session-only, memory
+        }
+    } else {
+        // Session-only: drop any prior Keychain entry (idempotent; also clears the
+        // session map) BEFORE stashing the new session password.
+        state.secrets.delete_password(&cfg.id)?;
+        if let Some(pw) = password {
+            state.secrets.set_session_password(&cfg.id, &pw); // memory only
         }
     }
 ```
 
-(`connect_changed` already keys off `password.is_some()`, so a new session
-password still forgets the warm client — correct.)
+(Order matters: `delete_password` clears both layers, so `set_session_password`
+must run after it.)
 
 - [ ] **Step 3: Add the command + register it**
 
@@ -300,16 +329,18 @@ tests; `SessionOverlaySecretStore` wraps `InMemorySecretStore` here):
 
 ```rust
 #[test]
-fn session_overlay_command_path_stores_in_memory_only() {
+fn session_overlay_command_path_stores_retrievably() {
     let overlay = SessionOverlaySecretStore::new(InMemorySecretStore::default());
     let id = ConnectionId("c1".into());
     overlay.set_session_password(&id, "pw"); // what the command does
     assert_eq!(overlay.get_password(&id).unwrap().as_deref(), Some("pw"));
-    assert!(overlay.inner.get_password(&id).unwrap().is_none()); // never durable
 }
 ```
 
-(Add `SessionOverlaySecretStore` to the test module's `use` if needed.)
+(Add `SessionOverlaySecretStore` to the test module's `use` if needed. Do NOT
+assert on `overlay.inner` here — `inner` is `pub(crate)` and this test is in the
+`billz_app` crate, so it isn't visible cross-crate (E0616); the non-durability
+guarantee is already covered by Task 2's core tests.)
 
 - [ ] **Step 5: Run gates**
 
@@ -396,7 +427,8 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 
 **Files:**
 - Create: `app/ui/src/lib/PasswordPrompt.svelte` — the unlock modal.
-- Modify: `app/ui/src/App.svelte` — `unlocked` set, locked derived, gate the databases load, wire the prompt + 🔒, seed `unlocked` on save-with-session-pw.
+- Modify: `app/ui/src/App.svelte` — `unlocked`/`dismissed` sets, `lockedConn`/`showPrompt` derived, gate the databases load, wire the prompt + 🔒 banner, pass `onSessionUnlock` to `ConnectionForm`.
+- Modify: `app/ui/src/lib/ConnectionForm.svelte` — add the `onSessionUnlock?` prop + call it after a session-only save (Step 5).
 
 **Interfaces:**
 - Consumes: `setSessionPassword` (`api.ts`); `conns` (`connections.svelte`); `SvelteSet` (`svelte/reactivity`).
@@ -414,14 +446,23 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
     oncancel: () => void;
   } = $props();
   let password = $state("");
+  let input = $state<HTMLInputElement>();
+  // Focus the field on mount (svelte 5: bind:this is set before this runs after
+  // the microtask; use an effect so it fires once the node exists).
+  $effect(() => { input?.focus(); });
 </script>
 
-<div class="backdrop" role="presentation" onclick={oncancel}></div>
-<div class="modal" role="dialog" aria-label="Unlock connection">
+<!-- Escape cancels (mirrors TableNode's menu pattern). -->
+<svelte:window onkeydown={(e) => { if (e.key === "Escape") oncancel(); }} />
+
+<!-- Button backdrop (not a static div) so svelte-check a11y stays clean — same
+     pattern as tree/TableNode.svelte's .menu-backdrop. -->
+<button class="backdrop" aria-label="Cancel" onclick={oncancel}></button>
+<div class="modal" role="dialog" aria-modal="true" aria-label="Unlock connection">
   <h3>Password for {name}</h3>
   <p class="hint">Session-only — held in memory until you quit, never saved.</p>
   <form onsubmit={(e) => { e.preventDefault(); if (password !== "") onsubmit(password); }}>
-    <input type="password" bind:value={password} placeholder="Password" />
+    <input type="password" bind:this={input} bind:value={password} placeholder="Password" />
     <div class="actions">
       <button type="submit" disabled={password === ""}>Unlock</button>
       <button type="button" onclick={oncancel}>Cancel</button>
@@ -430,7 +471,10 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 </div>
 
 <style>
-  .backdrop { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.25); z-index: 50; }
+  .backdrop {
+    position: fixed; inset: 0; z-index: 50;
+    background: rgba(0, 0, 0, 0.25); border: none; padding: 0; cursor: default;
+  }
   .modal {
     position: fixed; top: 30%; left: 50%; transform: translateX(-50%); z-index: 51;
     background: #fff; border: 1px solid #ccc; border-radius: 8px; padding: 1rem 1.2rem;
@@ -460,11 +504,18 @@ Add state near the other connection state:
   // billz-85b: connection ids unlocked this app-session (a session-only password
   // is set). Same lifetime as the backend session map (both empty on restart).
   const unlocked = new SvelteSet<string>();
-  // The active connection, if it's session-only and not yet unlocked → prompt.
+  // Ids whose prompt the user dismissed (Cancel) — the modal hides but the
+  // connection stays locked (load still gated); a 🔒 button re-shows it.
+  const dismissed = new SvelteSet<string>();
+  // The active connection, if it's session-only and not yet unlocked. Drives the
+  // load gate AND the locked/🔒 UI. Independent of `dismissed` (dismissing hides
+  // the modal, not the locked state).
   const lockedConn = $derived.by(() => {
     const c = conns.list.find((c) => c.id === conns.activeId);
     return c && !c.rememberPassword && !unlocked.has(c.id) ? c : null;
   });
+  // Show the modal only while locked AND not dismissed.
+  const showPrompt = $derived(!!lockedConn && !dismissed.has(lockedConn.id));
 ```
 
 - [ ] **Step 3: Gate the databases load on `lockedConn`**
@@ -482,47 +533,66 @@ Change the cwt.10 load effect so a locked connection doesn't attempt a load
 
 - [ ] **Step 4: Render the prompt + a 🔒 reopen affordance**
 
-Where the workspace renders (top of the editor/results section is fine), add:
+Where the workspace renders (top of the editor/results section is fine), add the
+modal (only when not dismissed) and a locked banner with a 🔒 reopen button (shown
+when locked but the prompt is dismissed), so the user is never trapped:
 
 ```svelte
-{#if lockedConn}
+{#if showPrompt && lockedConn}
   <PasswordPrompt
     name={lockedConn.name}
     onsubmit={(pw) => unlock(lockedConn.id, pw)}
-    oncancel={() => {}}
+    oncancel={() => dismissed.add(lockedConn.id)}
   />
+{:else if lockedConn}
+  <div class="locked-note">
+    🔒 {lockedConn.name} is locked (session-only password not entered).
+    <button type="button" onclick={() => dismissed.delete(lockedConn.id)}>Enter password</button>
+  </div>
 {/if}
 ```
 
-`oncancel` is a no-op: `lockedConn` stays truthy, so the modal remains until
-unlocked (there is no other way to use a locked connection). The load effect stays
-gated. (If you prefer a dismissible prompt, a 🔒 button that re-sets a local
-`showPrompt` flag can gate rendering — but keeping it modal-until-unlocked is
-simplest and matches "prompt at connect".)
+Add a minimal `.locked-note` style (small, muted banner) in App's `<style>`.
 
 Add the handler:
 
 ```ts
   async function unlock(id: string, password: string) {
-    await setSessionPassword(id, password);
+    await setSessionPassword(id, password); // await BEFORE marking unlocked
+    dismissed.delete(id);
     unlocked.add(id); // re-derives lockedConn → null → load effect fires
   }
 ```
 
+**Cancel** → `dismissed.add(id)`: the modal hides but `lockedConn` stays truthy, so
+`loadDatabases` remains gated (no tree) and the 🔒 banner appears. Other ops the
+user might trigger (Run, tree expansion) will surface the existing `Config("no
+stored password…")` error — acceptable; the 🔒 banner is the recovery path. This is
+a **conscious** choice (per spec §4): a session-only connection you can't unlock
+doesn't silently half-work, and you can still switch to another connection.
+
 - [ ] **Step 5: Seed `unlocked` on save-with-session-password**
 
 So saving a session-only connection with a typed password doesn't immediately
-prompt: after a successful `save` of a `rememberPassword=false` connection where a
-password was entered, add its id to `unlocked`. If the save flows through
-`ConnectionForm` (which calls `connections.svelte` `save`), thread a callback or
-have `App` add to `unlocked` when it initiates the save. **Minimal approach:** in
-`App`, when the connection form closes after saving a session-only connection with
-a password, the backend already holds the session password; mark it unlocked by
-adding the id in the form's save path via a prop callback `onSessionUnlock?(id)`.
-Concretely, pass `onSessionUnlock={(id) => unlocked.add(id)}` to `ConnectionForm`
-and call it from `onSave`/`onTest` when `password !== "" && !rememberPassword`.
-(If this proves fiddly, the fallback is harmless: the user is prompted once via the
-modal — correct, just one extra entry.)
+prompt, mark it unlocked after the save resolves — with correct ordering (add to
+`unlocked` only AFTER the backend `set_session_password` has run, i.e. after
+`await save(...)`, so `lockedConn` never goes null before the backend holds the
+password).
+
+Concretely:
+1. In `ConnectionForm.svelte` (extends Task 4), add an
+   `onSessionUnlock?: (id: string) => void` prop (default no-op, like `onclose`).
+   In `onSave` and `onTest`, AFTER `await save(cfg, pw)` succeeds, call it when the
+   password was session-only:
+   ```ts
+   if (pw !== null && !rememberPassword) onSessionUnlock(cfg.id);
+   ```
+2. In `App.svelte`, where `<ConnectionForm … />` is rendered, pass
+   `onSessionUnlock={(id) => unlocked.add(id)}`.
+
+Fallback if this is skipped: harmless — the user simply gets one prompt via the
+modal (the backend already has the password only if it was saved; if not, the
+prompt is correct). But the ordering above is the intended, no-extra-prompt path.
 
 - [ ] **Step 6: Verify gates**
 
@@ -534,14 +604,14 @@ Expected: svelte-check 0 errors/0 warnings; bun tests pass; build clean.
 Run: `just dev`.
 1. New connection, Remember **off**, enter server/user/password, Save → tree loads (session password used). Verify **no** Keychain entry: `security find-generic-password -s billz -a <id>` returns nothing.
 2. Quit + relaunch → select that connection → 🔒 prompt appears → enter password → tree loads.
-3. Cancel the prompt → connection stays locked (no DB load); reselecting re-shows it.
+3. Cancel the prompt → the modal hides, a 🔒 banner appears, no DB load; clicking "Enter password" (or pressing Escape then reselecting) re-shows the prompt. You can still switch to another connection while dismissed.
 4. A Remember-**on** connection still auto-connects (no prompt).
 5. Delete the session-only connection → its session password is cleared (no leftover).
 
 - [ ] **Step 8: Commit**
 
 ```bash
-git add app/ui/src/lib/PasswordPrompt.svelte app/ui/src/App.svelte
+git add app/ui/src/lib/PasswordPrompt.svelte app/ui/src/App.svelte app/ui/src/lib/ConnectionForm.svelte
 git commit -m "85b: session-password unlock prompt + locked-connection gate
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
