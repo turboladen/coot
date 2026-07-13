@@ -32,10 +32,12 @@ impl serde::Serialize for AppError {
 type AppResult<T> = Result<T, AppError>;
 
 /// Managed state: the connection-metadata store (holds the `connections.json`
-/// path) and the secret store. The secret store is the Keychain wrapped in a
-/// session cache, so the password is read from the (prompt-inducing) macOS
-/// Keychain at most once per connection per session — every subsequent query /
-/// tab / `GO` batch reuses the in-memory copy. Both `Send + Sync + 'static`.
+/// path) and the secret store. The secret store is a session overlay (85b:
+/// prompt-at-connect, memory-only passwords) over the Keychain wrapped in a
+/// session cache — so a remembered password is read from the (prompt-inducing)
+/// macOS Keychain at most once per connection per session (every subsequent query
+/// / tab / `GO` batch reuses the in-memory copy), and a session-only password
+/// lives only in the overlay's memory map. Both `Send + Sync + 'static`.
 struct AppState {
     connections: ConnectionStore,
     secrets: SessionOverlaySecretStore<CachingSecretStore<KeychainSecretStore>>,
@@ -54,8 +56,11 @@ async fn list_connections(state: State<'_, AppState>) -> AppResult<Vec<Connectio
     Ok(state.connections.list()?)
 }
 
-/// Metadata → `connections.json`; password → Keychain iff `Some`. On edit with
-/// no new password, the UI passes `None` to leave the Keychain entry untouched.
+/// Metadata → `connections.json`. Password routing (85b) by `cfg.remember_password`:
+/// remember-on → Keychain (write-through) when `Some`; remember-off → clear any
+/// stale Keychain entry (durable only) and stash a `Some` password in the session
+/// map. `None` = no new password (edit without change) — leaves the stored secret
+/// untouched on the remember-on path.
 #[tauri::command]
 async fn save_connection(
     cfg: ConnectionConfig,
@@ -309,7 +314,9 @@ pub fn run() {
                 connections: store,
                 // Keychain reads are cached for the session (read once per
                 // connection, then reused) so a query never re-prompts.
-                secrets: SessionOverlaySecretStore::new(CachingSecretStore::new(KeychainSecretStore)),
+                secrets: SessionOverlaySecretStore::new(CachingSecretStore::new(
+                    KeychainSecretStore,
+                )),
                 schema: SchemaCache::new(),
                 queries: QueryStore::new(dir.join("saved_queries.json")),
             });
