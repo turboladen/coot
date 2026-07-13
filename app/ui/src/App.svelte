@@ -1,7 +1,9 @@
 <script lang="ts">
   import { onMount, untrack } from "svelte";
-  import { type ConnectionConfig, type ParamScope, type QueryResult, type SqlType, runParams, runSql } from "./lib/api";
+  import { type ConnectionConfig, type ParamScope, type QueryResult, type SqlType, runParams, runSql, setSessionPassword } from "./lib/api";
+  import { SvelteSet } from "svelte/reactivity";
   import ConnectionForm from "./lib/ConnectionForm.svelte";
+  import PasswordPrompt from "./lib/PasswordPrompt.svelte";
   import ConnectionList from "./lib/ConnectionList.svelte";
   import ObjectTree from "./lib/tree/ObjectTree.svelte";
   import SavedQueryLibrary from "./lib/SavedQueryLibrary.svelte";
@@ -59,8 +61,28 @@
   // mounted, so it owns the load; the tree's root and the DB picker both just
   // read `dbStore`. Reloads on connection switch and on a schema Refresh
   // (treeRefresh.nonce); the store drops out-of-order responses.
+  // billz-85b: session-only password unlock. `unlocked` = connection ids with a
+  // session password set this app-session (same lifetime as the backend session
+  // map — both empty on restart). `dismissed` = ids whose prompt the user closed
+  // (modal hides, connection stays locked, a 🔒 banner offers to reopen).
+  const unlocked = new SvelteSet<string>();
+  const dismissed = new SvelteSet<string>();
+  // The active connection if it's session-only and not yet unlocked → locked.
+  const lockedConn = $derived.by(() => {
+    const c = conns.list.find((c) => c.id === conns.activeId);
+    return c && !c.rememberPassword && !unlocked.has(c.id) ? c : null;
+  });
+  const showPrompt = $derived(!!lockedConn && !dismissed.has(lockedConn.id));
+
+  async function unlock(id: string, password: string) {
+    await setSessionPassword(id, password); // await BEFORE marking unlocked (no desync)
+    dismissed.delete(id);
+    unlocked.add(id); // re-derives lockedConn → null → the load effect fires
+  }
+
   $effect(() => {
     treeRefresh.nonce; // track: a Refresh re-issues the load
+    if (lockedConn) return; // billz-85b: wait for unlock before hitting the DB
     loadDatabases(conns.activeId);
   });
 
@@ -292,9 +314,24 @@
     </div>
   </aside>
   <section>
+    <!-- billz-85b: unlock prompt / 🔒 banner for a session-only active connection.
+         Rendered at section top (outside .workspace's 5-track grid) — the modal is
+         position:fixed; the banner is a thin block above the content. -->
+    {#if showPrompt && lockedConn}
+      <PasswordPrompt
+        name={lockedConn.name}
+        onsubmit={(pw) => unlock(lockedConn.id, pw)}
+        oncancel={() => dismissed.add(lockedConn.id)}
+      />
+    {:else if lockedConn}
+      <div class="locked-note">
+        🔒 {lockedConn.name} is locked (session-only password not entered).
+        <button type="button" onclick={() => dismissed.delete(lockedConn.id)}>Enter password</button>
+      </div>
+    {/if}
     {#if editing !== undefined}
       {#key editing}
-        <ConnectionForm editing={editing} onclose={closeForm} />
+        <ConnectionForm editing={editing} onclose={closeForm} onSessionUnlock={(id) => unlocked.add(id)} />
       {/key}
     {:else}
       <div class="workspace">
@@ -394,6 +431,20 @@
   section {
     min-height: 0;
     overflow: hidden;
+  }
+  .locked-note {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.3rem 0.6rem;
+    font-size: 0.8rem;
+    color: #92400e;
+    background: #fef3c7;
+    border-bottom: 1px solid #fcd34d;
+  }
+  .locked-note button {
+    font-size: 0.75rem;
+    cursor: pointer;
   }
   .workspace {
     display: grid;

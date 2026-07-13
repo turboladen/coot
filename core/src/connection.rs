@@ -372,7 +372,10 @@ mod tests {
         inner.set_password(&id, "durable").unwrap();
         let overlay = SessionOverlaySecretStore::new(inner);
         overlay.set_session_password(&id, "ephemeral");
-        assert_eq!(overlay.get_password(&id).unwrap().as_deref(), Some("ephemeral"));
+        assert_eq!(
+            overlay.get_password(&id).unwrap().as_deref(),
+            Some("ephemeral")
+        );
     }
 
     #[test]
@@ -389,7 +392,10 @@ mod tests {
         let overlay = SessionOverlaySecretStore::new(InMemorySecretStore::default());
         let id = ConnectionId("c1".into());
         overlay.set_password(&id, "durable").unwrap();
-        assert_eq!(overlay.inner.get_password(&id).unwrap().as_deref(), Some("durable"));
+        assert_eq!(
+            overlay.inner.get_password(&id).unwrap().as_deref(),
+            Some("durable")
+        );
     }
 
     #[test]
@@ -410,7 +416,10 @@ mod tests {
         let id = ConnectionId("c1".into());
         inner.set_password(&id, "durable").unwrap();
         let overlay = SessionOverlaySecretStore::new(inner);
-        assert_eq!(overlay.get_password(&id).unwrap().as_deref(), Some("durable"));
+        assert_eq!(
+            overlay.get_password(&id).unwrap().as_deref(),
+            Some("durable")
+        );
     }
 
     #[test]
@@ -424,7 +433,10 @@ mod tests {
         overlay.set_session_password(&id, "ephemeral");
         overlay.clear_durable(&id).unwrap();
         assert!(overlay.inner.get_password(&id).unwrap().is_none()); // durable gone
-        assert_eq!(overlay.get_password(&id).unwrap().as_deref(), Some("ephemeral")); // session kept
+        assert_eq!(
+            overlay.get_password(&id).unwrap().as_deref(),
+            Some("ephemeral")
+        ); // session kept
     }
 
     #[test]
@@ -434,7 +446,10 @@ mod tests {
         // The "no plaintext on disk" invariant, checked structurally. A real
         // password would serialize as the JSON key "password"; check quote-
         // delimited so the metadata key "rememberPassword" (85b) doesn't trip it.
-        assert!(!s.to_lowercase().contains("\"password\""), "serialized: {s}");
+        assert!(
+            !s.to_lowercase().contains("\"password\""),
+            "serialized: {s}"
+        );
         assert!(s.contains(r#""defaultDatabase":null"#), "camelCase: {s}");
         let back: ConnectionConfig = serde_json::from_str(&s).unwrap();
         assert_eq!(back, cfg);
@@ -454,7 +469,10 @@ mod tests {
         let mut cfg = sample_config();
         cfg.remember_password = false;
         let json = serde_json::to_string(&cfg).unwrap();
-        assert!(json.contains("\"rememberPassword\":false"), "serialized: {json}");
+        assert!(
+            json.contains("\"rememberPassword\":false"),
+            "serialized: {json}"
+        );
         let back: ConnectionConfig = serde_json::from_str(&json).unwrap();
         assert!(!back.remember_password);
     }
