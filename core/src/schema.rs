@@ -823,30 +823,7 @@ mod tests {
 
     // ---- §7. live (env-gated) smoke tests — clean-skip when MSSQL_* unset ----
 
-    use crate::connection::{ConnectionId as CId, InMemorySecretStore};
-
-    /// Build a live `(cfg, store)` from `MSSQL_*`, or `None` when any required
-    /// var is unset (runtime skip, NOT `#[ignore]`). Mirrors executor.rs.
-    fn env_connection() -> Option<(ConnectionConfig, InMemorySecretStore, String)> {
-        let server = std::env::var("MSSQL_SERVER").ok()?;
-        let username = std::env::var("MSSQL_USER").ok()?;
-        let password = std::env::var("MSSQL_PASSWORD").ok()?;
-        let database = std::env::var("MSSQL_DATABASE").ok()?;
-
-        let cfg = ConnectionConfig {
-            id: CId("smoke".into()),
-            name: "smoke".into(),
-            server,
-            username,
-            default_database: Some(database.clone()),
-            encrypt: false,
-            trust_server_certificate: true,
-            remember_password: true,
-        };
-        let store = InMemorySecretStore::default();
-        store.set_password(&cfg.id, &password).unwrap();
-        Some((cfg, store, database))
-    }
+    use crate::test_support::env_connection;
 
     #[tokio::test]
     async fn live_list_databases_contains_online_master() {

@@ -157,31 +157,9 @@ mod tests {
         assert_send(sessions.run(&cfg, &store, &ctx, "SELECT 1"));
     }
 
-    /// Live `(cfg, store)` from `MSSQL_*`, or `None` (runtime skip, NOT #[ignore])
-    /// — mirrors executor.rs / schema.rs.
-    fn env_connection() -> Option<(ConnectionConfig, InMemorySecretStore)> {
-        let server = std::env::var("MSSQL_SERVER").ok()?;
-        let username = std::env::var("MSSQL_USER").ok()?;
-        let password = std::env::var("MSSQL_PASSWORD").ok()?;
-        let database = std::env::var("MSSQL_DATABASE").ok()?;
-        let cfg = ConnectionConfig {
-            id: ConnectionId("smoke".into()),
-            name: "smoke".into(),
-            server,
-            username,
-            default_database: Some(database),
-            encrypt: false,
-            trust_server_certificate: true,
-            remember_password: true,
-        };
-        let store = InMemorySecretStore::default();
-        store.set_password(&cfg.id, &password).unwrap();
-        Some((cfg, store))
-    }
-
     #[tokio::test]
     async fn live_session_reuses_then_reconnects_after_evict() {
-        let Some((cfg, store)) = env_connection() else {
+        let Some((cfg, store, _)) = crate::test_support::env_connection() else {
             eprintln!("skipping live_session_reuses_then_reconnects_after_evict: MSSQL_* not set");
             return;
         };
