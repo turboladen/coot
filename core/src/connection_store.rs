@@ -112,6 +112,7 @@ mod tests {
             default_database: None,
             encrypt: false,
             trust_server_certificate: true,
+            remember_password: true,
         }
     }
 
@@ -192,9 +193,11 @@ mod tests {
         let store = ConnectionStore::new(&path);
         store.upsert(&config("a", "Alpha")).unwrap();
         let raw = fs::read_to_string(&path).unwrap();
-        // The "no plaintext on disk" invariant, checked on the raw bytes.
+        // The "no plaintext on disk" invariant, checked on the raw bytes. A real
+        // password serializes as the JSON key "password"; check quote-delimited so
+        // the metadata key "rememberPassword" (85b) doesn't trip it.
         assert!(
-            !raw.to_lowercase().contains("password"),
+            !raw.to_lowercase().contains("\"password\""),
             "persisted file: {raw}"
         );
         cleanup(&path);
