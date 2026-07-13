@@ -25,16 +25,16 @@
     font-size: 0.85rem;
     white-space: nowrap;
   }
-  .name { color: #333; }
-  .type { color: #888; font-size: 0.8rem; }
-  .null { color: #aaa; font-size: 0.7rem; }
+  .name { color: var(--text); }
+  .type { color: var(--muted); font-size: 0.8rem; }
+  .null { color: var(--faint); font-size: 0.7rem; }
   .badge {
     font-size: 0.65rem;
     padding: 0 0.25rem;
-    border-radius: 3px;
+    border-radius: var(--r-sm);
     border: 1px solid;
     line-height: 1.4;
   }
-  .pk { color: #b8860b; border-color: #b8860b; }
-  .fk { color: #3b82f6; border-color: #3b82f6; }
+  .pk { color: var(--warn); border-color: var(--warn); }
+  .fk { color: var(--type-tag); border-color: var(--type-tag); }
 </style>

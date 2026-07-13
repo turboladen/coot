@@ -2,6 +2,7 @@
   import { refreshSchema } from "../api";
   import { conns } from "../connections.svelte";
   import { dbStore } from "../databases.svelte";
+  import { RefreshCw } from "../icons";
   import DatabaseNode from "./DatabaseNode.svelte";
   import LoadingNote from "./LoadingNote.svelte";
   import { bumpRefresh } from "./refresh.svelte";
@@ -27,7 +28,7 @@
 <div class="tree">
   <div class="header">
     <h2>Objects</h2>
-    <button class="refresh" onclick={refresh} disabled={!activeId} title="Refresh">↻</button>
+    <button class="refresh" onclick={refresh} disabled={!activeId} title="Refresh"><RefreshCw size={13} /></button>
   </div>
 
   {#if !activeId}
@@ -53,16 +54,17 @@
   .header { display: flex; align-items: center; justify-content: space-between; }
   h2 { font-size: 1rem; margin: 0.5rem 0; }
   .refresh {
+    display: inline-flex;
+    align-items: center;
     background: none;
     border: none;
     font: inherit;
-    font-size: 1rem;
-    color: #555;
+    color: var(--muted);
     cursor: pointer;
     padding: 0 0.3rem;
   }
-  .refresh:disabled { color: #ccc; cursor: default; }
-  .hint { color: #888; font-size: 0.9rem; }
-  .err { color: #b91c1c; }
+  .refresh:disabled { color: var(--faint); cursor: default; }
+  .hint { color: var(--muted); font-size: 0.9rem; }
+  .err { color: var(--danger); }
   ul { list-style: none; margin: 0; padding: 0; }
 </style>
