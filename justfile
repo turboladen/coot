@@ -42,6 +42,13 @@ fmt:
 fmt-check:
     cargo fmt --all --check
 
+# Supply-chain / advisory audit (cargo-deny; config in deny.toml). Flags real
+# vulnerabilities, yanked crates, and license issues. Transitive unmaintained
+# noise from Tauri's gtk3 Linux stack is filtered (see deny.toml / billz-0gh.9).
+# Needs `cargo install cargo-deny`. Not in `verify` (it fetches the advisory DB).
+audit:
+    cargo deny check
+
 # ---- Frontend (app/ui) ----
 
 # Install JS deps with bun.
