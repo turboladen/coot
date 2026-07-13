@@ -216,6 +216,19 @@ mod tests {
     }
 
     #[test]
+    fn optional_fields_default_none_when_absent() {
+        // A hand-edited file omitting the Option keys must load (as None), not
+        // error with "missing field" (billz-ztr): SavedQuery.targetDatabase and
+        // Param.sqlType / Param.lastValue.
+        let json = r#"{"id":"q1","name":"N","sql":"SELECT * FROM t WHERE a=@a",
+            "params":[{"name":"@a","scope":"local"}]}"#;
+        let q: SavedQuery = serde_json::from_str(json).unwrap();
+        assert_eq!(q.target_database, None);
+        assert_eq!(q.params[0].sql_type, None);
+        assert_eq!(q.params[0].last_value, None);
+    }
+
+    #[test]
     fn saved_query_params_default_when_absent() {
         // A hand-edited file omitting `params` loads as an empty Vec.
         let json = r#"{"id":"q1","name":"N","sql":"SELECT 1","targetDatabase":null}"#;

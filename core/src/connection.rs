@@ -456,6 +456,15 @@ mod tests {
     }
 
     #[test]
+    fn default_database_defaults_none_when_absent() {
+        // A hand-edited config omitting defaultDatabase must load (as None), not
+        // error with "missing field" (billz-ztr).
+        let json = r#"{"id":"c1","name":"n","server":"h,1433","username":"u"}"#;
+        let cfg: ConnectionConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(cfg.default_database, None);
+    }
+
+    #[test]
     fn remember_password_defaults_true_when_absent() {
         // A config written before 85b (no rememberPassword key) must still load.
         let json = r#"{"id":"c1","name":"n","server":"h,1433","username":"u",
