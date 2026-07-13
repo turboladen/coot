@@ -7,6 +7,7 @@
   import { createTable, getCoreRowModel, type ColumnDef, type TableState } from "@tanstack/table-core";
   import { createVirtualizer } from "@tanstack/svelte-virtual";
   import type { CellValue, QueryResult } from "./api";
+  import { Database, Search } from "./icons";
   import { renderCell } from "./renderCell";
 
   let { result }: { result: QueryResult } = $props();
@@ -105,7 +106,12 @@
 
 {#if result.columns.length === 0}
   <div class="empty">
-    {result.rowsAffected != null ? `${result.rowsAffected} rows affected` : "No result set."}
+    {#if result.rowsAffected != null}
+      <span>{result.rowsAffected} rows affected</span>
+    {:else}
+      <Database size={20} />
+      <span>No result set.</span>
+    {/if}
   </div>
 {:else}
   <div class="grid">
@@ -121,7 +127,10 @@
     <!-- Scroll container: fills remaining height, owns the vertical scroll. -->
     <div class="body" bind:this={scrollEl}>
       {#if rows.length === 0}
-        <div class="no-rows">No rows.</div>
+        <div class="no-rows">
+          <Search size={20} />
+          <span>No rows.</span>
+        </div>
       {:else}
         <!-- Spacer sized to the full virtual height; rows absolutely positioned. -->
         <div class="spacer" style:height="{$rowVirtualizer.getTotalSize()}px">
@@ -229,7 +238,18 @@
   }
   .empty,
   .no-rows {
-    padding: 1rem;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: var(--sp-2);
+    padding: var(--sp-5);
     color: var(--muted);
+    text-align: center;
+  }
+  .empty :global(svg),
+  .no-rows :global(svg) {
+    color: var(--faint);
   }
 </style>

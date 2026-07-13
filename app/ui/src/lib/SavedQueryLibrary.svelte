@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { SavedQuery } from "./api";
+  import { Search } from "./icons";
   import { library, remove, save } from "./savedQueries.svelte";
   import { filterQueries, promoteToSavedQuery } from "./savedQueriesLogic";
   import { activeContent, newTabWithContent } from "./tabs.svelte";
@@ -68,7 +69,10 @@
   <input class="search" placeholder="Search queries" bind:value={search} />
 
   {#if library.list.length === 0}
-    <p class="empty">No saved queries yet.</p>
+    <div class="empty">
+      <Search size={20} />
+      <p>No saved queries yet.</p>
+    </div>
   {:else}
     <ul>
       {#each filtered as q (q.id)}
@@ -91,7 +95,23 @@
   .list { padding: 0.5rem; }
   .header { display: flex; align-items: center; justify-content: space-between; }
   h2 { font-size: 1rem; margin: 0.5rem 0; color: var(--text); }
-  .empty { color: var(--muted); font-size: 0.9rem; }
+  .empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: var(--sp-2);
+    padding: var(--sp-5) var(--sp-2);
+    color: var(--muted);
+    font-size: 0.9rem;
+    text-align: center;
+  }
+  .empty :global(svg) {
+    color: var(--faint);
+  }
+  .empty p {
+    margin: 0;
+  }
   .promote { display: flex; flex-direction: column; gap: 0.3rem; margin-bottom: 0.5rem; }
   .search { width: 100%; margin-bottom: 0.5rem; box-sizing: border-box; }
   input {

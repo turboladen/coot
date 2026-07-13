@@ -2,7 +2,7 @@
   import { refreshSchema } from "../api";
   import { conns } from "../connections.svelte";
   import { dbStore } from "../databases.svelte";
-  import { RefreshCw } from "../icons";
+  import { Database, RefreshCw } from "../icons";
   import DatabaseNode from "./DatabaseNode.svelte";
   import LoadingNote from "./LoadingNote.svelte";
   import { bumpRefresh } from "./refresh.svelte";
@@ -32,11 +32,17 @@
   </div>
 
   {#if !activeId}
-    <p class="hint">Select a connection to browse its objects.</p>
+    <div class="empty-tree">
+      <Database size={20} />
+      <p class="hint">Select a connection to browse its objects.</p>
+    </div>
   {:else if dbStore.status === "error"}
     <p class="hint err">{dbStore.error}</p>
   {:else if dbStore.status === "loaded" && dbStore.list.length === 0}
-    <p class="hint">No databases.</p>
+    <div class="empty-tree">
+      <Database size={20} />
+      <p class="hint">No databases.</p>
+    </div>
   {:else if dbStore.status === "loaded"}
     <ul>
       {#each dbStore.list as db (db.databaseId)}
@@ -66,5 +72,20 @@
   .refresh:disabled { color: var(--faint); cursor: default; }
   .hint { color: var(--muted); font-size: 0.9rem; }
   .err { color: var(--danger); }
+  .empty-tree {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: var(--sp-2);
+    padding: var(--sp-5) var(--sp-2);
+    text-align: center;
+  }
+  .empty-tree :global(svg) {
+    color: var(--faint);
+  }
+  .empty-tree .hint {
+    margin: 0;
+  }
   ul { list-style: none; margin: 0; padding: 0; }
 </style>
