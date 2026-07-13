@@ -13,7 +13,7 @@
         "@fontsource/ibm-plex-mono": "^5.2.7",
         "@fontsource/ibm-plex-sans": "^5.2.8",
         "@lezer/highlight": "^1.2.3",
-        "@tanstack/svelte-virtual": "^3.13.31",
+        "@tanstack/svelte-virtual": "^3.13.32",
         "@tanstack/table-core": "^8.21.3",
         "@tauri-apps/api": "^2.11.1",
         "codemirror": "^6.0.2",
@@ -25,7 +25,7 @@
         "@tsconfig/svelte": "^5.0.8",
         "svelte": "^5.56.4",
         "svelte-check": "^4.7.2",
-        "typescript": "6",
+        "typescript": "^6",
         "vite": "^8.1.4",
       },
     },
@@ -117,11 +117,11 @@
 
     "@sveltejs/vite-plugin-svelte": ["@sveltejs/vite-plugin-svelte@7.2.0", "", { "dependencies": { "deepmerge": "^4.3.1", "magic-string": "^0.30.21", "obug": "^2.1.0", "vitefu": "^1.1.2" }, "peerDependencies": { "svelte": "^5.46.4", "vite": "^8.0.0-beta.7 || ^8.0.0" } }, "sha512-1SpkuMSRLfugrVX+IrKfE1RUegzo8AQzKQ6qQPfVzbcWi5IhuTPaKb5ZrLpucleFznkc4/RTeSPoRnGWFxX+EQ=="],
 
-    "@tanstack/svelte-virtual": ["@tanstack/svelte-virtual@3.13.31", "", { "dependencies": { "@tanstack/virtual-core": "3.17.3" }, "peerDependencies": { "svelte": "^3.48.0 || ^4.0.0 || ^5.0.0" } }, "sha512-2R3A19VhlOoOMhCkKaKRgJHPFEBmVBSt4fKBqTMYolj7her0XlVDoTdOUbdBm2kpds1DVEOZFh7YdJw0wmjHzQ=="],
+    "@tanstack/svelte-virtual": ["@tanstack/svelte-virtual@3.13.32", "", { "dependencies": { "@tanstack/virtual-core": "3.17.4" }, "peerDependencies": { "svelte": "^3.48.0 || ^4.0.0 || ^5.0.0" } }, "sha512-jA7zRXPAP6Duvdk1mHYAtBNHu5yQo43Wlf8iE3pJ+umj9GdE+dXMzIky3apFBZBP6MOmSr0wT/cHA4f/qHbA3w=="],
 
     "@tanstack/table-core": ["@tanstack/table-core@8.21.3", "", {}, "sha512-ldZXEhOBb8Is7xLs01fR3YEc3DERiz5silj8tnGkFZytt1abEvl/GhUmCE0PMLaMPTa3Jk4HbKmRlHmu+gCftg=="],
 
-    "@tanstack/virtual-core": ["@tanstack/virtual-core@3.17.3", "", {}, "sha512-8Np/TFELpI0ySuJoVmjvOrQYXH/8sTX0Biv9szhFhY39xOdAAY+smrMxjxOum/ux3eM8MUJQsEJ0/R0UpvC8dw=="],
+    "@tanstack/virtual-core": ["@tanstack/virtual-core@3.17.4", "", {}, "sha512-nGm5KteqxasUdThLc2izl6dHUqLv0LQj7Nuyo5gYalTPf/U8a9ermvsl7reT+6ioBW1l8WfpP/mcU338nLXpqw=="],
 
     "@tauri-apps/api": ["@tauri-apps/api@2.11.1", "", {}, "sha512-M2FPuYND2m+wh5hfW9ZpSdxMPdEJovPBWwoHJmwUpysTYNHaOkVFN419m/K0LIgjb/7KU2vBgsUepJWugQCvAA=="],
 
