@@ -93,6 +93,14 @@ async fn save_connection(
     if cfg.remember_password {
         if let Some(pw) = password {
             state.secrets.set_password(&cfg.id, &pw)?;
+        } else if old.as_ref().is_some_and(|o| !o.remember_password) {
+            // billz-kub: flipped session-only → remember-on without retyping.
+            // Promote the password we already know (the live session value) to the
+            // Keychain so it survives a restart. `get_password` prefers the session
+            // map; if nothing is known, there's nothing to promote (no-op).
+            if let Some(pw) = state.secrets.get_password(&cfg.id)? {
+                state.secrets.set_password(&cfg.id, &pw)?;
+            }
         }
     } else {
         state.secrets.clear_durable(&cfg.id)?;
