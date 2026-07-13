@@ -21,6 +21,8 @@ pub mod query_store;
 pub mod result;
 pub mod schema;
 pub mod session;
+#[cfg(test)]
+mod test_support;
 pub mod types;
 
 pub use batch::{batch_at_line, split_batches};

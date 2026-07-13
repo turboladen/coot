@@ -525,35 +525,11 @@ mod tests {
 
     // ---- one env-gated live smoke test (clean skip with no DB) ----
 
-    use crate::connection::{ConnectionConfig, ConnectionId, InMemorySecretStore};
-
-    /// Build a live `(cfg, store)` from `MSSQL_*` env, or `None` when any
-    /// required var is unset — a runtime skip (NOT `#[ignore]`), so `cargo test`
-    /// stays green without a DB.
-    fn env_connection() -> Option<(ConnectionConfig, InMemorySecretStore)> {
-        let server = std::env::var("MSSQL_SERVER").ok()?;
-        let username = std::env::var("MSSQL_USER").ok()?;
-        let password = std::env::var("MSSQL_PASSWORD").ok()?;
-        let database = std::env::var("MSSQL_DATABASE").ok()?;
-
-        let cfg = ConnectionConfig {
-            id: ConnectionId("smoke".into()),
-            name: "smoke".into(),
-            server,
-            username,
-            default_database: Some(database),
-            encrypt: false,
-            trust_server_certificate: true,
-            remember_password: true,
-        };
-        let store = InMemorySecretStore::default();
-        store.set_password(&cfg.id, &password).unwrap();
-        Some((cfg, store))
-    }
+    use crate::test_support::env_connection;
 
     #[tokio::test]
     async fn run_returns_clean_query_result() {
-        let Some((cfg, store)) = env_connection() else {
+        let Some((cfg, store, _)) = env_connection() else {
             eprintln!("skipping run_returns_clean_query_result: MSSQL_* env not set");
             return;
         };
