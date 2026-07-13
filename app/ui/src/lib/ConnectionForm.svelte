@@ -3,6 +3,7 @@
   import type { ConnectionConfig } from "./api";
   import { testConnection } from "./api";
   import { save } from "./connections.svelte";
+  import { X } from "./icons";
 
   // `editing` = the config to edit, or null for a new connection. The parent
   // wraps this in {#key} so a new target remounts the form (fields re-init).
@@ -127,12 +128,12 @@
 
   <div class="actions">
     <button class="primary" onclick={onSave} disabled={busy}>Save</button>
-    <button class="secondary" onclick={onTest} disabled={busy}>Test</button>
-    <button class="secondary" onclick={onclose} disabled={busy}>Cancel</button>
+    <button onclick={onTest} disabled={busy}>Test</button>
+    <button onclick={onclose} disabled={busy}>Cancel</button>
   </div>
 
   {#if status}
-    <p class="status {status.kind}">{status.text}</p>
+    <p class="status {status.kind}">{#if status.kind === "error"}<span class="status-icon" aria-hidden="true"><X size={13} /></span>{/if}{status.text}</p>
   {/if}
 </div>
 
@@ -183,4 +184,5 @@
   .status { font-size: var(--fs-sm); }
   .status.ok { color: var(--ok); }
   .status.error { color: var(--danger); white-space: pre-wrap; }
+  .status-icon { margin-right: var(--sp-1); }
 </style>

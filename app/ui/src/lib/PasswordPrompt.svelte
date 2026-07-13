@@ -53,7 +53,7 @@
     position: fixed;
     inset: 0;
     z-index: 50;
-    background: rgba(0, 0, 0, 0.25);
+    background: var(--scrim);
     border: none;
     padding: 0;
     cursor: default;

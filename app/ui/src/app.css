@@ -18,6 +18,8 @@
   --num-cell:#0f766e; --null-cell:#a09aae;
   /* status + feedback (CVD-safe, icon-paired) */
   --ok:#0d9488; --warn:#c2410c; --danger:#dc2626;
+  /* modal backdrop */
+  --scrim: rgba(0,0,0,0.25);
 
   /* scale */
   --sp-1:.25rem; --sp-2:.5rem; --sp-3:.75rem; --sp-4:1rem; --sp-5:1.5rem;
@@ -48,6 +50,7 @@
     --tier-local:#94a3b8; --tier-session:#2dd4bf; --tier-global:#a78bfa;
     --num-cell:#5eead4; --null-cell:#6f6982;
     --ok:#2dd4bf; --warn:#fdba74; --danger:#f87171;
+    --scrim: rgba(0,0,0,0.5);
   }
 }
 /* Duplicate of the dark values above, deliberately: this selector is the
@@ -67,6 +70,7 @@
   --tier-local:#94a3b8; --tier-session:#2dd4bf; --tier-global:#a78bfa;
   --num-cell:#5eead4; --null-cell:#6f6982;
   --ok:#2dd4bf; --warn:#fdba74; --danger:#f87171;
+  --scrim: rgba(0,0,0,0.5);
 }
 
 @media (prefers-reduced-motion: reduce) {
