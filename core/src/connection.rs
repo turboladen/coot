@@ -423,6 +423,22 @@ mod tests {
     }
 
     #[test]
+    fn session_overlay_promote_persists_to_inner() {
+        // kub: promoting a session-only password to durable (get then set_password)
+        // writes it to the inner store, so it survives the session map clearing
+        // (the app does this when flipping a connection to remember-on).
+        let overlay = SessionOverlaySecretStore::new(InMemorySecretStore::default());
+        let id = ConnectionId("c1".into());
+        overlay.set_session_password(&id, "pw");
+        let known = overlay.get_password(&id).unwrap().unwrap(); // the promote read
+        overlay.set_password(&id, &known).unwrap(); // the promote write (→ durable)
+        assert_eq!(
+            overlay.inner.get_password(&id).unwrap().as_deref(),
+            Some("pw")
+        );
+    }
+
+    #[test]
     fn session_overlay_clear_durable_keeps_session() {
         // Re-saving an already-session-only connection must not wipe the live
         // session password: clear_durable removes only the Keychain side.
