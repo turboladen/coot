@@ -23,6 +23,7 @@
       header: c.name,
       accessorFn: (row) => row[i],
       size: 160,
+      minSize: 56, // drag floor — keep the header name + type tag legible
     })),
   );
 
@@ -43,6 +44,13 @@
     },
     renderFallbackValue: null,
     getCoreRowModel: getCoreRowModel(),
+    // Drag-to-resize columns (billz-a4e). Static options — they ride through the
+    // setOptions({ ...prev }) merge in the bridge below, and add columnSizing/
+    // columnSizingInfo to initialState so the state merge forwards them. A drag
+    // routes table-core's setColumnSizing through onStateChange above, so widths
+    // update live via getSize(). "onChange" = resize while dragging (vs "onEnd").
+    enableColumnResizing: true,
+    columnResizeMode: "onChange",
   });
 
   // THE reactivity bridge, done the genuinely-reactive way: $derived.by reads
@@ -64,10 +72,26 @@
     // object" crash and a blank grid. Merge table.initialState (features fill it)
     // under our own tableState, exactly as TanStack's React/Svelte adapters do.
     table.setOptions((prev) => ({ ...prev, data: result.rows, columns, state: { ...table.initialState, ...tableState } }));
-    return { rows: table.getRowModel().rows, headerGroup: table.getHeaderGroups()[0] };
+    const headerGroup = table.getHeaderGroups()[0];
+    // billz-a4e: column resizing only mutates columnSizing/columnSizingInfo, and
+    // table-core memoizes getHeaderGroups()/getRowModel() WITHOUT those in their
+    // dep lists — so a drag returns the SAME header/row refs. If we read getSize()
+    // straight off that memoized headerGroup in the width deriveds, Svelte's
+    // referential equality sees "no change" and the grid freezes mid-drag. Snapshot
+    // the live sizes HERE, inside this tableState-tracked derived, as fresh arrays/
+    // values so gridTemplate/totalWidth/cell widths + the resize highlight re-run on
+    // every tick (a new `widths` array identity each run drives the propagation).
+    return {
+      rows: table.getRowModel().rows,
+      headerGroup,
+      widths: headerGroup ? headerGroup.headers.map((h) => h.getSize()) : [],
+      resizingId: table.getState().columnSizingInfo.isResizingColumn,
+    };
   });
   const rows = $derived(model.rows);
   const headerGroup = $derived(model.headerGroup);
+  const widths = $derived(model.widths);
+  const resizingId = $derived(model.resizingId);
 
   // Vertical virtualization. createVirtualizer returns a Svelte store — the
   // template's $rowVirtualizer reads keep it subscribed (which runs _didMount /
@@ -104,10 +128,12 @@
     });
   });
 
-  const gridTemplate = $derived(headerGroup ? headerGroup.headers.map((h) => `${h.getSize()}px`).join(" ") : "");
+  // Derived from `widths` (the sizing snapshot) — NOT off the memoized headerGroup —
+  // so a resize propagates. See the model comment above.
+  const gridTemplate = $derived(widths.map((w) => `${w}px`).join(" "));
   // billz-c6e: exact total column width. Pinning header + body content to this
   // makes the horizontal scroll extent precise (no width:100%-vs-overflow drift).
-  const totalWidth = $derived(headerGroup ? headerGroup.headers.reduce((sum, h) => sum + h.getSize(), 0) : 0);
+  const totalWidth = $derived(widths.reduce((sum, w) => sum + w, 0));
 </script>
 
 {#if result.columns.length === 0}
@@ -120,7 +146,9 @@
     {/if}
   </div>
 {:else}
-  <div class="grid">
+  <!-- class:resizing suppresses text selection + pins the col-resize cursor for the
+       whole grid while a drag is active (billz-a4e); table-core styles nothing itself. -->
+  <div class="grid" class:resizing={!!resizingId}>
     <!-- Sticky header. The clip wrapper stays vertically pinned (flex:none) and
          owns the bottom border; the inner header-row is pinned to the total
          content width and mirrors the body's horizontal scroll via translateX
@@ -133,8 +161,25 @@
         style:transform="translateX(-{bodyScrollLeft}px)"
       >
         {#each headerGroup?.headers ?? [] as header, i (header.id)}
-          <div class="th" style:width="{header.getSize()}px">
+          <div class="th" style:width="{widths[i]}px">
             {header.column.columnDef.header}<span class="htype">{result.columns[i].sqlType}</span>
+            {#if header.column.getCanResize()}
+              <!-- Handle at the cell's right border; table-core's handler tracks
+                   clientX deltas so the header's translateX scroll-mirror doesn't
+                   interfere. Works for both mouse and touch. A pointer-drag-only
+                   affordance (keyboard resize is deferred, TODO(later)), so the
+                   non-interactive-element a11y lint doesn't apply here. -->
+              <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+              <div
+                class="resizer"
+                class:resizing={resizingId === header.column.id}
+                onmousedown={header.getResizeHandler()}
+                ontouchstart={header.getResizeHandler()}
+                role="separator"
+                aria-orientation="vertical"
+                aria-label="Resize column"
+              ></div>
+            {/if}
           </div>
         {/each}
       </div>
@@ -164,14 +209,14 @@
                 style:height="{ROW_H}px"
                 style:transform="translateY({vi.start}px)"
               >
-                {#each row.getVisibleCells() as cell (cell.id)}
+                {#each row.getVisibleCells() as cell, ci (cell.id)}
                   {@const r = renderCell(cell.getValue<CellValue>())}
                   <div
                     class="td"
                     class:nullish={r.nullish}
                     class:mono={r.mono}
                     class:num={r.align === "right"}
-                    style:width="{cell.column.getSize()}px"
+                    style:width="{widths[ci]}px"
                     style:text-align={r.align}
                   >
                     {r.text}
@@ -194,6 +239,12 @@
     min-height: 0;
     font-size: 13px;
   }
+  /* While a column is being dragged, kill text selection across the grid and hold
+     the col-resize cursor even when the pointer strays off the 6px handle. */
+  .grid.resizing {
+    user-select: none;
+    cursor: col-resize;
+  }
   /* Clips the horizontally-translated header and owns the full-width bottom
      border so it spans the pane even when the table is narrower than it. */
   .header-clip {
@@ -207,6 +258,7 @@
     background: var(--panel);
   }
   .th {
+    position: relative; /* anchor the .resizer handle to the cell's right edge */
     padding: 4px 8px;
     font-weight: 600;
     white-space: nowrap;
@@ -216,6 +268,22 @@
     color: var(--muted);
     font-family: var(--font-ui);
     box-sizing: border-box;
+  }
+  /* Drag handle over the column's right border (billz-a4e). Invisible until
+     hover/active; touch-action:none keeps a touch drag from scrolling the pane. */
+  .resizer {
+    position: absolute;
+    top: 0;
+    right: 0;
+    height: 100%;
+    width: 6px;
+    cursor: col-resize;
+    touch-action: none;
+    user-select: none;
+  }
+  .resizer:hover,
+  .resizer.resizing {
+    background: var(--brand);
   }
   .htype {
     margin-left: var(--sp-1);
