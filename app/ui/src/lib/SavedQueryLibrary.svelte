@@ -90,15 +90,37 @@
 <style>
   .list { padding: 0.5rem; }
   .header { display: flex; align-items: center; justify-content: space-between; }
-  h2 { font-size: 1rem; margin: 0.5rem 0; }
-  .empty { color: #888; font-size: 0.9rem; }
+  h2 { font-size: 1rem; margin: 0.5rem 0; color: var(--text); }
+  .empty { color: var(--muted); font-size: 0.9rem; }
   .promote { display: flex; flex-direction: column; gap: 0.3rem; margin-bottom: 0.5rem; }
   .search { width: 100%; margin-bottom: 0.5rem; box-sizing: border-box; }
-  input { font-size: 0.85rem; padding: 0.2rem 0.3rem; }
+  input {
+    font-size: 0.85rem;
+    padding: 0.2rem 0.3rem;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--r-sm);
+    background: var(--raised);
+    color: var(--text);
+  }
   ul { list-style: none; margin: 0; padding: 0; }
-  li { padding: 0.5rem; border: 1px solid #ccc; border-radius: 4px; margin-bottom: 0.4rem; }
+  li {
+    padding: 0.5rem;
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    margin-bottom: 0.4rem;
+    transition: background var(--dur-fast) var(--ease);
+  }
+  li:hover {
+    background: color-mix(in srgb, var(--brand) 8%, transparent);
+  }
   .meta { display: flex; flex-direction: column; }
-  .sql { color: #888; font-size: 0.8rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sql {
+    color: var(--muted);
+    font-size: 0.8rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
   .actions { display: flex; gap: 0.3rem; margin-top: 0.3rem; }
   button { font-size: 0.8rem; cursor: pointer; }
 </style>

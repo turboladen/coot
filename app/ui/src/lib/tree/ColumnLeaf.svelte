@@ -26,7 +26,7 @@
     white-space: nowrap;
   }
   .name { color: var(--text); }
-  .type { color: var(--muted); font-size: 0.8rem; }
+  .type { color: var(--type-tag); font-size: 0.8rem; }
   .null { color: var(--faint); font-size: 0.7rem; }
   .badge {
     font-size: 0.65rem;

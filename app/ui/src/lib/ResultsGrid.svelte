@@ -18,7 +18,8 @@
   const columns = $derived<ColumnDef<Row>[]>(
     result.columns.map((c, i) => ({
       id: String(i),
-      header: `${c.name} : ${c.sqlType}`,
+      // header carries the display name; sqlType is read from result.columns for the tag
+      header: c.name,
       accessorFn: (row) => row[i],
       size: 160,
     })),
@@ -110,9 +111,9 @@
   <div class="grid">
     <!-- Sticky header — same column widths as the body rows. -->
     <div class="header-row" style:grid-template-columns={gridTemplate}>
-      {#each headerGroup?.headers ?? [] as header (header.id)}
+      {#each headerGroup?.headers ?? [] as header, i (header.id)}
         <div class="th" style:width="{header.getSize()}px">
-          {header.column.columnDef.header}
+          {header.column.columnDef.header}<span class="htype">{result.columns[i].sqlType}</span>
         </div>
       {/each}
     </div>
@@ -128,6 +129,7 @@
             {@const row = rows[vi.index]}
             <div
               class="tr"
+              class:stripe={vi.index % 2 === 1}
               style:grid-template-columns={gridTemplate}
               style:height="{ROW_H}px"
               style:transform="translateY({vi.start}px)"
@@ -138,6 +140,7 @@
                   class="td"
                   class:nullish={r.nullish}
                   class:mono={r.mono}
+                  class:num={r.align === "right"}
                   style:width="{cell.column.getSize()}px"
                   style:text-align={r.align}
                 >
@@ -162,8 +165,8 @@
   }
   .header-row {
     display: grid;
-    border-bottom: 2px solid #bbb;
-    background: #f4f4f4;
+    border-bottom: 2px solid var(--border-strong);
+    background: var(--panel);
     flex: none;
   }
   .th {
@@ -172,8 +175,16 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    border-right: 1px solid #ddd;
+    border-right: 1px solid var(--border);
+    color: var(--muted);
+    font-family: var(--font-ui);
     box-sizing: border-box;
+  }
+  .htype {
+    margin-left: var(--sp-1);
+    font-size: var(--fs-xs);
+    color: var(--type-tag);
+    font-weight: 400;
   }
   .body {
     flex: 1 1 auto;
@@ -191,28 +202,34 @@
     top: 0;
     left: 0;
     width: 100%;
-    border-bottom: 1px solid #eee;
+    border-bottom: 1px solid var(--border);
     box-sizing: border-box;
+  }
+  .tr.stripe {
+    background: color-mix(in srgb, var(--brand) 3%, var(--raised));
   }
   .td {
     padding: 4px 8px;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    border-right: 1px solid #f0f0f0;
+    border-right: 1px solid var(--border);
     box-sizing: border-box;
     line-height: 20px;
   }
   .td.mono {
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-family: var(--font-mono);
+  }
+  .td.num {
+    color: var(--num-cell);
   }
   .td.nullish {
-    color: #999;
+    color: var(--null-cell);
     font-style: italic;
   }
   .empty,
   .no-rows {
     padding: 1rem;
-    color: #888;
+    color: var(--muted);
   }
 </style>

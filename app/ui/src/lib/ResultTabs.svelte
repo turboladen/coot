@@ -30,6 +30,7 @@
     {#each results ?? [] as r, i}
       <button class="tab" class:active={activeTab === i} onclick={() => (activeTab = i)}>
         {tabLabel(r, i)}
+        <span class="count">{r.rows.length}</span>
       </button>
     {/each}
     <button
@@ -46,7 +47,7 @@
       <!-- TODO(billz-mfd): PRINT/info output -->
       <div class="messages">
         {#each messages as m}
-          <div class="msg {m.kind}">{m.text}</div>
+          <div class="msg {m.kind}">{#if m.kind === "error"}<span class="msg-icon" aria-hidden="true">⚠</span>{/if}{m.text}</div>
         {/each}
       </div>
     {:else if selectedResult}
@@ -71,23 +72,34 @@
     flex: none;
     gap: 0.25rem;
     padding: 0 0.4rem;
-    border-bottom: 1px solid #ccc;
+    border-bottom: 1px solid var(--border);
     overflow-x: auto;
   }
   .tab {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-1);
     padding: 0.35rem 0.7rem;
     border: none;
-    border-bottom: 2px solid transparent;
+    border-radius: var(--r-sm) var(--r-sm) 0 0;
     background: none;
     font: inherit;
     font-size: 0.85rem;
-    color: #555;
+    color: var(--muted);
     white-space: nowrap;
     cursor: pointer;
   }
   .tab.active {
-    color: #111;
-    border-bottom-color: #2563eb;
+    color: var(--text);
+    background: var(--raised);
+    box-shadow: var(--shadow-sm);
+  }
+  .count {
+    font-size: var(--fs-xs);
+    background: color-mix(in srgb, var(--accent) 16%, var(--raised));
+    color: var(--accent-press);
+    padding: 0 var(--sp-1);
+    border-radius: var(--r-pill);
   }
   .pane {
     flex: 1 1 auto;
@@ -101,14 +113,18 @@
     font-size: 0.85rem;
     line-height: 1.5;
   }
-  /* Mirrors App/ConnectionForm status colors: info plain, error red. */
+  /* Mirrors App/ConnectionForm status colors: info plain, error red + icon
+     (never color-only — CVD-safe). */
   .msg.error {
-    color: #dc2626;
+    color: var(--danger);
     white-space: pre-wrap;
+  }
+  .msg-icon {
+    margin-right: var(--sp-1);
   }
   .grid-empty {
     padding: 1rem;
-    color: #6b7280;
+    color: var(--muted);
     font-size: 0.9rem;
   }
 </style>
