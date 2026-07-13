@@ -42,6 +42,11 @@ pub struct ConnectionConfig {
     /// `true` ⇒ `TrustServerCertificate=true` — the locked default (`PLAN.md` §2).
     #[serde(default = "default_true")]
     pub trust_server_certificate: bool,
+    /// `false` ⇒ session-only password (prompted at connect, held in memory,
+    /// never written to the Keychain). Default `true` for back-compat with
+    /// configs written before billz-85b. Metadata only — not a secret.
+    #[serde(default = "default_true")]
+    pub remember_password: bool,
 }
 
 fn default_true() -> bool {
@@ -228,6 +233,7 @@ mod tests {
             default_database: None,
             encrypt: false,
             trust_server_certificate: true,
+            remember_password: true,
         }
     }
 
@@ -302,11 +308,32 @@ mod tests {
     fn config_serde_round_trips_and_holds_no_password() {
         let cfg = sample_config();
         let s = serde_json::to_string(&cfg).unwrap();
-        // The "no plaintext on disk" invariant, checked structurally.
-        assert!(!s.to_lowercase().contains("password"), "serialized: {s}");
+        // The "no plaintext on disk" invariant, checked structurally. A real
+        // password would serialize as the JSON key "password"; check quote-
+        // delimited so the metadata key "rememberPassword" (85b) doesn't trip it.
+        assert!(!s.to_lowercase().contains("\"password\""), "serialized: {s}");
         assert!(s.contains(r#""defaultDatabase":null"#), "camelCase: {s}");
         let back: ConnectionConfig = serde_json::from_str(&s).unwrap();
         assert_eq!(back, cfg);
+    }
+
+    #[test]
+    fn remember_password_defaults_true_when_absent() {
+        // A config written before 85b (no rememberPassword key) must still load.
+        let json = r#"{"id":"c1","name":"n","server":"h,1433","username":"u",
+            "defaultDatabase":null,"encrypt":false,"trustServerCertificate":true}"#;
+        let cfg: ConnectionConfig = serde_json::from_str(json).unwrap();
+        assert!(cfg.remember_password);
+    }
+
+    #[test]
+    fn remember_password_round_trips_false() {
+        let mut cfg = sample_config();
+        cfg.remember_password = false;
+        let json = serde_json::to_string(&cfg).unwrap();
+        assert!(json.contains("\"rememberPassword\":false"), "serialized: {json}");
+        let back: ConnectionConfig = serde_json::from_str(&json).unwrap();
+        assert!(!back.remember_password);
     }
 
     #[test]

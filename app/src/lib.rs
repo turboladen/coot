@@ -335,6 +335,7 @@ mod tests {
             default_database: Some(database),
             encrypt: false,
             trust_server_certificate: true,
+            remember_password: true,
         };
         let store = InMemorySecretStore::default();
         store.set_password(&cfg.id, &password).unwrap();
