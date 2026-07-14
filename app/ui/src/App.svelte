@@ -21,7 +21,8 @@
   import { isTabDirty } from "./lib/tabsLogic";
   import { treeRefresh } from "./lib/tree/refresh.svelte";
   import { dbStore, load as loadDatabases } from "./lib/databases.svelte";
-  import { Database, Play, Save } from "./lib/icons";
+  import { setTheme, theme } from "./lib/theme.svelte";
+  import { Database, Monitor, Moon, Play, Save, Sun } from "./lib/icons";
 
   // Sidebar lower region toggles between the object tree and the saved-query
   // library (d28.6) — the library gets its own full-height home per PLAN §5.
@@ -298,7 +299,34 @@
 
 <main>
   <aside>
-    <div class="brand"><Database size={16} /> <span>billz</span></div>
+    <div class="brand">
+      <Database size={16} /> <span>billz</span>
+      <!-- Color-theme control (billz-xhv.6): System / Light / Dark. `system`
+           follows the OS; the others pin `data-theme` on <html>. -->
+      <div class="theme-toggle" role="group" aria-label="Color theme">
+        <button
+          class:active={theme.choice === "system"}
+          onclick={() => setTheme("system")}
+          title="Follow system theme"
+          aria-label="Follow system theme"
+          aria-pressed={theme.choice === "system"}
+        ><Monitor size={14} /></button>
+        <button
+          class:active={theme.choice === "light"}
+          onclick={() => setTheme("light")}
+          title="Light theme"
+          aria-label="Light theme"
+          aria-pressed={theme.choice === "light"}
+        ><Sun size={14} /></button>
+        <button
+          class:active={theme.choice === "dark"}
+          onclick={() => setTheme("dark")}
+          title="Dark theme"
+          aria-label="Dark theme"
+          aria-pressed={theme.choice === "dark"}
+        ><Moon size={14} /></button>
+      </div>
+    </div>
     <ConnectionList lockedIds={lockedIds} onnew={openNew} onedit={openEdit} />
     <!-- Segmented toggle: the lower region shows the object tree OR the saved-query
          library (d28.6). Objects need a connection; the library is independent. -->
@@ -426,6 +454,37 @@
     color: var(--text);
   }
   .brand :global(svg) { color: var(--brand); }
+  /* Color-theme control (billz-xhv.6). Its own class — NOT `.mode-toggle`, which
+     owns the Objects/Library selector — sharing would couple unrelated controls.
+     Lives INSIDE the `.brand` header (pushed right via margin-auto), so there's
+     no border-top bar to double up against the brand's border-bottom. Icon-only
+     ghost buttons; the active state reuses the accent-tint visual language. */
+  .theme-toggle {
+    display: flex;
+    gap: 0.15rem;
+    margin-left: auto;
+  }
+  .theme-toggle button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.2rem 0.3rem;
+    border: 1px solid transparent;
+    border-radius: var(--r-sm);
+    background: transparent;
+    color: var(--faint);
+    cursor: pointer;
+    transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+  }
+  .theme-toggle button:hover:not(.active) { color: var(--muted); }
+  .theme-toggle button.active {
+    background: color-mix(in srgb, var(--accent) 14%, var(--raised));
+    color: var(--accent-press);
+    border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+  }
+  /* Icons follow the button's own colour (currentColor), overriding the
+     brand-purple `.brand :global(svg)` rule above via later source order. */
+  .theme-toggle :global(svg) { color: inherit; }
   /* Segmented [Objects | Library] toggle between the connection list and the
      scrolling lower region. */
   .mode-toggle {
