@@ -27,3 +27,10 @@ test("dark overrides exist for the surface tokens", () => {
   expect(darkIdx).toBeGreaterThan(-1);
   expect(css.slice(darkIdx).includes("--canvas:")).toBe(true);
 });
+
+test("the OS-dark block is guarded so an explicit light choice wins", () => {
+  // The theme toggle (billz-xhv.6) relies on this guard: when the user pins
+  // `light`, `data-theme="light"` must suppress the `prefers-color-scheme: dark`
+  // overrides. If this selector is dropped, a light choice on a dark OS breaks.
+  expect(css.includes(':not([data-theme="light"])')).toBe(true);
+});
