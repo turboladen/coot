@@ -46,6 +46,16 @@ pub enum CoreError {
     /// variant stays backend-agnostic (no `#[from]`), matching `Secret`/`Query`.
     #[error("connection store error: {0}")]
     Store(String),
+    /// The server's `host:port` could not be reached during the pre-connect
+    /// reachability probe (`preflight_reachable`) — the TCP dial was refused,
+    /// unresolvable, or timed out. On this DEV setup the overwhelming cause is a
+    /// down Azure VPN tunnel, so we fail fast with a friendly, human-facing
+    /// message (the whole sentence — `#[error("{0}")]` — is rendered verbatim in
+    /// the UI) instead of the driver's cryptic ~15s login timeout. NOT a
+    /// `Transport` (that classifies *driver* failures on an established path);
+    /// this fires before the driver is ever dialed.
+    #[error("{0}")]
+    Unreachable(String),
     /// A bind param's value could not be parsed into its declared type — a
     /// **pre-flight** user error (it happens in `parse_bind_value` before any
     /// server contact), distinct from a driver/`Query` failure. Note: Money
@@ -77,6 +87,15 @@ mod tests {
         assert!(!CoreError::Secret("boom".into()).is_transport());
         assert!(!CoreError::Store("bad json".into()).is_transport());
         assert!(!CoreError::Param("bad int".into()).is_transport());
+        assert!(!CoreError::Unreachable("vpn down".into()).is_transport());
+    }
+
+    #[test]
+    fn unreachable_display_is_the_message_verbatim() {
+        // No "... error:" prefix — the preflight supplies the whole user-facing
+        // sentence and the UI renders it as-is.
+        let e = CoreError::Unreachable("Can't reach SQL Server at h:1433.".into());
+        assert_eq!(e.to_string(), "Can't reach SQL Server at h:1433.");
     }
 
     #[test]

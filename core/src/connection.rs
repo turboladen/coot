@@ -53,6 +53,62 @@ fn default_true() -> bool {
     true
 }
 
+impl ConnectionConfig {
+    /// The `host:port` to TCP-probe before dialing the driver, or `None` when no
+    /// STATIC target can be derived — in which case the reachability preflight is
+    /// SKIPPED and `connect` behaves exactly as before (conservative: never block
+    /// a working connection on a guess).
+    ///
+    /// `server` is ADO.NET `Data Source` syntax: `host`, `host,port` (COMMA, not
+    /// colon), `host\INSTANCE` (named instance), optionally a protocol prefix
+    /// (`tcp:`/`np:`/`lpc:`). We probe only the unambiguous `host[,port]` shape:
+    ///   - no comma → default port 1433;
+    ///   - a comma whose right side isn't a valid `u16` → `None` (don't
+    ///     false-negative on a malformed port);
+    ///   - a named instance (`\INSTANCE`) with no explicit comma-port → `None`
+    ///     (its port is dynamic — assigned by the SQL Browser over UDP 1434 — so
+    ///     there is no static TCP port to probe); with an explicit port we probe
+    ///     the host before the `\`;
+    ///   - a protocol prefix (`tcp:host`) or any other stray `:` in the host →
+    ///     `None`; otherwise the host would become e.g. `"tcp:host"`, fail DNS, and
+    ///     wrongly report the VPN down — blocking a working connection;
+    ///   - a bracketed IPv6 literal (`[::1],1433`) → brackets stripped;
+    ///   - empty/whitespace → `None`.
+    pub(crate) fn preflight_target(&self) -> Option<(String, u16)> {
+        let s = self.server.trim();
+        if s.is_empty() {
+            return None;
+        }
+        // Split the host segment from an explicit `,port`. A malformed port
+        // (non-`u16`) yields `None` for the whole fn — skip rather than misfire.
+        let (addr, explicit_port) = match s.split_once(',') {
+            Some((a, p)) => (a.trim(), Some(p.trim().parse::<u16>().ok()?)),
+            None => (s, None),
+        };
+        // Named instance: the TCP host is the part before `\`; the instance's port
+        // is dynamic unless one was given explicitly.
+        let host_seg = match addr.split_once('\\') {
+            Some((h, _instance)) => {
+                explicit_port?; // dynamic port (SQL Browser) → skip preflight
+                h.trim()
+            }
+            None => addr,
+        };
+        // Strip a bracketed IPv6 literal (`[::1]` → `::1`). After this the host
+        // must not contain a `:` — a leftover colon is a protocol prefix
+        // (`tcp:`/`np:`/`lpc:`) or an unbracketed oddity we won't guess at.
+        let host = match host_seg.strip_prefix('[').and_then(|h| h.strip_suffix(']')) {
+            Some(ipv6) => ipv6,
+            None if host_seg.contains(':') => return None,
+            None => host_seg,
+        };
+        if host.is_empty() {
+            return None;
+        }
+        Some((host.to_string(), explicit_port.unwrap_or(1433)))
+    }
+}
+
 /// Escape a value for an ADO.NET connection string. `mssql-client`'s
 /// `split_connection_string` (verified in `config.rs`) parses ADO.NET style: a
 /// value may be wrapped in `"` with an embedded quote **doubled** (`""` → `"`)
@@ -296,6 +352,89 @@ mod tests {
             trust_server_certificate: true,
             remember_password: true,
         }
+    }
+
+    /// Build a config whose `server` is `s`, for `preflight_target` parse tests.
+    fn cfg_with_server(s: &str) -> ConnectionConfig {
+        let mut c = sample_config();
+        c.server = s.into();
+        c
+    }
+
+    #[test]
+    fn preflight_target_parses_host_and_port() {
+        assert_eq!(
+            cfg_with_server("myhost,1433").preflight_target(),
+            Some(("myhost".into(), 1433))
+        );
+        assert_eq!(
+            cfg_with_server("myhost,5000").preflight_target(),
+            Some(("myhost".into(), 5000))
+        );
+    }
+
+    #[test]
+    fn preflight_target_defaults_port_when_absent() {
+        assert_eq!(
+            cfg_with_server("myhost").preflight_target(),
+            Some(("myhost".into(), 1433))
+        );
+    }
+
+    #[test]
+    fn preflight_target_skips_empty_or_whitespace() {
+        assert_eq!(cfg_with_server("").preflight_target(), None);
+        assert_eq!(cfg_with_server("   ").preflight_target(), None);
+    }
+
+    #[test]
+    fn preflight_target_skips_malformed_port() {
+        // A non-`u16` port → skip (don't false-negative a working connection).
+        assert_eq!(cfg_with_server("myhost,abc").preflight_target(), None);
+        assert_eq!(cfg_with_server("myhost,").preflight_target(), None);
+    }
+
+    #[test]
+    fn preflight_target_strips_ipv6_brackets() {
+        assert_eq!(
+            cfg_with_server("[::1],1433").preflight_target(),
+            Some(("::1".into(), 1433))
+        );
+        assert_eq!(
+            cfg_with_server("[::1]").preflight_target(),
+            Some(("::1".into(), 1433))
+        );
+    }
+
+    #[test]
+    fn preflight_target_skips_named_instance_without_port() {
+        // Dynamic port (SQL Browser) — no static TCP port to probe → skip.
+        assert_eq!(
+            cfg_with_server(r"myhost\SQLEXPRESS").preflight_target(),
+            None
+        );
+    }
+
+    #[test]
+    fn preflight_target_probes_named_instance_host_with_explicit_port() {
+        assert_eq!(
+            cfg_with_server(r"myhost\SQLEXPRESS,1433").preflight_target(),
+            Some(("myhost".into(), 1433))
+        );
+    }
+
+    #[test]
+    fn preflight_target_skips_protocol_prefix() {
+        // `tcp:host` would otherwise DNS-fail on host "tcp:host" and wrongly
+        // report the VPN down, blocking a working connection. Skip instead.
+        assert_eq!(cfg_with_server("tcp:myhost,1433").preflight_target(), None);
+        assert_eq!(cfg_with_server("tcp:myhost").preflight_target(), None);
+        assert_eq!(cfg_with_server("lpc:myhost").preflight_target(), None);
+        // Named pipe (`np:\\host\pipe\...`) → skip (no TCP port).
+        assert_eq!(
+            cfg_with_server(r"np:\\myhost\pipe\sql\query").preflight_target(),
+            None
+        );
     }
 
     #[test]
