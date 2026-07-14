@@ -12,11 +12,17 @@
   import { renderCell } from "./renderCell";
   import { loadColumnWidths, saveColumnWidths } from "./columnWidths.svelte";
   import { signatureOf } from "./columnWidthsLogic";
+  import { fitColumnWidth, measureTextWidth } from "./measureText";
 
   let { result }: { result: QueryResult } = $props();
 
   type Row = CellValue[];
   const ROW_H = 28;
+  // Column width floor (drag + autofit): keep the header name + type tag legible.
+  const MIN_COL_WIDTH = 56;
+  // Autofit cap (billz-kh3) so one huge cell can't blow a column out; drag stays
+  // uncapped (the columnDef has no maxSize).
+  const MAX_AUTOFIT_WIDTH = 800;
 
   // One column per result column; accessor returns the CellValue at that index.
   const columns = $derived<ColumnDef<Row>[]>(
@@ -26,7 +32,7 @@
       header: c.name,
       accessorFn: (row) => row[i],
       size: 160,
-      minSize: 56, // drag floor — keep the header name + type tag legible
+      minSize: MIN_COL_WIDTH, // drag floor — keep the header name + type tag legible
     })),
   );
 
@@ -185,6 +191,65 @@
   // billz-c6e: exact total column width. Pinning header + body content to this
   // makes the horizontal scroll extent precise (no width:100%-vs-overflow drift).
   const totalWidth = $derived(widths.reduce((sum, w) => sum + w, 0));
+
+  // billz-kh3 — autofit a column to its content on double-clicking its resize
+  // handle (table-core has no built-in autofit). Fits to the widest of the header
+  // (name + type tag) and the cell texts, capped to [MIN_COL_WIDTH, MAX_AUTOFIT_WIDTH].
+  // Measures EVERY row (accurate; a one-off ~100ms hang on a very large result is
+  // the accepted tradeoff for a single-user tool).
+  function autofitColumn(e: MouseEvent, colId: string, colIndex: number): void {
+    e.stopPropagation();
+    e.preventDefault();
+    const thEl = (e.currentTarget as HTMLElement).closest(".th") as HTMLElement | null;
+    if (!thEl) return;
+    const col = result.columns[colIndex];
+
+    // Header content: the name in the .th font (weight 600, --font-ui) + the .htype
+    // type tag in ITS own font (--fs-xs, weight 400), separated by the tag's margin.
+    const thStyle = getComputedStyle(thEl);
+    const headerFont = `${thStyle.fontWeight} ${thStyle.fontSize} ${thStyle.fontFamily}`;
+    let headerContent = measureTextWidth(col.name, headerFont);
+    const tagEl = thEl.querySelector(".htype");
+    if (tagEl) {
+      const tagStyle = getComputedStyle(tagEl);
+      const tagFont = `${tagStyle.fontWeight} ${tagStyle.fontSize} ${tagStyle.fontFamily}`;
+      headerContent += (parseFloat(tagStyle.marginLeft) || 0) + measureTextWidth(col.sqlType, tagFont);
+    }
+
+    // Cell fonts come from a rendered .td (NOT the bolder .th, which over-measures).
+    // A column mixes fonts: numeric/binary cells render .mono; text + NULLs render UI.
+    // Weight/size are shared across cells; only the family differs, so read the family
+    // from a mounted cell of each kind, falling back to the root font tokens.
+    const root = getComputedStyle(document.documentElement);
+    const anyTd = scrollEl?.querySelector(".td");
+    const anyTdStyle = anyTd ? getComputedStyle(anyTd) : null;
+    const cellSize = anyTdStyle?.fontSize ?? thStyle.fontSize;
+    const cellWeight = anyTdStyle?.fontWeight ?? "400";
+    const uiTd = scrollEl?.querySelector(".td:not(.mono)");
+    const uiFamily =
+      (uiTd && getComputedStyle(uiTd).fontFamily) || root.getPropertyValue("--font-ui").trim() || thStyle.fontFamily;
+    const monoTd = scrollEl?.querySelector(".td.mono");
+    const monoFamily =
+      (monoTd && getComputedStyle(monoTd).fontFamily) || root.getPropertyValue("--font-mono").trim() || uiFamily;
+    const uiFont = `${cellWeight} ${cellSize} ${uiFamily}`;
+    const monoFont = `${cellWeight} ${cellSize} ${monoFamily}`;
+
+    let maxCell = 0;
+    for (const row of result.rows) {
+      const r = renderCell(row[colIndex]);
+      const w = measureTextWidth(r.text, r.mono ? monoFont : uiFont);
+      if (w > maxCell) maxCell = w;
+    }
+
+    const fit = fitColumnWidth([headerContent, maxCell], MIN_COL_WIDTH, MAX_AUTOFIT_WIDTH);
+    // Updater form MERGES over the current sizing — the value form would replace the
+    // whole map and wipe other columns. This routes through onStateChange but leaves
+    // columnSizingInfo untouched, so billz-389's drag-end persist signal does NOT fire;
+    // persist explicitly. onStateChange runs synchronously, so tableState already holds
+    // the new width by the time persistWidths() reads it.
+    table.setColumnSizing((old) => ({ ...old, [colId]: fit }));
+    persistWidths();
+  }
 </script>
 
 {#if result.columns.length === 0}
@@ -226,6 +291,7 @@
                 class:resizing={resizingId === header.column.id}
                 onmousedown={header.getResizeHandler()}
                 ontouchstart={header.getResizeHandler()}
+                ondblclick={(e) => autofitColumn(e, header.column.id, i)}
                 role="separator"
                 aria-orientation="vertical"
                 aria-label="Resize column"
