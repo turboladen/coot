@@ -162,6 +162,15 @@ pub(crate) async fn connect(
     cfg: &ConnectionConfig,
     store: &dyn SecretStore,
 ) -> Result<Client<Ready>> {
+    // Reachability preflight FIRST — before touching the Keychain. On this DEV
+    // setup the server sits behind an Azure VPN tunnel; when it's down the driver
+    // takes ~15s to fail with a cryptic timeout. A quick TCP probe fails fast with
+    // a friendly message AND avoids a pointless macOS Keychain prompt on a connect
+    // that can't succeed. Skipped when no static host:port is derivable (see
+    // `preflight_target`), so it never blocks a working connection on a guess.
+    if let Some((host, port)) = cfg.preflight_target() {
+        preflight_reachable(&host, port).await?;
+    }
     let password = store.get_password(&cfg.id)?.ok_or_else(|| {
         CoreError::Config(format!("no stored password for connection {}", cfg.id.0))
     })?;
@@ -171,6 +180,27 @@ pub(crate) async fn connect(
     Client::connect(config)
         .await
         .map_err(|e| CoreError::Config(e.to_string()))
+}
+
+/// TCP-probe `host:port` with a short timeout, so a down VPN (or any unreachable
+/// server) surfaces as a friendly [`CoreError::Unreachable`] instead of the
+/// driver's slow, cryptic login timeout. A bare connect + immediate drop (no TDS
+/// handshake) is harmless to the server. Both failure shapes — a dial error
+/// (connection refused / DNS failure) and an elapsed timeout — collapse to the
+/// same human-facing message carrying `host:port`.
+async fn preflight_reachable(host: &str, port: u16) -> Result<()> {
+    const DIAL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
+    let unreachable = || {
+        CoreError::Unreachable(format!(
+            "Can't reach SQL Server at {host}:{port}. Your VPN tunnel may be down \
+             — bring it up and retry."
+        ))
+    };
+    match tokio::time::timeout(DIAL_TIMEOUT, tokio::net::TcpStream::connect((host, port))).await {
+        Ok(Ok(_stream)) => Ok(()), // reachable; the probe socket drops here
+        Ok(Err(_dial_err)) => Err(unreachable()), // connection refused / DNS failure
+        Err(_elapsed) => Err(unreachable()), // timed out (the classic VPN-down case)
+    }
 }
 
 /// Map a driver error to a [`CoreError`], distinguishing **transport-level**
@@ -521,6 +551,33 @@ mod tests {
         // not the old collapsed "int".
         let col = Column::new("id", 0, "IntN").with_max_length(8);
         assert_eq!(column_meta(&col).sql_type, "bigint");
+    }
+
+    // ---- preflight_reachable: no DB, no VPN needed (pure loopback) ----
+
+    #[tokio::test]
+    async fn preflight_reachable_ok_when_port_is_listening() {
+        // Bind a loopback listener and keep it alive → the probe connects.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        preflight_reachable(&addr.ip().to_string(), addr.port())
+            .await
+            .expect("a listening port must be reachable");
+    }
+
+    #[tokio::test]
+    async fn preflight_reachable_friendly_error_on_closed_port() {
+        // Bind then drop → the port is (almost certainly) closed, so the dial is
+        // refused immediately and we get the friendly Unreachable message.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+
+        let err = preflight_reachable("127.0.0.1", port).await.unwrap_err();
+        let msg = err.to_string();
+        assert!(matches!(err, CoreError::Unreachable(_)), "got {err:?}");
+        assert!(msg.contains(&format!("127.0.0.1:{port}")), "msg: {msg}");
+        assert!(msg.contains("VPN"), "msg: {msg}");
     }
 
     // ---- one env-gated live smoke test (clean skip with no DB) ----
