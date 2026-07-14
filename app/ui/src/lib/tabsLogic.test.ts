@@ -2,7 +2,8 @@
 // with no Svelte compiler (unlike tabs.svelte.ts). Excluded from svelte-check via
 // tsconfig `exclude`, same as renderCell.test.ts / resultSummary.test.ts.
 import { describe, expect, test } from "bun:test";
-import { deriveTitle, deserialize, pickNeighbourId, type QueryTab, serialize, type TabsState } from "./tabsLogic";
+import type { SavedQuery } from "./api";
+import { deriveTitle, deserialize, isTabDirty, pickNeighbourId, type QueryTab, serialize, type TabsState } from "./tabsLogic";
 
 function tab(
   id: string,
@@ -58,6 +59,37 @@ describe("pickNeighbourId", () => {
 
   test("unknown id → current first tab's id", () => {
     expect(pickNeighbourId(tabs, "zzz")).toBe("a");
+  });
+});
+
+describe("isTabDirty", () => {
+  function saved(id: string, sql: string): SavedQuery {
+    return { id, name: id, sql, targetDatabase: null, params: [] };
+  }
+  const lib = [saved("q-1", "SELECT 1")];
+
+  test("linked, content differs → dirty", () => {
+    expect(isTabDirty(tab("a", "SELECT 2", null, "q-1"), lib)).toBe(true);
+  });
+
+  test("linked, content matches → clean", () => {
+    expect(isTabDirty(tab("a", "SELECT 1", null, "q-1"), lib)).toBe(false);
+  });
+
+  test("scratch tab (no savedQueryId) → never dirty", () => {
+    expect(isTabDirty(tab("a", "SELECT 2", null, null), lib)).toBe(false);
+  });
+
+  test("linked query missing from library → not dirty", () => {
+    expect(isTabDirty(tab("a", "SELECT 2", null, "gone"), lib)).toBe(false);
+  });
+
+  test("empty library with a linked tab → not dirty", () => {
+    expect(isTabDirty(tab("a", "SELECT 2", null, "q-1"), [])).toBe(false);
+  });
+
+  test("trailing-newline-only diff reads dirty (exact-compare intent)", () => {
+    expect(isTabDirty(tab("a", "SELECT 1\n", null, "q-1"), lib)).toBe(true);
   });
 });
 

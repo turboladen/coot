@@ -18,6 +18,7 @@
   import { conns, refresh } from "./lib/connections.svelte";
   import { library, refresh as refreshLibrary, save as saveQuery } from "./lib/savedQueries.svelte";
   import { activeContent, flushSave, restore, setActiveContent, setActiveDatabase, tabsState } from "./lib/tabs.svelte";
+  import { isTabDirty } from "./lib/tabsLogic";
   import { treeRefresh } from "./lib/tree/refresh.svelte";
   import { dbStore, load as loadDatabases } from "./lib/databases.svelte";
   import { Database, Play, Save } from "./lib/icons";
@@ -125,7 +126,7 @@
   // from the stored definition). Gates the "Update saved query" button and doubles
   // as the unsaved-edits signal. Exact-string compare — a trailing-newline-only
   // diff reads as dirty (honest + simplest for a single-user tool).
-  const dirty = $derived(!!curSavedQuery && !!curTab && curTab.content !== curSavedQuery.sql);
+  const dirty = $derived(!!curTab && isTabDirty(curTab, library.list));
 
   // d28.10: explicit "redefine" counterpart to Run (d28.8: Run never redefines).
   // Persist the tab's edited SQL + reconciled param declarations back to the linked

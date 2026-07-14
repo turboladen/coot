@@ -4,6 +4,11 @@
 // live `$state` and delegates here. Mirrors the repo's renderCell.ts/resultSummary.ts
 // pure-helper pattern.
 
+// `import type` (not a value import) so `bun test` never pulls in api.ts's
+// `@tauri-apps/api/core` dependency, and to satisfy verbatimModuleSyntax — matches
+// sibling savedQueriesLogic.ts.
+import type { SavedQuery } from "./api";
+
 // `database`: the tab's target DB for the runner (billz-cwt.9). null = the
 // connection's default DB. Each tab carries its own, so one tab can sit on
 // ESP_Arnotts_Group_DEV while another targets ESP_Suntory_DEV (PLAN §4/§5).
@@ -18,6 +23,18 @@ export type QueryTab = {
 };
 
 export type TabsState = { tabs: QueryTab[]; activeId: string };
+
+// billz-kno: does this tab have unsaved edits against its linked saved query?
+// A scratch tab (no savedQueryId) is never dirty. A tab whose linked query is
+// gone (deleted from the library) is treated as NOT dirty — there's nothing to be
+// dirty against — matching App.svelte's active-tab `dirty` which requires the
+// saved query to exist. Exact-string compare: a trailing-newline-only diff reads
+// dirty (honest + simplest for a single-user tool).
+export function isTabDirty(tab: QueryTab, saved: SavedQuery[]): boolean {
+  if (tab.savedQueryId == null) return false;
+  const q = saved.find((s) => s.id === tab.savedQueryId);
+  return q != null && tab.content !== q.sql;
+}
 
 // Derive a tab's display title from its content: the first non-empty (trimmed)
 // line, truncated to ~24 chars; "Untitled" when the content is empty/whitespace.

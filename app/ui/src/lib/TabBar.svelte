@@ -3,6 +3,8 @@
   // ops; holds no state of its own. One tab per open scratch query (derived title
   // + × close), a + button to open a new one. Click a tab to select it.
   import { closeTab, newTab, selectTab, tabsState } from "./tabs.svelte";
+  import { library } from "./savedQueries.svelte";
+  import { isTabDirty } from "./tabsLogic";
   import { Plus, X } from "./icons";
 
   function onClose(e: MouseEvent, id: string) {
@@ -22,6 +24,9 @@
       onclick={() => selectTab(tab.id)}
       onkeydown={(e) => (e.key === "Enter" || e.key === " ") && selectTab(tab.id)}
     >
+      {#if isTabDirty(tab, library.list)}
+        <span class="dirty" title="Unsaved changes" aria-hidden="true"></span>
+      {/if}
       <span class="title">{tab.title}</span>
       <button class="close" title="Close tab" onclick={(e) => onClose(e, tab.id)}><X size={13} /></button>
     </div>
@@ -55,6 +60,13 @@
     background: var(--raised);
     box-shadow: var(--shadow-sm);
     border-color: var(--border-strong);
+  }
+  .dirty {
+    flex: none;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--accent);
   }
   .title { max-width: 14rem; overflow: hidden; text-overflow: ellipsis; }
   .close {
