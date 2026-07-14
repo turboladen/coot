@@ -4,11 +4,14 @@
   // virtualizes the body so a big result only mounts visible rows. Sorting/
   // filtering/resizing and multi-result-set tabs are later waves.
   import { get } from "svelte/store";
+  import { untrack } from "svelte";
   import { createTable, getCoreRowModel, type ColumnDef, type TableState } from "@tanstack/table-core";
   import { createVirtualizer } from "@tanstack/svelte-virtual";
   import type { CellValue, QueryResult } from "./api";
   import { Database, Search } from "./icons";
   import { renderCell } from "./renderCell";
+  import { loadColumnWidths, saveColumnWidths } from "./columnWidths.svelte";
+  import { signatureOf } from "./columnWidthsLogic";
 
   let { result }: { result: QueryResult } = $props();
 
@@ -27,6 +30,43 @@
     })),
   );
 
+  // billz-389 — persisted column widths. `{#key selectedResult}` in the parent
+  // remounts this component per result set, so `result` is constant for the
+  // instance and a one-time read of its columns here is correct — it's exactly what
+  // re-seeds widths on every result-set switch (and across sessions). The reads are
+  // wrapped in `untrack` to mark them intentional one-time reads (else Svelte's
+  // state_referenced_locally warning). Persisted widths are keyed by a column-NAME
+  // signature; table-core's positional colId (String(i)) is unstable across queries.
+  const signature = untrack(() => signatureOf(result.columns.map((c) => c.name)));
+  // Seed columnSizing (colId -> px) from the store: translate stored columnName ->
+  // width back to the positional colId. Only stored columns get an entry; the rest
+  // fall back to columnDef `size: 160`.
+  const seededSizing: Record<string, number> = untrack(() => {
+    const stored = loadColumnWidths(signature);
+    const sizing: Record<string, number> = {};
+    result.columns.forEach((c, i) => {
+      const w = stored[c.name];
+      if (typeof w === "number") sizing[String(i)] = w;
+    });
+    return sizing;
+  });
+
+  // Snapshot the live columnSizing back to the store, keyed by signature + column
+  // NAME (via result.columns[i].name). Duplicate column names (SQL permits them)
+  // collapse to one stored width, applied to both on hydrate — fine for a personal
+  // tool. Writes the FULL sizing set: seeded widths are pre-loaded into columnSizing
+  // at mount, so this snapshot already carries every prior width (replace-per-
+  // signature won't drop earlier ones).
+  function persistWidths(): void {
+    const sizing = tableState.columnSizing ?? {};
+    const byName: Record<string, number> = {};
+    result.columns.forEach((c, i) => {
+      const w = sizing[String(i)];
+      if (typeof w === "number") byName[c.name] = w;
+    });
+    saveColumnWidths(signature, byName);
+  }
+
   // table-core is lower-level than the framework adapters: it snapshots options
   // and requires state/onStateChange/renderFallbackValue. We own state in a rune
   // and bridge reactivity via setOptions inside the $derived.by below. The table
@@ -34,13 +74,24 @@
   // $derived.by bridge feeds the real data/columns/state on first read and on
   // every change. (Reading the reactive props here would only capture their
   // initial values, which Svelte warns about; the bridge is the reactive path.)
-  let tableState = $state<TableState>({} as TableState);
+  // State seeds with the hydrated columnSizing so restored widths win in the
+  // { ...initialState, ...tableState } merge below (billz-389).
+  let tableState = $state<TableState>({ columnSizing: seededSizing } as TableState);
   const table = createTable<Row>({
     data: [],
     columns: [],
     state: {} as TableState,
     onStateChange: (u) => {
-      tableState = typeof u === "function" ? u(tableState) : u;
+      const next = typeof u === "function" ? u(tableState) : u;
+      // billz-389: persist widths at drag END. columnResizeMode "onChange" routes
+      // every drag tick through here; snapshot only when the resize finishes
+      // (isResizingColumn goes truthy -> falsy) to avoid a localStorage write per
+      // tick. tableState starts without columnSizingInfo, hence the optional chain;
+      // a pure click (no move) may fire one harmless save of unchanged data.
+      const wasResizing = tableState.columnSizingInfo?.isResizingColumn;
+      const nowResizing = next.columnSizingInfo?.isResizingColumn;
+      tableState = next;
+      if (wasResizing && !nowResizing) persistWidths();
     },
     renderFallbackValue: null,
     getCoreRowModel: getCoreRowModel(),
