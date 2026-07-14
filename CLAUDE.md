@@ -66,6 +66,8 @@ fast-moving and single-maintainer).
   two different type sources — see `PLAN.md` §7 (wire tokens vs canonical types).
 - **Don't invent driver API.** `mssql-client` moves fast; training data is stale. Verify against
   `docs.rs/mssql-client` (or the installed source) before using a method.
+- Compiling the `app` crate (`cargo build`/`test`/`clippy`) does **not** need `app/ui/dist` —
+  `tauri::generate_context!` only requires `frontendDist` for `tauri build` bundling.
 
 ## Shell & commands
 
@@ -77,6 +79,9 @@ fast-moving and single-maintainer).
 - I use **fish**. Emit fish-compatible commands (`set -x FOO bar`, not `export FOO=bar`).
 - Under the hood: frontend tooling is **bun** (`app/ui`); Rust is **cargo** (workspace root); the
   Tauri CLI runs via bun (`bun run tauri …`, wired with `TAURI_APP_PATH=..`).
+- **CI** (`.github/workflows/`): `ci.yml` runs `just verify` on `ubuntu-latest` (Tauri needs apt
+  `libwebkit2gtk-4.1-dev`/`libgtk-3-dev`/`librsvg2-dev`/`libayatana-appindicator3-dev`/`libxdo-dev`);
+  `audit.yml` runs `cargo deny` weekly + on dep changes. Linux is 10× cheaper than macOS on private repos.
 
 ## Secrets & git hygiene
 
