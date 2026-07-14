@@ -4,4 +4,5 @@ export {
   Database, Table2, Eye, Play, Save, RefreshCw,
   Plus, Lock, ChevronDown, ChevronRight, Search, X,
   Check, Clock, Globe,
+  Sun, Moon, Monitor,
 } from "lucide-svelte";
