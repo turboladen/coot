@@ -1,0 +1,23 @@
+# Dependency advisory / license / ban audit (`just audit` = `cargo deny check`).
+# Separate from ci.yml so it can run on a SCHEDULE: new RUSTSEC advisories land
+# without any code change. Also runs when dependency manifests change.
+# ubuntu-latest — cargo-deny never compiles the workspace, and deny.toml is
+# authored around the Linux gtk3 advisory graph.
+name: Audit
+on:
+  push:
+    branches: [main]
+    paths: ['**/Cargo.toml', 'Cargo.lock', 'deny.toml', '.github/workflows/audit.yml']
+  pull_request:
+    paths: ['**/Cargo.toml', 'Cargo.lock', 'deny.toml', '.github/workflows/audit.yml']
+  schedule:
+    - cron: '0 8 * * 1'   # Mondays 08:00 UTC
+jobs:
+  cargo-deny:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check    # reads deny.toml (advisories/bans/licenses/sources)
