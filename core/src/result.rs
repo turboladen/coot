@@ -18,6 +18,20 @@ pub struct QueryResult {
     pub rows_affected: Option<u64>,
 }
 
+/// One database's result of a cross-tenant fan-out (`run_fanout`): the database
+/// it ran against, every result set it produced (empty when `error` is `Some`),
+/// an optional error (the fan-out captures per-DB failures instead of aborting
+/// the batch — one bad tenant never sinks the rest), and how long that DB took.
+/// Field names serialize camelCase for Svelte (`api.ts` mirrors this shape).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DbRunOutcome {
+    pub database: String,
+    pub results: Vec<QueryResult>,
+    pub error: Option<String>,
+    pub elapsed_ms: u64,
+}
+
 /// Column header metadata. `sql_type` is the **friendly** name (mapped via
 /// [`crate::types::friendly_type_name`]) — NOT the raw wire token. `precision`
 /// and `scale` come from the driver `Column` and drive decimal formatting.

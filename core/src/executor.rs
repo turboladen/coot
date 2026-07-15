@@ -9,6 +9,7 @@
 //! (`PLAN.md` §3, `CLAUDE.md`). Errors are stringified into [`CoreError`];
 //! the driver's `Error` is never `#[from]`.
 
+use futures::StreamExt;
 use mssql_client::{
     Client, Column, Config, Error as DriverError, NamedParam, QueryStream, Ready, SqlValue,
 };
@@ -17,7 +18,7 @@ use crate::connection::{ConnectionConfig, SecretStore, build_connection_string};
 use crate::context::ExecutionContext;
 use crate::error::{CoreError, Result};
 use crate::param_bind::{BindValue, ResolvedParam, parse_bind_value, partition, splice_raw_text};
-use crate::result::{CellValue, ColumnMeta, QueryResult};
+use crate::result::{CellValue, ColumnMeta, DbRunOutcome, QueryResult};
 use crate::types::friendly_type_name;
 
 /// Connect, apply the execution context, run the batch, and return every result
@@ -29,7 +30,10 @@ use crate::types::friendly_type_name;
 /// splitting (the runner's batch semantics are Phase 1) — `sql` is sent as one
 /// batch.
 ///
-// TODO(later): connection reuse for cross-tenant fan-out — bead billz-0gh.1.
+// Cross-tenant fan-out ships via [`run_fanout`] below: N *parallel* per-call
+// connects (one login per DB), bounded by a concurrency cap. Pooled connection
+// *reuse* across a fan-out — a live client per (connection, database) — stays
+// deferred as an optimization (bead billz-0gh.1.1).
 pub async fn run(
     cfg: &ConnectionConfig,
     store: &dyn SecretStore,
@@ -41,6 +45,119 @@ pub async fn run(
     let out = run_batch(&mut client, ctx, sql).await;
     let _ = client.close().await;
     out
+}
+
+/// Run the same `batches` against many `databases` on one server **in parallel**,
+/// returning a per-database [`DbRunOutcome`] — the cross-tenant fan-out primitive
+/// (`PLAN.md` §4). Each database is an independent unit of work: connect once,
+/// apply `base.clone().with_database(db)`, run every batch on that one connection,
+/// close. One login per DB; no pooled reuse (bead billz-0gh.1.1).
+///
+/// **Never returns `Result`.** A failing database (unreachable, a bad `USE`, a SQL
+/// error) is captured into that DB's `DbRunOutcome.error` — the other databases
+/// still run. `base` supplies the connection; its database is overridden per DB.
+///
+/// `max_concurrency` caps in-flight connections (`buffer_unordered`). That
+/// combinator yields completions out of order, so outcomes are re-sorted back to
+/// **input order** before returning — the caller's status strip/grid stay stable.
+pub async fn run_fanout(
+    cfg: &ConnectionConfig,
+    store: &dyn SecretStore,
+    base: &ExecutionContext,
+    databases: &[String],
+    batches: &[String],
+    max_concurrency: usize,
+) -> Vec<DbRunOutcome> {
+    if databases.is_empty() {
+        return Vec::new();
+    }
+    // `buffer_unordered(0)` never polls its futures — floor the cap at 1.
+    let concurrency = max_concurrency.max(1);
+
+    // Own each db before the async block: a borrowed `&String` argument would make
+    // each future's type depend on the closure-argument lifetime, which the HRTB
+    // can't express once this whole future is used in a `#[tauri::command]`
+    // (`buffer_unordered` + Tauri limitation). Cloning keeps the argument
+    // lifetime-free.
+    let pairs: Vec<(usize, DbRunOutcome)> =
+        futures::stream::iter(databases.iter().cloned().enumerate())
+            .map(|(i, db)| async move {
+                let started = std::time::Instant::now();
+                let result = run_one_db(cfg, store, base, &db, batches).await;
+                let elapsed_ms = started.elapsed().as_millis() as u64;
+                (i, outcome_from(db, result, elapsed_ms))
+            })
+            .buffer_unordered(concurrency)
+            .collect()
+            .await;
+
+    restore_order(pairs)
+}
+
+/// One database's unit of work: connect once, then run every batch on that single
+/// connection under `base`'s context rebound to `db`, flattening all result sets
+/// into one `Vec`. Closes even on error (capture → close → return), mirroring
+/// [`run`]. Any failure short-circuits to `Err`; [`run_fanout`]'s caller turns it
+/// into a captured `DbRunOutcome.error`.
+async fn run_one_db(
+    cfg: &ConnectionConfig,
+    store: &dyn SecretStore,
+    base: &ExecutionContext,
+    db: &str,
+    batches: &[String],
+) -> Result<Vec<QueryResult>> {
+    let ctx = base.clone().with_database(db);
+    let mut client = connect(cfg, store).await?;
+    // Close even on error (matches `run`): capture the result, close, return it.
+    let out = run_all_batches(&mut client, &ctx, batches).await;
+    let _ = client.close().await;
+    out
+}
+
+/// Run every batch on an ALREADY-connected client under `ctx`, flattening all
+/// result sets into one `Vec`. Split out of [`run_one_db`] so that fn can
+/// `close()` the client even when a batch errors (mirrors [`run`]).
+async fn run_all_batches(
+    client: &mut Client<Ready>,
+    ctx: &ExecutionContext,
+    batches: &[String],
+) -> Result<Vec<QueryResult>> {
+    let mut out = Vec::new();
+    for batch in batches {
+        out.append(&mut run_batch(client, ctx, batch).await?);
+    }
+    Ok(out)
+}
+
+/// Assemble a [`DbRunOutcome`] from one database's run: `Ok` carries the result
+/// sets with no error; `Err` maps to empty results plus the stringified error
+/// (via [`CoreError`]'s `Display`) — the fan-out's capture-don't-propagate seam.
+fn outcome_from(
+    database: String,
+    result: Result<Vec<QueryResult>>,
+    elapsed_ms: u64,
+) -> DbRunOutcome {
+    match result {
+        Ok(results) => DbRunOutcome {
+            database,
+            results,
+            error: None,
+            elapsed_ms,
+        },
+        Err(e) => DbRunOutcome {
+            database,
+            results: Vec::new(),
+            error: Some(e.to_string()),
+            elapsed_ms,
+        },
+    }
+}
+
+/// Restore input order after `buffer_unordered` (which yields completions as they
+/// finish): sort the `(input_index, outcome)` pairs by index, then drop the index.
+fn restore_order(mut pairs: Vec<(usize, DbRunOutcome)>) -> Vec<DbRunOutcome> {
+    pairs.sort_by_key(|(i, _)| *i);
+    pairs.into_iter().map(|(_, outcome)| outcome).collect()
 }
 
 /// Apply `ctx`'s `USE` and run `sql` on an ALREADY-connected client, returning
@@ -578,6 +695,54 @@ mod tests {
         assert!(matches!(err, CoreError::Unreachable(_)), "got {err:?}");
         assert!(msg.contains(&format!("127.0.0.1:{port}")), "msg: {msg}");
         assert!(msg.contains("VPN"), "msg: {msg}");
+    }
+
+    // ---- run_fanout assembly seams (pure, no DB) ----
+
+    fn outcome(database: &str) -> DbRunOutcome {
+        DbRunOutcome {
+            database: database.into(),
+            results: Vec::new(),
+            error: None,
+            elapsed_ms: 0,
+        }
+    }
+
+    #[test]
+    fn restore_order_sorts_completions_back_to_input_order() {
+        // buffer_unordered yields out of order (2, 0, 1); restore_order must put
+        // them back by input index so the caller sees stable order.
+        let shuffled = vec![(2, outcome("c")), (0, outcome("a")), (1, outcome("b"))];
+        let ordered = restore_order(shuffled);
+        let names: Vec<&str> = ordered.iter().map(|o| o.database.as_str()).collect();
+        assert_eq!(names, ["a", "b", "c"]);
+    }
+
+    #[test]
+    fn outcome_from_ok_carries_results_and_no_error() {
+        let results = vec![QueryResult {
+            columns: Vec::new(),
+            rows: Vec::new(),
+            rows_affected: None,
+        }];
+        let o = outcome_from("master".into(), Ok(results), 7);
+        assert_eq!(o.database, "master");
+        assert_eq!(o.results.len(), 1);
+        assert_eq!(o.error, None);
+        assert_eq!(o.elapsed_ms, 7);
+    }
+
+    #[test]
+    fn outcome_from_err_captures_message_and_empty_results() {
+        let o = outcome_from("nope".into(), Err(CoreError::Query("bad db".into())), 3);
+        assert_eq!(o.database, "nope");
+        assert!(o.results.is_empty());
+        assert!(
+            o.error.as_deref().is_some_and(|m| m.contains("bad db")),
+            "error should carry the CoreError Display, got {:?}",
+            o.error
+        );
+        assert_eq!(o.elapsed_ms, 3);
     }
 
     // ---- one env-gated live smoke test (clean skip with no DB) ----

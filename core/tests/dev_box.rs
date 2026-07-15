@@ -22,8 +22,9 @@
 //! Re-run that after any `mssql-client` bump (CLAUDE.md standing order).
 
 use billz_core::{
-    CellValue, ConnectionConfig, ConnectionId, ExecutionContext, InMemorySecretStore, QueryResult,
-    ResolvedParam, SecretStore, SqlType, build_connection_string, run, run_with_params,
+    CellValue, ConnectionConfig, ConnectionId, DbRunOutcome, ExecutionContext, InMemorySecretStore,
+    QueryResult, ResolvedParam, SecretStore, SqlType, build_connection_string, run, run_fanout,
+    run_with_params,
 };
 
 /// Build a live `(cfg, store)` from `MSSQL_*` env, or `None` when any required
@@ -604,4 +605,57 @@ async fn param_run_applies_use_before_parameterized_call() {
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].rows[0][0], CellValue::Text("tempdb".into()));
     assert_eq!(results[0].rows[0][1], CellValue::Int(1));
+}
+
+// ---------------------------------------------------------------------------
+// billz-0gh.1.1 — cross-tenant fan-out (`run_fanout`): parallel per-DB runs,
+// input-order-stable outcomes, per-DB error capture (one bad DB doesn't sink
+// the rest). `master`/`tempdb` always exist; the third name never does.
+// ---------------------------------------------------------------------------
+
+/// Fan out one batch over master, tempdb, and a bogus DB. Proves: outcomes come
+/// back in INPUT order (despite `buffer_unordered`), the two real databases
+/// succeed with exactly one result set each reporting their own name, and the
+/// bogus database is captured as an error with empty results — the others
+/// unaffected.
+#[tokio::test]
+async fn fanout_runs_each_db_and_captures_per_db_errors() {
+    let Some((cfg, store)) = env_connection() else {
+        eprintln!("skipping fanout_runs_each_db_and_captures_per_db_errors: MSSQL_* env not set");
+        return;
+    };
+    let base = ExecutionContext::new(cfg.id.clone());
+
+    let databases = vec![
+        "master".to_string(),
+        "tempdb".to_string(),
+        "definitely_not_a_db_xyz".to_string(),
+    ];
+    let batches = vec!["SELECT DB_NAME() AS db".to_string()];
+
+    let outcomes: Vec<DbRunOutcome> =
+        run_fanout(&cfg, &store, &base, &databases, &batches, 8).await;
+
+    // Input order preserved, one outcome per database.
+    assert_eq!(outcomes.len(), 3);
+    assert_eq!(outcomes[0].database, "master");
+    assert_eq!(outcomes[1].database, "tempdb");
+    assert_eq!(outcomes[2].database, "definitely_not_a_db_xyz");
+
+    // master + tempdb: no error, exactly one result set, reporting their own name.
+    for (i, name) in [(0usize, "master"), (1, "tempdb")] {
+        let o = &outcomes[i];
+        assert!(o.error.is_none(), "{name} should not error: {:?}", o.error);
+        assert_eq!(o.results.len(), 1, "{name}: one batch → one result set");
+        assert_eq!(o.results[0].rows[0][0], CellValue::Text(name.into()));
+    }
+
+    // The bogus database fails (bad `USE`) and is captured — empty results, error set.
+    let bogus = &outcomes[2];
+    assert!(bogus.error.is_some(), "bogus DB should carry an error");
+    assert!(
+        bogus.results.is_empty(),
+        "a failed DB has no result sets, got {}",
+        bogus.results.len()
+    );
 }

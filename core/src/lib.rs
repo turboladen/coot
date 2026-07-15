@@ -33,11 +33,11 @@ pub use connection::{
 pub use connection_store::ConnectionStore;
 pub use context::ExecutionContext;
 pub use error::{CoreError, Result};
-pub use executor::{run, run_with_params};
+pub use executor::{run, run_fanout, run_with_params};
 pub use param_bind::{BindValue, ResolvedParam};
 pub use query::{Param, ParamScope, SavedQuery, SavedQueryId, SqlType};
 pub use query_store::QueryStore;
-pub use result::{CellValue, ColumnMeta, QueryResult};
+pub use result::{CellValue, ColumnMeta, DbRunOutcome, QueryResult};
 pub use schema::{
     ColumnInfo, DatabaseInfo, SchemaCache, TableInfo, ViewInfo, list_columns, list_databases,
     list_tables, list_views,
