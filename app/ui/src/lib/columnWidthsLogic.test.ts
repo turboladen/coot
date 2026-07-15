@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { parseWidthStore, signatureOf } from "./columnWidthsLogic";
+import { MAX_WIDTH_SIGNATURES, evictSignatures, parseWidthStore, signatureOf } from "./columnWidthsLogic";
 
 describe("signatureOf", () => {
   test("is deterministic — same names give the same key", () => {
@@ -72,5 +72,40 @@ describe("parseWidthStore", () => {
     const sig = signatureOf(["id", "name"]);
     const raw = JSON.stringify({ [sig]: { id: 100 } });
     expect(parseWidthStore(raw)).toEqual({ [sig]: { id: 100 } });
+  });
+});
+
+describe("evictSignatures", () => {
+  const keys = (n: number): string[] => Array.from({ length: n }, (_, i) => `k${i}`);
+
+  test("under cap → no eviction", () => {
+    expect(evictSignatures(keys(3), 5)).toEqual([]);
+  });
+
+  test("exactly at cap → no eviction", () => {
+    expect(evictSignatures(keys(5), 5)).toEqual([]);
+  });
+
+  test("over cap → drops the oldest-first prefix, count = len - cap", () => {
+    // keys are oldest-first (insertion order); the tail is most-recent and kept.
+    expect(evictSignatures(["a", "b", "c", "d"], 2)).toEqual(["a", "b"]);
+  });
+
+  test("one over cap → drops the single oldest", () => {
+    expect(evictSignatures(["a", "b", "c"], 2)).toEqual(["a"]);
+  });
+
+  test("empty list → no eviction", () => {
+    expect(evictSignatures([], 5)).toEqual([]);
+  });
+
+  test("cap of 0 → evicts all", () => {
+    expect(evictSignatures(["a", "b"], 0)).toEqual(["a", "b"]);
+  });
+
+  test("MAX_WIDTH_SIGNATURES is a positive bound", () => {
+    expect(MAX_WIDTH_SIGNATURES).toBeGreaterThan(0);
+    // one past the cap evicts exactly the single oldest entry
+    expect(evictSignatures(keys(MAX_WIDTH_SIGNATURES + 1), MAX_WIDTH_SIGNATURES)).toEqual(["k0"]);
   });
 });
