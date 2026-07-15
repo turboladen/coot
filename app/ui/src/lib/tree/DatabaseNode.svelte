@@ -45,7 +45,7 @@
 </script>
 
 <li>
-  <button class="row" class:selected={selection.key === key} class:muted={!isOnline} onclick={toggle} disabled={!isOnline}>
+  <button class="row" class:selected={selection.key === key} class:muted={!isOnline} onclick={toggle} disabled={!isOnline} aria-expanded={isOnline ? expanded : undefined}>
     <span class="twisty">
       {#if isOnline}
         {#if expanded}<ChevronDown size={12} />{:else}<ChevronRight size={12} />{/if}
