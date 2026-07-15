@@ -68,7 +68,11 @@ pub async fn run_fanout(
     batches: &[String],
     max_concurrency: usize,
 ) -> Vec<DbRunOutcome> {
-    if databases.is_empty() {
+    // Nothing to fan out to, or nothing to run: return early WITHOUT opening any
+    // connection. The `run_fanout` command already guards empty `batches`, but a
+    // core primitive shouldn't depend on its caller doing so — an empty batch list
+    // would otherwise pay one pointless login per DB. (Copilot review on PR #55.)
+    if databases.is_empty() || batches.is_empty() {
         return Vec::new();
     }
     // `buffer_unordered(0)` never polls its futures — floor the cap at 1.
@@ -743,6 +747,34 @@ mod tests {
             o.error
         );
         assert_eq!(o.elapsed_ms, 3);
+    }
+
+    #[tokio::test]
+    async fn run_fanout_short_circuits_empty_batches_without_connecting() {
+        // No batches ⇒ nothing to run: run_fanout must return early and NEVER open
+        // a connection (else one pointless login per DB). The dummy config points at
+        // an unroutable server, so a regressed guard would attempt a connect and
+        // yield error outcomes (len 2) instead of the empty Vec we assert. (Copilot
+        // review on PR #55.)
+        use crate::connection::{ConnectionId, InMemorySecretStore};
+        let cfg = ConnectionConfig {
+            id: ConnectionId("unused".into()),
+            name: "unused".into(),
+            server: "0.0.0.0:0".into(),
+            username: "sa".into(),
+            default_database: None,
+            encrypt: false,
+            trust_server_certificate: true,
+            remember_password: false,
+        };
+        let store = InMemorySecretStore::default();
+        let base = ExecutionContext::new(cfg.id.clone());
+        let out = run_fanout(&cfg, &store, &base, &["db_a".into(), "db_b".into()], &[], 8).await;
+        assert!(
+            out.is_empty(),
+            "empty batches must short-circuit before connecting, got {} outcome(s)",
+            out.len()
+        );
     }
 
     // ---- one env-gated live smoke test (clean skip with no DB) ----
