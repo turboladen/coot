@@ -4,6 +4,8 @@
   import LoadingNote from "./LoadingNote.svelte";
   import TableNode from "./TableNode.svelte";
   import ViewNode from "./ViewNode.svelte";
+  import { selection, selectNode } from "./selection.svelte";
+  import { childKey } from "./treeKey";
 
   let { id, database }: { id: string; database: DatabaseInfo } = $props();
 
@@ -17,8 +19,10 @@
   // rqb.4: only ONLINE dbs are expandable — enumerating tables/views in a
   // RESTORING/OFFLINE db errors, so those rows grey out and stay collapsed.
   const isOnline = $derived(database.stateDesc === "ONLINE");
+  const key = $derived(childKey(id, "db", database.name));
 
   async function toggle() {
+    selectNode(key);
     if (!isOnline) return; // rqb.4: don't enumerate a RESTORING/OFFLINE db
     expanded = !expanded;
     if (!expanded || status !== "idle") return; // re-expand = memo, no refetch
@@ -41,7 +45,7 @@
 </script>
 
 <li>
-  <button class="row" class:muted={!isOnline} onclick={toggle} disabled={!isOnline}>
+  <button class="row" class:selected={selection.key === key} class:muted={!isOnline} onclick={toggle} disabled={!isOnline}>
     <span class="twisty">
       {#if isOnline}
         {#if expanded}<ChevronDown size={12} />{:else}<ChevronRight size={12} />{/if}
@@ -63,13 +67,13 @@
       <div class="group">Tables</div>
       <ul>
         {#each tables as t (t.schema + "." + t.name)}
-          <TableNode {id} db={database.name} table={t} />
+          <TableNode {id} db={database.name} table={t} parentKey={key} />
         {/each}
       </ul>
       <div class="group">Views</div>
       <ul>
         {#each views as v (v.schema + "." + v.name)}
-          <ViewNode view={v} />
+          <ViewNode view={v} parentKey={key} />
         {/each}
       </ul>
     {/if}
@@ -99,6 +103,9 @@
     transition: background var(--dur-fast) var(--ease);
   }
   .row:not(:disabled):hover { background: color-mix(in srgb, var(--brand) 8%, transparent); }
+  .row.selected,
+  .row.selected:hover { background: var(--tree-selected-bg); }
+  .row.selected .label { color: var(--tree-selected-fg); }
   .twisty {
     display: inline-flex;
     align-items: center;
