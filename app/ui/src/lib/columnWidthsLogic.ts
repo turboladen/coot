@@ -10,6 +10,22 @@ export function signatureOf(columnNames: string[]): string {
   return JSON.stringify(columnNames);
 }
 
+// Bound on the number of distinct result-shape signatures kept in the width store
+// (billz-10s). Each signature ≈ 1 KB (a JSON name array + per-column px map), so 100
+// caps the blob near ~100 KB against localStorage's ~5 MB — far beyond what a single
+// user resizes in practice. The store grows one entry per distinct result shape and
+// nothing was ever evicted before this cap.
+export const MAX_WIDTH_SIGNATURES = 100;
+
+// Oldest-first signatures to evict so the store stays within `cap`. Recency is
+// insertion order (parseWidthStore rebuilds via Object.entries, preserving it); the
+// tail is most-recent. Returns [] when already within cap. billz-10s.
+export function evictSignatures(keysInRecencyOrder: string[], cap: number): string[] {
+  return keysInRecencyOrder.length <= cap
+    ? []
+    : keysInRecencyOrder.slice(0, keysInRecencyOrder.length - cap);
+}
+
 // Tolerant parse of the persisted width store: signature -> (columnName -> px).
 // Mirrors parseStringMap (paramBarLogic.ts): a null / malformed / non-object /
 // array blob degrades to {}. Per entry, non-object inner maps are dropped and each
