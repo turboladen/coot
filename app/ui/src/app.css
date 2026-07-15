@@ -9,6 +9,10 @@
   --text:#252032; --muted:#726c82; --faint:#a09aae;
   /* brand + action */
   --brand:#7c3aed; --accent:#0d9488; --accent-press:#0f766e; --accent-fg:#ffffff;
+  /* tree-row selection (billz-a8a) — reference --accent/--accent-press so they
+     re-resolve per theme via lazy custom-property substitution; define once. */
+  --tree-selected-bg: color-mix(in srgb, var(--accent) 14%, transparent);
+  --tree-selected-fg: var(--accent-press);
   /* syntax */
   --syn-kw:#7c3aed; --syn-fn:#2563eb; --syn-str:#c2410c; --syn-num:#0f766e;
   --syn-comment:#8b86a0; --syn-var:#7c3aed;

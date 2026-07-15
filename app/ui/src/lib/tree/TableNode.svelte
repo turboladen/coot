@@ -8,8 +8,12 @@
   import ColumnLeaf from "./ColumnLeaf.svelte";
   import LoadingNote from "./LoadingNote.svelte";
   import { selectTop1000 } from "./selectTopQuery";
+  import { selection, selectNode } from "./selection.svelte";
+  import { childKey } from "./treeKey";
 
-  let { id, db, table }: { id: string; db: string; table: TableInfo } = $props();
+  let { id, db, table, parentKey }: { id: string; db: string; table: TableInfo; parentKey: string } = $props();
+
+  const key = $derived(childKey(parentKey, "table", table.schema + "." + table.name));
 
   // Node-local lazy-load state (see plan §3b). Children are memoized here so a
   // collapse/re-expand is instant with zero round-trip; the core SchemaCache is
@@ -20,6 +24,7 @@
   let columns = $state<ColumnInfo[]>([]);
 
   async function toggle() {
+    selectNode(key);
     expanded = !expanded;
     if (!expanded || status !== "idle") return; // re-expand = memo, no refetch
     // CRITICAL (double-fetch guard): flip out of "idle" SYNCHRONOUSLY, before any
@@ -60,7 +65,7 @@
 <li>
   <!-- Double-click also fires two onclicks (toggle is idempotent — expanded
        returns to its prior state), harmless for a single-user tool. -->
-  <button class="row" onclick={toggle} ondblclick={openSelect} oncontextmenu={openMenu}>
+  <button class="row" class:selected={selection.key === key} onclick={toggle} ondblclick={openSelect} oncontextmenu={openMenu}>
     <span class="twisty">{#if expanded}<ChevronDown size={12} />{:else}<ChevronRight size={12} />{/if}</span>
     <Table2 size={13} />
     <span class="label">{table.schema}.{table.name}</span>
@@ -73,7 +78,7 @@
     {:else}
       <ul>
         {#each columns as col (col.ordinal)}
-          <ColumnLeaf column={col} />
+          <ColumnLeaf column={col} parentKey={key} />
         {/each}
       </ul>
     {/if}
@@ -119,6 +124,9 @@
     transition: background var(--dur-fast) var(--ease);
   }
   .row:hover { background: color-mix(in srgb, var(--brand) 8%, transparent); }
+  .row.selected,
+  .row.selected:hover { background: var(--tree-selected-bg); }
+  .row.selected .label { color: var(--tree-selected-fg); }
   .twisty {
     display: inline-flex;
     align-items: center;
