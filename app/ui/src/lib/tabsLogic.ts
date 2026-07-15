@@ -20,6 +20,11 @@ export type QueryTab = {
   // The saved query this tab was opened from (d28.3) — drives the param bar.
   // null = a plain scratch tab.
   savedQueryId: string | null;
+  // Cross-tenant fan-out (billz-0gh.1.3): when true, Run fans the batch out across
+  // `fanoutDatabases` in parallel instead of the single-DB path. Per-tab so one tab
+  // can fan out while another runs a normal single-DB query.
+  fanout: boolean;
+  fanoutDatabases: string[];
 };
 
 export type TabsState = { tabs: QueryTab[]; activeId: string };
@@ -101,12 +106,22 @@ export function deserialize(json: string | null): TabsState | null {
       const savedQueryId = typeof raw.savedQueryId === "string" && raw.savedQueryId !== ""
         ? raw.savedQueryId
         : null;
+      // `fanout`/`fanoutDatabases` are read-tolerant like `database` above: a
+      // pre-fanout blob has neither key, and a garbled value (non-bool / non-
+      // string-array) must default rather than poison the whole set. Non-string
+      // array entries are dropped so a corrupt blob can't smuggle a bad DB name.
+      const fanout = typeof raw.fanout === "boolean" ? raw.fanout : false;
+      const fanoutDatabases = Array.isArray(raw.fanoutDatabases)
+        ? (raw.fanoutDatabases.filter((x): x is string => typeof x === "string"))
+        : [];
       tabs.push({
         id: raw.id as string,
         title: raw.title as string,
         content: raw.content as string,
         database,
         savedQueryId,
+        fanout,
+        fanoutDatabases,
       });
     } else {
       return null; // any malformed tab poisons the blob → reseed default
