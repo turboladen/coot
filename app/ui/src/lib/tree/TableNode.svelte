@@ -52,6 +52,7 @@
 
   function openMenu(e: MouseEvent) {
     e.preventDefault();
+    selectNode(key); // right-click doesn't fire onclick, so move selection here too (billz-ek1)
     menu = { x: e.clientX, y: e.clientY };
   }
   function runScoped(q: SavedQuery) {
@@ -65,7 +66,7 @@
 <li>
   <!-- Double-click also fires two onclicks (toggle is idempotent — expanded
        returns to its prior state), harmless for a single-user tool. -->
-  <button class="row" class:selected={selection.key === key} onclick={toggle} ondblclick={openSelect} oncontextmenu={openMenu}>
+  <button class="row" class:selected={selection.key === key} onclick={toggle} ondblclick={openSelect} oncontextmenu={openMenu} aria-expanded={expanded}>
     <span class="twisty">{#if expanded}<ChevronDown size={12} />{:else}<ChevronRight size={12} />{/if}</span>
     <Table2 size={13} />
     <span class="label">{table.schema}.{table.name}</span>
