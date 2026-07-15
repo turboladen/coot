@@ -5,4 +5,5 @@ export {
   Plus, Lock, ChevronDown, ChevronRight, Search, X,
   Check, Clock, Globe,
   Sun, Moon, Monitor,
+  Network,
 } from "lucide-svelte";
