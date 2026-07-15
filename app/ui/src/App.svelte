@@ -349,6 +349,9 @@
     curTab?.fanout; // and whenever fan-out is toggled on/off — a mode switch, so
     // the pane must not keep the other mode's stale grid (toggling the box
     // selection keeps `fanout` true, so mid-selection edits don't clear results).
+    conns.activeId; // and whenever the active connection changes — the prior
+    // server's results/fan-out outcomes must not linger under a different
+    // execution context (Copilot review, PR #56).
     results = null;
     fanoutResults = null;
     selectedFanoutDb = 0;
