@@ -11,7 +11,7 @@ function tab(
   database: string | null = null,
   savedQueryId: string | null = null,
 ): QueryTab {
-  return { id, title: deriveTitle(content), content, database, savedQueryId };
+  return { id, title: deriveTitle(content), content, database, savedQueryId, fanout: false, fanoutDatabases: [] };
 }
 
 describe("deriveTitle", () => {
@@ -166,6 +166,42 @@ describe("serialize / deserialize", () => {
       activeId: "a",
     });
     expect(deserialize(empty)?.tabs[0].database).toBe(null);
+  });
+
+  test("round-trips fan-out state (billz-0gh.1.3)", () => {
+    const t = tab("a", "SELECT 1");
+    t.fanout = true;
+    t.fanoutDatabases = ["ESP_Nomad_SE_DEV", "ESP_Nomad_US_DEV"];
+    const withFanout: TabsState = { tabs: [t], activeId: "a" };
+    expect(deserialize(serialize(withFanout))).toEqual(withFanout);
+  });
+
+  test("a pre-fanout blob without fanout keys defaults to false/[]", () => {
+    const legacy = JSON.stringify({
+      tabs: [{ id: "a", title: "t", content: "SELECT 1", database: null, savedQueryId: null }],
+      activeId: "a",
+    });
+    const t = deserialize(legacy)?.tabs[0];
+    expect(t?.fanout).toBe(false);
+    expect(t?.fanoutDatabases).toEqual([]);
+  });
+
+  test("garbled fanout fields default rather than poison the blob", () => {
+    const bad = JSON.stringify({
+      tabs: [{ id: "a", title: "t", content: "SELECT 1", fanout: "yes", fanoutDatabases: "nope" }],
+      activeId: "a",
+    });
+    const t = deserialize(bad)?.tabs[0];
+    expect(t?.fanout).toBe(false);
+    expect(t?.fanoutDatabases).toEqual([]);
+  });
+
+  test("non-string entries in fanoutDatabases are dropped", () => {
+    const mixed = JSON.stringify({
+      tabs: [{ id: "a", title: "t", content: "SELECT 1", fanoutDatabases: ["DB_A", 42, null, "DB_B"] }],
+      activeId: "a",
+    });
+    expect(deserialize(mixed)?.tabs[0].fanoutDatabases).toEqual(["DB_A", "DB_B"]);
   });
 
   test("dangling activeId is repaired to the first tab", () => {

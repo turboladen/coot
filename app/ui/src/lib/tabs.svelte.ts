@@ -76,7 +76,15 @@ function newQueryTab(
   database: string | null = null,
   savedQueryId: string | null = null,
 ): QueryTab {
-  return { id: crypto.randomUUID(), title: deriveTitle(content), content, database, savedQueryId };
+  return {
+    id: crypto.randomUUID(),
+    title: deriveTitle(content),
+    content,
+    database,
+    savedQueryId,
+    fanout: false,
+    fanoutDatabases: [],
+  };
 }
 
 function seedDefault(): void {
@@ -122,6 +130,19 @@ export function setActiveDatabase(database: string | null): void {
   const tab = tabsState.tabs.find((t) => t.id === tabsState.activeId);
   if (!tab) return;
   tab.database = database;
+  flushSave();
+}
+
+// Set the active tab's fan-out enable + database selection (billz-0gh.1.3). Sets
+// BOTH fields together (the toggle passes the current selection; the picker passes
+// the current enable) so there's no merge ambiguity. A deliberate structural
+// choice → flushSave immediately (like setActiveDatabase), so a quit right after
+// toggling/selecting never loses it.
+export function setFanout(fanout: boolean, databases: string[]): void {
+  const tab = tabsState.tabs.find((t) => t.id === tabsState.activeId);
+  if (!tab) return;
+  tab.fanout = fanout;
+  tab.fanoutDatabases = databases;
   flushSave();
 }
 

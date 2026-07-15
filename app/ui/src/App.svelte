@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, untrack } from "svelte";
-  import { type ConnectionConfig, type ParamScope, type QueryResult, type SqlType, runParams, runSql, setSessionPassword } from "./lib/api";
+  import { type ConnectionConfig, type DbRunOutcome, type ParamScope, type QueryResult, type SqlType, runFanout, runParams, runSql, setSessionPassword } from "./lib/api";
   import { SvelteSet } from "svelte/reactivity";
   import ConnectionForm from "./lib/ConnectionForm.svelte";
   import PasswordPrompt from "./lib/PasswordPrompt.svelte";
@@ -11,18 +11,21 @@
   import SqlEditor from "./lib/SqlEditor.svelte";
   import TabBar from "./lib/TabBar.svelte";
   import ResultTabs from "./lib/ResultTabs.svelte";
+  import FanoutPicker from "./lib/FanoutPicker.svelte";
+  import FanoutStatusBar from "./lib/FanoutStatusBar.svelte";
+  import { combineFanoutResults, effectiveFanoutDatabases } from "./lib/fanoutLogic";
   import { type Message, summarize } from "./lib/resultSummary";
   import { deriveParams, nextParamValues, persistDeclared, resolve, toResolvedParams, valueSource } from "./lib/paramBarLogic";
   import { clearSessionParam, sessionParams, setSessionParams } from "./lib/sessionParams.svelte";
   import { clearGlobalParam, globalParams, setGlobalParams } from "./lib/globalParams.svelte";
   import { conns, refresh } from "./lib/connections.svelte";
   import { library, refresh as refreshLibrary, save as saveQuery } from "./lib/savedQueries.svelte";
-  import { activeContent, flushSave, restore, setActiveContent, setActiveDatabase, tabsState } from "./lib/tabs.svelte";
+  import { activeContent, flushSave, restore, setActiveContent, setActiveDatabase, setFanout, tabsState } from "./lib/tabs.svelte";
   import { isTabDirty } from "./lib/tabsLogic";
   import { treeRefresh } from "./lib/tree/refresh.svelte";
   import { dbStore, load as loadDatabases } from "./lib/databases.svelte";
   import { setTheme, theme } from "./lib/theme.svelte";
-  import { Database, Monitor, Moon, Play, Save, Sun } from "./lib/icons";
+  import { Database, Monitor, Moon, Network, Play, Save, Sun } from "./lib/icons";
 
   // Sidebar lower region toggles between the object tree and the saved-query
   // library (d28.6) — the library gets its own full-height home per PLAN §5.
@@ -59,6 +62,13 @@
   let running = $state(false);
   let messages = $state<Message[]>([]);
   let activeTab = $state<number | "messages">(0);
+
+  // Cross-tenant fan-out run state (billz-0gh.1.3). `fanoutResults` (null = not a
+  // fan-out run) holds one outcome per database, in input order; when present the
+  // results area renders the fan-out surfaces instead of the plain ResultTabs.
+  // `selectedFanoutDb` focuses one DB's grid in the per-DB fallback mode.
+  let fanoutResults = $state<DbRunOutcome[] | null>(null);
+  let selectedFanoutDb = $state(0);
 
   // Single trigger for the shared databases store (cwt.10): App is always
   // mounted, so it owns the load; the tree's root and the DB picker both just
@@ -122,6 +132,22 @@
   const curParams = $derived(
     curSavedQuery ? deriveParams(curTab?.content ?? "", curSavedQuery.params) : [],
   );
+
+  // Fan-out (billz-0gh.1.3). The stored selection intersected with the CURRENT
+  // connection's ONLINE databases (the effectiveDb invariant — never fan out to a
+  // DB absent/offline on this connection; a persisted selection can carry stale
+  // names). run() sends this, not the raw stored list.
+  const effFanoutDbs = $derived(
+    curTab ? effectiveFanoutDatabases(curTab.fanoutDatabases, dbStore.list) : [],
+  );
+  // Whether the last fan-out run's ok DBs stack into one grid (identical column
+  // shapes, one result set each) + the synthesized combined QueryResult. Null when
+  // not a fan-out run.
+  const fanoutCombined = $derived(fanoutResults ? combineFanoutResults(fanoutResults) : null);
+  // Fan-out doesn't support parameter binding (it runs the raw batch text, the
+  // run_sql analog). Disable the toggle on a param'd saved-query tab rather than
+  // silently fanning out unbound SQL. Parameterized fan-out is deferred (billz-0gh.1.4).
+  const fanoutDisabled = $derived(curParams.length > 0);
 
   // d28.10: the active saved-query tab has unsaved SQL edits (tab content differs
   // from the stored definition). Gates the "Update saved query" button and doubles
@@ -199,6 +225,28 @@
     valuesTabId = id;
   });
 
+  // Messages-pane content for a whole fan-out run: a header line, then one error
+  // line per failed DB (successes are summarized by the status strip + the grid).
+  // Keeps the Messages tab honest and consistent with the single-DB path.
+  function fanoutMessages(outcomes: DbRunOutcome[]): Message[] {
+    const okCount = outcomes.filter((o) => o.error == null).length;
+    const header: Message = {
+      kind: okCount === outcomes.length ? "info" : "error",
+      text: `Fan-out across ${outcomes.length} database${outcomes.length === 1 ? "" : "s"} — ${okCount} ok, ${outcomes.length - okCount} failed.`,
+    };
+    const errs = outcomes
+      .filter((o) => o.error != null)
+      .map((o): Message => ({ kind: "error", text: `${o.database}: ${o.error}` }));
+    return [header, ...errs];
+  }
+
+  // Messages-pane content for ONE database's slice, shown next to that DB's grid
+  // in the per-DB fallback: its own success summary, or its error line.
+  function perDbMessages(outcome: DbRunOutcome): Message[] {
+    if (outcome.error != null) return [{ kind: "error", text: outcome.error }];
+    return summarize(outcome.results);
+  }
+
   async function run() {
     if (running) return;
     const id = conns.activeId;
@@ -212,6 +260,46 @@
     }
     running = true;
     try {
+      // Fan-out path (billz-0gh.1.3): run the raw batch across many DBs in
+      // parallel. Takes priority over the param/run_sql paths; the toggle is
+      // disabled on a param'd tab (fanoutDisabled), so a fan-out tab never carries
+      // @params. Uses effFanoutDbs (stored ∩ current ONLINE) — an empty set (no
+      // selection, or all stale) nudges instead of calling the backend.
+      if (curTab?.fanout) {
+        if (effFanoutDbs.length === 0) {
+          results = null;
+          fanoutResults = null;
+          messages = [{ kind: "error", text: "Select at least one database to fan out to." }];
+          activeTab = "messages";
+          return;
+        }
+        const t = editor?.getRunTarget();
+        if (!t) return;
+        const out = await runFanout(id, effFanoutDbs, t.text, t.selection || null, t.line);
+        // An empty/whitespace/comment-only batch runs but yields no outcomes
+        // (getRunTarget() returns a truthy {text:""} so the `!t` guard above
+        // doesn't catch it). Nudge cleanly instead of rendering an empty fan-out
+        // surface — mirrors the single-DB path's "nothing to run" handling.
+        if (out.length === 0) {
+          fanoutResults = null;
+          results = null;
+          messages = [{ kind: "info", text: "Nothing to run." }];
+          activeTab = "messages";
+          return;
+        }
+        fanoutResults = out;
+        results = null;
+        selectedFanoutDb = 0;
+        messages = fanoutMessages(out);
+        // Land on the grid when there's one to show, else the Messages pane —
+        // mirrors the single-DB path's `out.length > 0 ? 0 : "messages"`. Combined
+        // mode always has a grid (≥1 column); fallback keys off the first DB's own
+        // result sets, so an errored/DML first DB opens on Messages (its error),
+        // not a misleading "Run a query to see results." placeholder.
+        const combo = combineFanoutResults(out);
+        activeTab = combo.canCombine || out[0].results.length > 0 ? 0 : "messages";
+        return;
+      }
       // `effectiveDb` (not the raw stored value) so we never USE a DB absent from
       // the active connection (cwt.9). Param-aware (d28.3): a saved-query tab with
       // derived @params runs via run_params (bind/splice); everything else keeps
@@ -242,6 +330,7 @@
       activeTab = out.length > 0 ? 0 : "messages";
     } catch (e) {
       results = null;
+      fanoutResults = null;
       messages = [{ kind: "error", text: String(e) }];
       activeTab = "messages";
     } finally {
@@ -257,7 +346,15 @@
     tabsState.activeId; // track: re-run whenever the active tab changes
     activeDb; // and whenever the picker retargets the DB — else the grid would
     // show the prior DB's rows next to a changed picker (the same mismatch).
+    curTab?.fanout; // and whenever fan-out is toggled on/off — a mode switch, so
+    // the pane must not keep the other mode's stale grid (toggling the box
+    // selection keeps `fanout` true, so mid-selection edits don't clear results).
+    conns.activeId; // and whenever the active connection changes — the prior
+    // server's results/fan-out outcomes must not linger under a different
+    // execution context (Copilot review, PR #56).
     results = null;
+    fanoutResults = null;
+    selectedFanoutDb = 0;
     messages = [];
     activeTab = 0;
   });
@@ -391,23 +488,43 @@
         </div>
         <!-- DB picker + Run button. Cmd/Ctrl-Enter → getRunTarget() → runSql →
              result tabs. The picker sets the active tab's target DB (cwt.9);
-             its value feeds runSql, where the executor issues USE [db]. -->
-        <div class="toolbar">
+             its value feeds runSql, where the executor issues USE [db]. The
+             fan-out toggle (billz-0gh.1.3) swaps the single picker for a
+             multi-select checklist and routes Run through runFanout. -->
+        <div class="toolbar" class:fanout={curTab?.fanout}>
           <Database size={14} />
-          <select
-            class="db-picker"
-            title="Target database — the runner issues USE [db] before your batch"
-            value={effectiveDb ?? ""}
-            disabled={!conns.activeId}
-            onchange={(e) => setActiveDatabase(e.currentTarget.value || null)}
+          <!-- Fan-out toggle. Disabled on a param'd tab (fan-out runs raw batch
+               text — no param binding this wave). -->
+          <button
+            class="fanout-toggle"
+            class:active={curTab?.fanout}
+            disabled={!curTab || fanoutDisabled}
+            aria-pressed={!!curTab?.fanout}
+            title={fanoutDisabled
+              ? "Fan-out doesn't support parameters yet."
+              : "Fan-out: run this query across many databases in parallel"}
+            onclick={() => curTab && setFanout(!curTab.fanout, curTab.fanoutDatabases)}
           >
-            <option value="">(default database)</option>
-            {#each dbStore.list as db (db.databaseId)}
-              <option value={db.name} disabled={db.stateDesc !== "ONLINE"}>
-                {db.name}{db.stateDesc !== "ONLINE" ? ` (${db.stateDesc.toLowerCase()})` : ""}
-              </option>
-            {/each}
-          </select>
+            <Network size={14} /> Fan-out
+          </button>
+          {#if curTab?.fanout}
+            <FanoutPicker selected={effFanoutDbs} onchange={(dbs) => setFanout(true, dbs)} />
+          {:else}
+            <select
+              class="db-picker"
+              title="Target database — the runner issues USE [db] before your batch"
+              value={effectiveDb ?? ""}
+              disabled={!conns.activeId}
+              onchange={(e) => setActiveDatabase(e.currentTarget.value || null)}
+            >
+              <option value="">(default database)</option>
+              {#each dbStore.list as db (db.databaseId)}
+                <option value={db.name} disabled={db.stateDesc !== "ONLINE"}>
+                  {db.name}{db.stateDesc !== "ONLINE" ? ` (${db.stateDesc.toLowerCase()})` : ""}
+                </option>
+              {/each}
+            </select>
+          {/if}
           <button class="primary" onclick={run} disabled={running}><Play size={14} /> {running ? "Running…" : "Run"}</button>
           {#if curSavedQuery}
             <button
@@ -420,7 +537,47 @@
           {/if}
         </div>
         <div class="grid-pane">
-          <ResultTabs {results} {messages} bind:activeTab />
+          {#if fanoutResults}
+            <!-- Fan-out results (billz-0gh.1.3): an always-on per-DB status strip
+                 over EITHER one combined grid (uniform shapes) or a per-DB tab
+                 strip (differing shapes / multi-result-set). Both reuse
+                 ResultTabs/ResultsGrid unchanged — the combined grid is a normal
+                 synthesized QueryResult with a leading `database` column. -->
+            <div class="fanout-results">
+              {#if fanoutCombined?.canCombine && fanoutCombined.combined}
+                <FanoutStatusBar outcomes={fanoutResults} />
+                <div class="fanout-grid">
+                  <ResultTabs results={[fanoutCombined.combined]} {messages} bind:activeTab />
+                </div>
+              {:else}
+                <!-- Per-DB fallback: clicking a status chip focuses that DB's grid
+                     (reset activeTab so a stale index can't show an empty pane). -->
+                <FanoutStatusBar
+                  outcomes={fanoutResults}
+                  selectable
+                  selectedIndex={selectedFanoutDb}
+                  onselect={(i) => {
+                    selectedFanoutDb = i;
+                    // Focus the DB's grid, or its Messages pane when it has no
+                    // result sets (errored/DML) — else ResultTabs would show the
+                    // "Run a query" placeholder next to a selected-but-empty DB.
+                    activeTab = (fanoutResults?.[i]?.results.length ?? 0) > 0 ? 0 : "messages";
+                  }}
+                />
+                <div class="fanout-grid">
+                  <ResultTabs
+                    results={fanoutResults[selectedFanoutDb]?.results ?? []}
+                    messages={fanoutResults[selectedFanoutDb]
+                      ? perDbMessages(fanoutResults[selectedFanoutDb])
+                      : []}
+                    bind:activeTab
+                  />
+                </div>
+              {/if}
+            </div>
+          {:else}
+            <ResultTabs {results} {messages} bind:activeTab />
+          {/if}
         </div>
       </div>
     {/if}
@@ -574,7 +731,44 @@
     color: var(--text);
   }
   .db-picker:disabled { color: var(--faint); }
+  /* Fan-out toggle: a ghost button that reuses the theme-toggle's accent-tint
+     active language. When on, the toolbar wraps so the checklist gets its own row. */
+  .toolbar.fanout {
+    flex-wrap: wrap;
+    align-items: flex-start;
+  }
+  .fanout-toggle {
+    flex: none;
+    padding: 0.2rem 0.5rem;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--r-sm);
+    background: var(--raised);
+    color: var(--muted);
+    cursor: pointer;
+    transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+  }
+  .fanout-toggle:hover:not(:disabled):not(.active) { color: var(--text); }
+  .fanout-toggle.active {
+    background: color-mix(in srgb, var(--accent) 14%, var(--raised));
+    color: var(--accent-press);
+    border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+    font-weight: 600;
+  }
+  .fanout-toggle:disabled { color: var(--faint); cursor: default; }
+  .fanout-toggle.active :global(svg) { color: inherit; }
   .grid-pane {
+    min-height: 0;
+    overflow: hidden;
+  }
+  /* Fan-out results: status strip (natural height) over the grid area (fills). */
+  .fanout-results {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 0;
+  }
+  .fanout-grid {
+    flex: 1 1 auto;
     min-height: 0;
     overflow: hidden;
   }
