@@ -190,17 +190,34 @@ git commit -m "feat(ui): tree selection store + shared selection tokens (billz-a
 
 ---
 
-## Task 3: Make database + table rows selectable
+## Task 3: Make all four node types selectable
 
-Both nodes are already `<button class="row">`; the change is identical in shape: import the store + helper, derive this node's `key`, add `class:selected`, call `selectNode(key)` on click, thread `parentKey` to children, and add a scoped `.selected` style using the tokens.
+**All four node edits land in ONE task and ONE commit.** They cannot be split into
+independently green-gated tasks: the `parentKey` prop *declaration* on `ViewNode` /
+`ColumnLeaf` and the *threading* of `parentKey={key}` from `DatabaseNode` /
+`TableNode` are mutually dependent — declare without pass (or pass without declare)
+and `just ui-check` errors on a missing/unknown required prop. So the single green
+`just ui-check` checkpoint comes only after every node is wired.
+
+The db/table rows are already `<button class="row">` — same-shaped change each:
+import the store + helper, derive this node's `key`, add `class:selected`, call
+`selectNode(key)` on click, thread `parentKey` to children, add a scoped `.selected`
+style. The view/column leaves are inert `<li>`s — wrap their content in a `<button>`
+(carrying the global-button reset so layout is unchanged), add the `parentKey` prop,
+derive the key, wire `selectNode` on click, add scoped hover + selected styles. Each
+leaf keeps its own layout (view: `align-items: center`; column: `align-items:
+baseline`, to preserve badge alignment) — only the *selected appearance* is shared
+via the tokens.
 
 **Files:**
 - Modify: `app/ui/src/lib/tree/DatabaseNode.svelte`
 - Modify: `app/ui/src/lib/tree/TableNode.svelte`
+- Modify: `app/ui/src/lib/tree/ViewNode.svelte`
+- Modify: `app/ui/src/lib/tree/ColumnLeaf.svelte`
 
 **Interfaces:**
 - Consumes: `childKey` (Task 1); `selection`, `selectNode` (Task 2); tokens `--tree-selected-bg/-fg` (Task 2).
-- Produces: passes `parentKey: string` to `TableNode`, `ViewNode` (from `DatabaseNode`) and to `ColumnLeaf` (from `TableNode`). `TableNode` gains a `parentKey` prop consumed here and defined in Task 4's `ColumnLeaf` / this task's `ViewNode` render sites.
+- Produces: `TableNode`, `ViewNode`, `ColumnLeaf` each gain a required `parentKey: string` prop; `DatabaseNode` passes it to `TableNode`/`ViewNode`, `TableNode` passes it to `ColumnLeaf`.
 
 - [ ] **Step 1: DatabaseNode — imports**
 
@@ -339,32 +356,10 @@ add:
   .row.selected .label { color: var(--tree-selected-fg); }
 ```
 
-- [ ] **Step 9: Type-check**
+(No gate/commit yet — `just ui-check` will still error until the leaves declare
+`parentKey`, next. Continue.)
 
-Run: `just ui-check`
-Expected: `0 ERRORS 0 WARNINGS`. (`ViewNode` and `ColumnLeaf` now receive a `parentKey` prop they do not yet declare — svelte-check tolerates extra attributes on components with an implicit `$props`, but declaring them in Task 4 makes it explicit. If svelte-check errors on the unknown prop, proceed to Task 4 and re-run; Tasks 3 and 4 land together in the same PR.)
-
-- [ ] **Step 10: Commit**
-
-```bash
-git add app/ui/src/lib/tree/DatabaseNode.svelte app/ui/src/lib/tree/TableNode.svelte
-git commit -m "feat(ui): selectable database + table tree rows (billz-a8a)"
-```
-
----
-
-## Task 4: Convert view + column leaves to selectable buttons
-
-Both leaves are currently inert `<li>`s. Wrap their content in a `<button>` (carrying the global-button reset so layout is unchanged), add the `parentKey` prop, derive the key, wire `selectNode` on click, and add scoped hover + selected styles. Each leaf keeps its own layout (view: `align-items: center`; column: `align-items: baseline` to preserve badge alignment) — only the *selected appearance* is shared via tokens.
-
-**Files:**
-- Modify: `app/ui/src/lib/tree/ViewNode.svelte`
-- Modify: `app/ui/src/lib/tree/ColumnLeaf.svelte`
-
-**Interfaces:**
-- Consumes: `childKey` (Task 1); `selection`, `selectNode` (Task 2); tokens (Task 2); `parentKey` prop from `DatabaseNode` (view) and `TableNode` (column), both wired in Task 3.
-
-- [ ] **Step 1: ViewNode — full rewrite**
+- [ ] **Step 9: ViewNode — full rewrite**
 
 Replace the entire contents of `app/ui/src/lib/tree/ViewNode.svelte` with:
 
@@ -420,7 +415,7 @@ Replace the entire contents of `app/ui/src/lib/tree/ViewNode.svelte` with:
 </style>
 ```
 
-- [ ] **Step 2: ColumnLeaf — full rewrite**
+- [ ] **Step 10: ColumnLeaf — full rewrite**
 
 Replace the entire contents of `app/ui/src/lib/tree/ColumnLeaf.svelte` with:
 
@@ -487,26 +482,26 @@ Replace the entire contents of `app/ui/src/lib/tree/ColumnLeaf.svelte` with:
 </style>
 ```
 
-- [ ] **Step 3: Type-check**
+- [ ] **Step 11: Type-check (single green checkpoint for all four nodes)**
 
 Run: `just ui-check`
-Expected: `0 ERRORS 0 WARNINGS`.
+Expected: `0 ERRORS 0 WARNINGS`. Now that all four nodes declare/thread `parentKey`, the mutually-dependent prop wiring resolves cleanly.
 
-- [ ] **Step 4: Run the full frontend test suite (guard against regressions)**
+- [ ] **Step 12: Run the full frontend test suite (guard against regressions)**
 
 Run: `just ui-test`
 Expected: all pass, including the 6 new `childKey` tests and the unchanged `columnLabel` tests.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 13: Commit (all four node files together)**
 
 ```bash
-git add app/ui/src/lib/tree/ViewNode.svelte app/ui/src/lib/tree/ColumnLeaf.svelte
-git commit -m "feat(ui): selectable view + column tree leaves (billz-a8a)"
+git add app/ui/src/lib/tree/DatabaseNode.svelte app/ui/src/lib/tree/TableNode.svelte app/ui/src/lib/tree/ViewNode.svelte app/ui/src/lib/tree/ColumnLeaf.svelte
+git commit -m "feat(ui): selectable object-tree rows for all node types (billz-a8a)"
 ```
 
 ---
 
-## Task 5: Full verification, visual pass, and close-out
+## Task 4: Full verification, visual pass, and close-out
 
 **Files:** none (verification + review + PR).
 
@@ -551,12 +546,12 @@ Then sync beads per standing order: `bd dolt push`.
 **Spec coverage:**
 - Selection store (module `$state`, ephemeral) → Task 2. ✓
 - Pure `childKey` helper with connection-prefixed hierarchical keys → Task 1. ✓
-- All four node types selectable; leaves converted to buttons → Tasks 3 (db/table), 4 (view/column). ✓
-- `parentKey` threading (root = connection id) → Task 3 render sites + Task 4 prop declarations. ✓
-- Shared selection appearance via tokens; per-component scoped `.selected` (deviation from spec's literal "one global rule," required because a bare global class cannot beat Svelte's hash-boosted scoped rules — CLAUDE.md permits deviation with a stated reason; the *values* remain single-sourced in `app.css`) → Task 2 tokens + Tasks 3/4 scoped rules. ✓
+- All four node types selectable; leaves converted to buttons → Task 3 (all four nodes in one commit — the `parentKey` declaration/threading interdependence forbids splitting into independently green-gated tasks). ✓
+- `parentKey` threading (root = connection id) → Task 3 (render sites + prop declarations land together). ✓
+- Shared selection appearance via tokens; per-component scoped `.selected` (deviation from spec's literal "one global rule," required because a bare global class cannot beat Svelte's hash-boosted scoped rules — CLAUDE.md permits deviation with a stated reason; the *values* remain single-sourced in `app.css`) → Task 2 tokens + Task 3 scoped rules. ✓
 - Out of scope (arrow-nav, multi-select, persistence, view→column expansion) → none built. ✓
-- Unit test `childKey`; visual light+dark → Task 1 tests, Task 5 visual. ✓
+- Unit test `childKey`; visual light+dark → Task 1 tests, Task 4 visual. ✓
 
-**Placeholder scan:** No TBD/TODO; every code step shows complete code; the PR body `<summary>` in Task 5 Step 5 is intentionally author-filled at PR time.
+**Placeholder scan:** No TBD/TODO; every code step shows complete code; the PR body `<summary>` in Task 4 Step 5 is intentionally author-filled at PR time.
 
-**Type consistency:** `childKey(parentKey, kind, name)` signature identical across Tasks 1, 3, 4. `selectNode(key)` / `selection.key` identical across Tasks 2, 3, 4. `parentKey: string` prop added on `TableNode` (Task 3), `ViewNode` and `ColumnLeaf` (Task 4), passed from render sites in Task 3. `key` derived identically (`$derived(childKey(...))`) in every node.
+**Type consistency:** `childKey(parentKey, kind, name)` signature identical across Tasks 1 and 3. `selectNode(key)` / `selection.key` identical across Tasks 2 and 3. `parentKey: string` prop declared on `TableNode`/`ViewNode`/`ColumnLeaf` and passed from the `DatabaseNode`/`TableNode` render sites — all within Task 3, so `just ui-check` is only asserted green after every side is wired (Step 11). `key` derived identically (`$derived(childKey(...))`) in every node.
