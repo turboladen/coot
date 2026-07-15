@@ -44,6 +44,16 @@ export type QueryResult = {
   rowsAffected: number | null;
 };
 
+// One database's slice of a cross-tenant fan-out (mirrors core's DbRunOutcome).
+// `error` non-null ⇒ that DB failed and `results` is empty; the other DBs still
+// ran. `elapsedMs` is that DB's own wall time.
+export type DbRunOutcome = {
+  database: string;
+  results: QueryResult[];
+  error: string | null;
+  elapsedMs: number;
+};
+
 // Object-tree schema types (rqb.2) — mirror core's `schema.rs` serde shapes.
 export type DatabaseInfo = { name: string; databaseId: number; stateDesc: string };
 export type TableInfo = { schema: string; name: string };
@@ -112,6 +122,16 @@ export const runSql = (
   selection: string | null,
   line: number,
 ) => invoke<QueryResult[]>("run_sql", { id, database, sql, selection, line });
+
+// Cross-tenant fan-out: run the same query against many databases in parallel,
+// one outcome per database. Keys match the Rust `run_fanout` param names.
+export const runFanout = (
+  id: string,
+  databases: string[],
+  sql: string,
+  selection: string | null,
+  line: number,
+) => invoke<DbRunOutcome[]>("run_fanout", { id, databases, sql, selection, line });
 
 export const runParams = (
   id: string,

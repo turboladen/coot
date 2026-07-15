@@ -6,9 +6,9 @@
 
 use billz_core::{
     CachingSecretStore, ColumnInfo, ConnectionConfig, ConnectionId, ConnectionStore, CoreError,
-    DatabaseInfo, ExecutionContext, KeychainSecretStore, QueryResult, QueryStore, ResolvedParam,
-    SavedQuery, SavedQueryId, SchemaCache, SecretStore, SessionOverlaySecretStore, TableInfo,
-    ViewInfo, build_connection_string,
+    DatabaseInfo, DbRunOutcome, ExecutionContext, KeychainSecretStore, QueryResult, QueryStore,
+    ResolvedParam, SavedQuery, SavedQueryId, SchemaCache, SecretStore, SessionOverlaySecretStore,
+    TableInfo, ViewInfo, build_connection_string,
 };
 use tauri::{Manager, State};
 
@@ -149,6 +149,17 @@ async fn test_connection(id: ConnectionId, state: State<'_, AppState>) -> AppRes
     Ok(())
 }
 
+/// Resolve WHAT to run into GO-split batches: a non-empty selection wins (it can
+/// span a `GO`), else the batch containing the caret's `line` (1-based). Shared by
+/// `run_sql` and `run_fanout` so their batch semantics can't drift. Returns
+/// `Vec<&str>` borrowing `sql`/`selection`; `run_fanout` owns the slices it needs.
+fn resolve_batches<'a>(sql: &'a str, selection: Option<&'a str>, line: usize) -> Vec<&'a str> {
+    match selection {
+        Some(sel) if !sel.trim().is_empty() => billz_core::split_batches(sel),
+        _ => billz_core::split_batches(billz_core::batch_at_line(sql, line)),
+    }
+}
+
 /// The real query path. `database = None` ⇒ connection default; `Some` ⇒ `USE [db]`.
 ///
 /// Resolves WHAT to run, then GO-splits it (billz-cwt.5). A non-empty selection
@@ -177,10 +188,7 @@ async fn run_sql(
         ctx = ctx.with_database(db);
     }
 
-    let batches: Vec<&str> = match selection.as_deref() {
-        Some(sel) if !sel.trim().is_empty() => billz_core::split_batches(sel),
-        _ => billz_core::split_batches(billz_core::batch_at_line(&sql, line)),
-    };
+    let batches = resolve_batches(&sql, selection.as_deref(), line);
 
     // Run each batch and flatten every result set into one Vec.
     let mut out = Vec::new();
@@ -189,6 +197,57 @@ async fn run_sql(
         out.append(&mut results);
     }
     Ok(out)
+}
+
+/// How many tenant databases a fan-out connects to at once. One login per DB, so
+/// this caps concurrent connections; 8 keeps a wide fan-out responsive without
+/// hammering the server.
+const FANOUT_CONCURRENCY: usize = 8;
+
+/// Cross-tenant fan-out (billz-0gh.1.1): run the SAME resolved batch(es) against
+/// EVERY database in `databases`, in parallel, returning a per-database outcome.
+///
+/// `sql`/`selection`/`line` are resolved to batches EXACTLY as `run_sql` (a
+/// non-empty selection wins, else the batch at the caret line — both GO-split),
+/// then owned so they can cross into the parallel tasks. The per-DB database is
+/// supplied by `run_fanout` (it overrides the base context per tenant), so the
+/// base is a plain `ExecutionContext::new` with no pinned database. Empty input →
+/// `[]` (matches `run_sql`; the UI shows "nothing to run") — no pointless logins.
+/// Unlike `run_sql`, one DB failing does NOT abort the rest: `run_fanout` captures
+/// each failure into that DB's `DbRunOutcome.error` and never returns `Err`.
+#[tauri::command]
+async fn run_fanout(
+    id: ConnectionId,
+    databases: Vec<String>,
+    sql: String,               // full document text
+    selection: Option<String>, // Some(text) when a non-empty selection exists
+    line: usize,               // 1-based caret line in `sql` (CodeMirror line number)
+    state: State<'_, AppState>,
+) -> AppResult<Vec<DbRunOutcome>> {
+    let cfg = state
+        .connections
+        .get(&id)?
+        .ok_or_else(|| CoreError::Config(format!("no connection {}", id.0)))?;
+
+    let batches: Vec<String> = resolve_batches(&sql, selection.as_deref(), line)
+        .into_iter()
+        .map(str::to_owned)
+        .collect();
+
+    if batches.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let base = ExecutionContext::new(cfg.id.clone());
+    Ok(billz_core::run_fanout(
+        &cfg,
+        &state.secrets,
+        &base,
+        &databases,
+        &batches,
+        FANOUT_CONCURRENCY,
+    )
+    .await)
 }
 
 /// The parameterized run path (d28.3). Like `run_sql` but binds/splices `params`
@@ -338,6 +397,7 @@ pub fn run() {
             set_session_password,
             test_connection,
             run_sql,
+            run_fanout,
             run_params,
             list_databases,
             list_tables,

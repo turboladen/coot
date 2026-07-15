@@ -6,6 +6,7 @@ publish = false # personal, non-distributed app — never publish to a registry
 
 [dependencies]
 chrono = "0.4.45"
+futures = "0.3.32"
 keyring = "4.1.4"
 mssql-client = "0.20.2"
 rust_decimal = "1.42.1"
