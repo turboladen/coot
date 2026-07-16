@@ -15,7 +15,7 @@
 //! the real app does to turn a result set into a table is here in ~30 lines.
 //!
 //! Run it (fish), same env vars as the typed spike:
-//!   cargo run -p billz-core --example dynamic_dump
+//!   cargo run -p coot-core --example dynamic_dump
 
 use std::env;
 

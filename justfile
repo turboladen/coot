@@ -1,4 +1,4 @@
-# billz task runner. Run `just` to list recipes.
+# coot task runner. Run `just` to list recipes.
 # Rust recipes run at the workspace root; frontend recipes run in app/ui.
 # Requires: just, cargo, bun. (brew install just)
 
@@ -71,11 +71,11 @@ ui-build:
 
 # Typed type-decoding probe against the DEV box.
 probe-typed:
-    cargo run -p billz-core --example typed_probe
+    cargo run -p coot-core --example typed_probe
 
 # Untyped column/row dump probe against the DEV box.
 probe-dynamic:
-    cargo run -p billz-core --example dynamic_dump
+    cargo run -p coot-core --example dynamic_dump
 
 # ---- macOS code signing (one-time; see SIGNING.md) ----
 

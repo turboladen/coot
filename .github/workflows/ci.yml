@@ -9,7 +9,7 @@
 #
 # Steps mirror `just verify` (fmt-check lint test ui-check ui-test ui-build) and
 # are kept separate so a failure names itself in the Actions UI. Order is not
-# load-bearing: the Rust steps compile billz-app fine without app/ui/dist
+# load-bearing: the Rust steps compile coot-app fine without app/ui/dist
 # (verified) — only `tauri build` bundling requires the frontendDist.
 #
 # Skips docs/beads-only changes (paths-ignore) so those don't burn CI minutes.

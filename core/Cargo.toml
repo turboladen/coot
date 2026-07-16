@@ -1,5 +1,5 @@
 [package]
-name = "billz-core"
+name = "coot-core"
 version = "0.1.0"
 edition = "2024"
 publish = false # personal, non-distributed app — never publish to a registry

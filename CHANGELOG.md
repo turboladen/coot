@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to billz are documented here. Format loosely follows
+All notable changes to coot are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
@@ -45,4 +45,4 @@ SQL-auth only, single-user, for use on DEV boxes.
   (see `SIGNING.md`). Not Apple-notarized — see `RELEASING.md` for the download/install
   step recipients must run.
 
-[0.1.0]: https://github.com/turboladen/billz/releases/tag/v0.1.0
+[0.1.0]: https://github.com/turboladen/coot/releases/tag/v0.1.0

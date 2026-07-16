@@ -401,7 +401,7 @@
 <main>
   <aside>
     <div class="brand">
-      <Database size={16} /> <span>billz</span>
+      <Database size={16} /> <span>coot</span>
       <!-- Color-theme control (billz-xhv.6): System / Light / Dark. `system`
            follows the OS; the others pin `data-theme` on <html>. -->
       <div class="theme-toggle" role="group" aria-label="Color theme">

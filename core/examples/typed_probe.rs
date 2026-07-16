@@ -22,7 +22,7 @@
 //!   set -x MSSQL_USER     "sa"
 //!   set -x MSSQL_PASSWORD (op read "op://Private/DevSQL/password")   # 1Password, stays out of history
 //!   set -x MSSQL_DATABASE "ESP_Arnotts_Group_DEV"
-//!   cargo run -p billz-core --example typed_probe
+//!   cargo run -p coot-core --example typed_probe
 
 use std::env;
 

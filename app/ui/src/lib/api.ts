@@ -1,4 +1,4 @@
-// The one place the wire shape is declared. These TS types mirror `billz-core`'s
+// The one place the wire shape is declared. These TS types mirror `coot-core`'s
 // serde types (camelCase). The UI sees ONLY these — never a driver type.
 import { invoke } from "@tauri-apps/api/core";
 
