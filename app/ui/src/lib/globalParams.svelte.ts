@@ -3,13 +3,13 @@
 // merge + persist on write, degrade to {} on a corrupt/absent blob.
 import { parseStringMap } from "./paramBarLogic";
 
-const STORAGE_KEY = "billz.globalParams.v1";
+const STORAGE_KEY = "coot.globalParams.v1";
 
 function load(): Record<string, string> {
   try {
     return parseStringMap(localStorage.getItem(STORAGE_KEY));
   } catch (e) {
-    console.warn("billz: failed to load global params from localStorage", e);
+    console.warn("coot: failed to load global params from localStorage", e);
     return {};
   }
 }
@@ -22,7 +22,7 @@ function persist(): void {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(globalParams));
   } catch (e) {
-    console.warn("billz: failed to persist global params to localStorage", e);
+    console.warn("coot: failed to persist global params to localStorage", e);
   }
 }
 

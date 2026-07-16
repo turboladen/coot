@@ -1,10 +1,10 @@
-//! `billz-app` — the thin Tauri shell. Real `#[tauri::command]`s delegate into
-//! `billz-core`; this crate stays driver-free. **No `mssql_client` type appears
+//! `coot-app` — the thin Tauri shell. Real `#[tauri::command]`s delegate into
+//! `coot-core`; this crate stays driver-free. **No `mssql_client` type appears
 //! in any signature here** — that's guaranteed structurally: `app` depends on
-//! `billz-core`, never on `mssql-client` (`CLAUDE.md`, `PLAN.md` §3). The UI sees
+//! `coot-core`, never on `mssql-client` (`CLAUDE.md`, `PLAN.md` §3). The UI sees
 //! only `core`'s own serde types (`ConnectionConfig` / `QueryResult` / …).
 
-use billz_core::{
+use coot_core::{
     CachingSecretStore, ColumnInfo, ConnectionConfig, ConnectionId, ConnectionStore, CoreError,
     DatabaseInfo, DbRunOutcome, ExecutionContext, KeychainSecretStore, QueryResult, QueryStore,
     ResolvedParam, SavedQuery, SavedQueryId, SchemaCache, SecretStore, SessionOverlaySecretStore,
@@ -48,7 +48,7 @@ struct AppState {
 /// Trivial bridge command: proves the Svelte -> Rust `invoke` path is wired.
 #[tauri::command]
 fn app_name() -> &'static str {
-    "billz"
+    "coot"
 }
 
 #[tauri::command]
@@ -145,7 +145,7 @@ async fn test_connection(id: ConnectionId, state: State<'_, AppState>) -> AppRes
         .get(&id)?
         .ok_or_else(|| CoreError::Config(format!("no connection {}", id.0)))?;
     let ctx = ExecutionContext::new(cfg.id.clone());
-    billz_core::run(&cfg, &state.secrets, &ctx, "SELECT 1").await?;
+    coot_core::run(&cfg, &state.secrets, &ctx, "SELECT 1").await?;
     Ok(())
 }
 
@@ -155,8 +155,8 @@ async fn test_connection(id: ConnectionId, state: State<'_, AppState>) -> AppRes
 /// `Vec<&str>` borrowing `sql`/`selection`; `run_fanout` owns the slices it needs.
 fn resolve_batches<'a>(sql: &'a str, selection: Option<&'a str>, line: usize) -> Vec<&'a str> {
     match selection {
-        Some(sel) if !sel.trim().is_empty() => billz_core::split_batches(sel),
-        _ => billz_core::split_batches(billz_core::batch_at_line(sql, line)),
+        Some(sel) if !sel.trim().is_empty() => coot_core::split_batches(sel),
+        _ => coot_core::split_batches(coot_core::batch_at_line(sql, line)),
     }
 }
 
@@ -193,7 +193,7 @@ async fn run_sql(
     // Run each batch and flatten every result set into one Vec.
     let mut out = Vec::new();
     for batch in batches {
-        let mut results = billz_core::run(&cfg, &state.secrets, &ctx, batch).await?;
+        let mut results = coot_core::run(&cfg, &state.secrets, &ctx, batch).await?;
         out.append(&mut results);
     }
     Ok(out)
@@ -239,7 +239,7 @@ async fn run_fanout(
     }
 
     let base = ExecutionContext::new(cfg.id.clone());
-    Ok(billz_core::run_fanout(
+    Ok(coot_core::run_fanout(
         &cfg,
         &state.secrets,
         &base,
@@ -270,7 +270,7 @@ async fn run_params(
     if let Some(db) = database {
         ctx = ctx.with_database(db);
     }
-    Ok(billz_core::run_with_params(&cfg, &state.secrets, &ctx, &sql, &params).await?)
+    Ok(coot_core::run_with_params(&cfg, &state.secrets, &ctx, &sql, &params).await?)
 }
 
 /// Object-tree data (rqb.2). The four schema commands mirror `test_connection`'s
@@ -414,7 +414,7 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use billz_core::{
+    use coot_core::{
         ConnectionConfig, ConnectionId, ExecutionContext, InMemorySecretStore, SecretStore,
         SessionOverlaySecretStore,
     };
@@ -462,13 +462,13 @@ mod tests {
         };
         let ctx = ExecutionContext::new(cfg.id.clone());
         let results = tauri::async_runtime::block_on(async {
-            billz_core::run(&cfg, &store, &ctx, "SELECT 1").await
+            coot_core::run(&cfg, &store, &ctx, "SELECT 1").await
         })
         .unwrap();
         assert_eq!(results.len(), 1);
     }
 
-    /// Exercises the `run_sql` split+loop against `billz_core` directly (not the
+    /// Exercises the `run_sql` split+loop against `coot_core` directly (not the
     /// `#[tauri::command]` wrapper, which needs `State<AppState>`): a GO-split
     /// script runs as two batches whose result sets flatten into one Vec. Same
     /// env gate as above — skips cleanly when `MSSQL_*` is unset.
@@ -481,8 +481,8 @@ mod tests {
         let ctx = ExecutionContext::new(cfg.id.clone());
         let out = tauri::async_runtime::block_on(async {
             let mut out = Vec::new();
-            for batch in billz_core::split_batches("SELECT 1\nGO\nSELECT 2") {
-                let mut results = billz_core::run(&cfg, &store, &ctx, batch).await.unwrap();
+            for batch in coot_core::split_batches("SELECT 1\nGO\nSELECT 2") {
+                let mut results = coot_core::run(&cfg, &store, &ctx, batch).await.unwrap();
                 out.append(&mut results);
             }
             out

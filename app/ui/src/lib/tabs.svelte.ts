@@ -17,7 +17,7 @@ const DEFAULT_CONTENT = "SELECT TOP 100 * FROM sys.objects;";
 
 // Versioned key so a future shape change can migrate/reset cleanly rather than
 // reading a stale blob.
-const STORAGE_KEY = "billz.queryTabs.v1";
+const STORAGE_KEY = "coot.queryTabs.v1";
 const SAVE_DEBOUNCE_MS = 500;
 
 export const tabsState = $state<TabsState>({ tabs: [], activeId: "" });
@@ -32,7 +32,7 @@ function loadRaw(): TabsState | null {
   try {
     return deserialize(localStorage.getItem(STORAGE_KEY));
   } catch (e) {
-    console.warn("billz: failed to load query tabs from localStorage", e);
+    console.warn("coot: failed to load query tabs from localStorage", e);
     return null;
   }
 }
@@ -41,7 +41,7 @@ function saveRaw(state: TabsState): void {
   try {
     localStorage.setItem(STORAGE_KEY, serialize(state));
   } catch (e) {
-    console.warn("billz: failed to save query tabs to localStorage", e);
+    console.warn("coot: failed to save query tabs to localStorage", e);
   }
 }
 
