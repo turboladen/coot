@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- coot app icon source. Regenerate the icon set from this file with:
+       cd app/ui && TAURI_APP_PATH=.. bun run tauri icon icons/coot.svg
+       A coot floating on a pond: violet "sky" above the waterline, teal "water"
+       below (brand colors doing double duty; pond = data lake). The bird's tell —
+       a near-black body with ONE contiguous white bill+forehead-shield — is the
+       focal point that survives at small sizes. No baked drop shadow (macOS adds
+       its own); transparent outside the squircle. -->
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#8C7BF8"/>
+      <stop offset="1" stop-color="#6A59E1"/>
+    </linearGradient>
+    <linearGradient id="water" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#28C6B0"/>
+      <stop offset="1" stop-color="#1C9FC0"/>
+    </linearGradient>
+    <linearGradient id="sheen" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.16"/>
+      <stop offset="0.5" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+    <clipPath id="sq"><rect x="80" y="80" width="864" height="864" rx="194"/></clipPath>
+  </defs>
+
+  <g clip-path="url(#sq)">
+    <!-- sky -->
+    <rect x="80" y="80" width="864" height="864" fill="url(#sky)"/>
+    <!-- coot body + little raised tail -->
+    <ellipse cx="566" cy="585" rx="232" ry="150" fill="#17141F"/>
+    <path d="M732 508 C800 468 842 470 856 482 C842 522 800 556 748 556 Z" fill="#17141F"/>
+    <!-- head -->
+    <ellipse cx="392" cy="430" rx="128" ry="126" fill="#17141F"/>
+    <!-- ONE contiguous white shape: pointed bill sweeping up into the forehead shield -->
+    <path d="M 176 486
+             C 232 458 262 448 290 438
+             C 302 400 302 344 336 344
+             C 370 344 360 414 342 454
+             C 334 478 302 492 278 490
+             C 240 489 208 488 176 486 Z" fill="#FCFCFF"/>
+    <!-- amber eye -->
+    <circle cx="404" cy="420" r="15" fill="#F6A82B"/>
+    <!-- water (drawn in front of the lower body so the coot sits in it) -->
+    <rect x="80" y="606" width="864" height="338" fill="url(#water)"/>
+    <rect x="80" y="606" width="864" height="10" fill="#63E7D0" opacity="0.85"/>
+    <!-- ripples -->
+    <path d="M300 664 q46 -22 92 0 t92 0" stroke="#CFF7EF" stroke-width="9" fill="none" stroke-linecap="round" opacity="0.5"/>
+    <path d="M470 720 q40 -18 80 0 t80 0" stroke="#CFF7EF" stroke-width="9" fill="none" stroke-linecap="round" opacity="0.4"/>
+  </g>
+  <!-- subtle top sheen, clipped to the squircle -->
+  <rect x="80" y="80" width="864" height="864" rx="194" fill="url(#sheen)"/>
+</svg>
