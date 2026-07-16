@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    billz_app_lib::run()
+    coot_app_lib::run()
 }

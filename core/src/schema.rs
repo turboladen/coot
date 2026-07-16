@@ -938,15 +938,15 @@ mod tests {
             return;
         };
         let ctx = ExecutionContext::new(cfg.id.clone()).with_database(&db);
-        let table = "__billz_schema_smoke";
+        let table = "__coot_schema_smoke";
         // Setup (idempotent): drop-if-exists, then create.
         run(
             &cfg,
             &store,
             &ctx,
-            "IF OBJECT_ID(N'dbo.__billz_schema_smoke', N'U') IS NOT NULL \
-                 DROP TABLE dbo.__billz_schema_smoke; \
-             CREATE TABLE dbo.__billz_schema_smoke \
+            "IF OBJECT_ID(N'dbo.__coot_schema_smoke', N'U') IS NOT NULL \
+                 DROP TABLE dbo.__coot_schema_smoke; \
+             CREATE TABLE dbo.__coot_schema_smoke \
                  (id int NOT NULL PRIMARY KEY, note nvarchar(50) NULL);",
         )
         .await
@@ -962,8 +962,8 @@ mod tests {
             &cfg,
             &store,
             &ctx,
-            "IF OBJECT_ID(N'dbo.__billz_schema_smoke', N'U') IS NOT NULL \
-                 DROP TABLE dbo.__billz_schema_smoke;",
+            "IF OBJECT_ID(N'dbo.__coot_schema_smoke', N'U') IS NOT NULL \
+                 DROP TABLE dbo.__coot_schema_smoke;",
         )
         .await;
 

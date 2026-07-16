@@ -8,7 +8,7 @@
   import { basicSetup } from "codemirror";
   import { sql, MSSQL } from "@codemirror/lang-sql";
   import { toggleComment } from "@codemirror/commands";
-  import { billzHighlight, editorTheme } from "./theme/highlight";
+  import { cootHighlight, editorTheme } from "./theme/highlight";
 
   let {
     value = "", // INIT-ONLY doc text (per {#key activeId} remount); CM's doc is the
@@ -35,7 +35,7 @@
     basicSetup, // line numbers, history, brackets, default keymap, highlighting, autocomplete
     sql({ dialect: MSSQL }), // T-SQL keywords + syntax highlighting
     editorTheme,
-    billzHighlight,
+    cootHighlight,
     // CM's own edits flow OUT via the onchange callback (one-directional data
     // flow: module → value init → CM → onchange → module → debounced save).
     EditorView.updateListener.of((u) => {

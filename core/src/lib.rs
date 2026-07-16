@@ -1,4 +1,4 @@
-//! `billz-core` — the driver-owning spine of the billz SQL Server client.
+//! `coot-core` — the driver-owning spine of the coot SQL Server client.
 //!
 //! Pure Rust, no Tauri, headless-testable. `mssql-client` is a *private* dependency of this crate
 //! and must never leak past its boundary: the `app` crate and the Svelte UI see only `core`'s own

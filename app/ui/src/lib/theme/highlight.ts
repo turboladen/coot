@@ -14,7 +14,7 @@ const style = HighlightStyle.define([
   { tag: [t.variableName, t.propertyName], color: "var(--syn-var)" },
 ]);
 
-export const billzHighlight = syntaxHighlighting(style);
+export const cootHighlight = syntaxHighlighting(style);
 
 export const editorTheme = EditorView.theme({
   "&": { height: "100%", fontSize: "13px", backgroundColor: "var(--raised)", color: "var(--text)" },

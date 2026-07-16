@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "billz-ui",
+      "name": "coot-ui",
       "dependencies": {
         "@codemirror/commands": "^6.10.4",
         "@codemirror/lang-sql": "^6.10.0",

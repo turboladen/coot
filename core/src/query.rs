@@ -25,7 +25,7 @@ pub struct SavedQueryId(pub String);
 /// "the things you filter by." A bind param carries `Some(SqlType)`; a raw-text
 /// fragment carries `None`.
 ///
-/// **Closed enum (NOT `#[non_exhaustive]`)** — this is billz's own deliberately
+/// **Closed enum (NOT `#[non_exhaustive]`)** — this is coot's own deliberately
 /// capped set, not the driver's evolving value space (that's why [`crate::CellValue`]
 /// / the driver's `SqlValue` are non-exhaustive — a false parallel). `core` has no
 /// external consumers (`CLAUDE.md`: not built for distribution), so closing the enum

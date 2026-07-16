@@ -1,5 +1,5 @@
 [package]
-name = "billz-app"
+name = "coot-app"
 version = "0.1.0"
 edition = "2024"
 publish = false # personal, non-distributed app — never publish to a registry
@@ -7,7 +7,7 @@ publish = false # personal, non-distributed app — never publish to a registry
 [lib]
 # Tauri v2 wants a lib (with run()) + a thin bin. `_lib` suffix keeps the lib crate
 # name distinct from the bin on case-insensitive/Windows targets (harmless on macOS).
-name = "billz_app_lib"
+name = "coot_app_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
@@ -17,5 +17,5 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-billz-core = { version = "0.1.0", path = "../core" }
+coot-core = { version = "0.1.0", path = "../core" }
 thiserror = "2.0.18"

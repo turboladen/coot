@@ -14,7 +14,7 @@ import { type Choice, parseChoice, resolveAttr } from "./themeLogic";
 export type { Choice } from "./themeLogic";
 
 // Versioned key so a future shape change can migrate/reset cleanly.
-const STORAGE_KEY = "billz.theme.v1";
+const STORAGE_KEY = "coot.theme.v1";
 
 // --- localStorage adapter (the swappable persistence seam) -------------------
 // Both sides swallow errors and degrade: a corrupt/absent value must never brick
@@ -24,7 +24,7 @@ function loadChoice(): Choice {
   try {
     return parseChoice(localStorage.getItem(STORAGE_KEY));
   } catch (e) {
-    console.warn("billz: failed to load theme from localStorage", e);
+    console.warn("coot: failed to load theme from localStorage", e);
     return "system";
   }
 }
@@ -33,7 +33,7 @@ function saveChoice(choice: Choice): void {
   try {
     localStorage.setItem(STORAGE_KEY, choice);
   } catch (e) {
-    console.warn("billz: failed to save theme to localStorage", e);
+    console.warn("coot: failed to save theme to localStorage", e);
   }
 }
 

@@ -2,7 +2,7 @@
 //!
 //! Ports the two spike probes (`examples/dynamic_dump.rs` untyped, and
 //! `examples/typed_probe.rs` typed) into `core`'s first integration tests. As an
-//! integration-test crate this sees only `billz_core`'s **public API** plus the
+//! integration-test crate this sees only `coot_core`'s **public API** plus the
 //! crate's normal deps (`tokio`, `mssql_client`, `chrono`, `rust_decimal`,
 //! `uuid`) — no `Cargo.toml` change is needed; `tests/` already resolves the
 //! `[dependencies]` table.
@@ -16,12 +16,12 @@
 //! set -x MSSQL_USER     "<user>"
 //! set -x MSSQL_PASSWORD (op read "op://.../password")
 //! set -x MSSQL_DATABASE "<a real DEV db>"
-//! cargo test -p billz-core
+//! cargo test -p coot-core
 //! ```
 //!
 //! Re-run that after any `mssql-client` bump (CLAUDE.md standing order).
 
-use billz_core::{
+use coot_core::{
     CellValue, ConnectionConfig, ConnectionId, DbRunOutcome, ExecutionContext, InMemorySecretStore,
     QueryResult, ResolvedParam, SecretStore, SqlType, build_connection_string, run, run_fanout,
     run_with_params,

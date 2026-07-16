@@ -14,7 +14,7 @@ enough for me" beats "general-purpose." Do not build for scale, multi-user, or d
 - `PLAN.md` — architecture, data models, phases, non-goals.
 - The two spike probes (`core/examples/typed_probe.rs` typed, `core/examples/dynamic_dump.rs`
   untyped dump) — **working proof** of the exact `mssql-client` calls the plan relies on. When in
-  doubt about the driver, read/run them (`cargo run -p billz-core --example <name>`), don't guess.
+  doubt about the driver, read/run them (`cargo run -p coot-core --example <name>`), don't guess.
   (`billz-ce1.7` ports them into `core`'s env-gated integration tests.)
 
 ## Non-negotiable invariants
@@ -68,6 +68,8 @@ fast-moving and single-maintainer).
   `docs.rs/mssql-client` (or the installed source) before using a method.
 - Compiling the `app` crate (`cargo build`/`test`/`clippy`) does **not** need `app/ui/dist` —
   `tauri::generate_context!` only requires `frontendDist` for `tauri build` bundling.
+- **CSP (`app.security.csp` in `tauri.conf.json`) only applies to the packaged build, not `just dev`** —
+  verify CSP-affected rendering (CodeMirror editor, results grid, fonts) at the DMG smoke-test. See `RELEASING.md`.
 
 ## Shell & commands
 
@@ -103,6 +105,8 @@ fast-moving and single-maintainer).
 ## Beads Issue Tracker
 
 This project uses **bd (beads)** for issue tracking. Run `bd prime` to see full workflow context and commands.
+
+**Issue IDs use the legacy `billz-` prefix** (e.g. `billz-a8a`) — unrelated to the `coot-*` crates/product. They pepper code comments as references. **Never bulk-rewrite `billz-*`**; those are issue IDs, not stale names.
 
 ### Quick Reference
 
