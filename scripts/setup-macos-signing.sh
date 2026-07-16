@@ -67,7 +67,7 @@ if security find-identity -v -p codesigning | grep -qF "$IDENTITY"; then
   echo
   echo "Next:"
   echo "  1. cd app/ui && bun run tauri build"
-  echo "  2. Launch the built app (src-tauri/target/release/bundle/macos/coot.app,"
+  echo "  2. Launch the built app (target/release/bundle/macos/coot.app,"
   echo "     or the .dmg) and click 'Always Allow' on the one Keychain prompt."
   echo "  3. That's it — no more prompts, even after future rebuilds."
 else
