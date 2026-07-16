@@ -22,3 +22,7 @@ test("locked takes precedence even with an active id", () => {
   // The prior-connection list must never survive a switch to a locked connection.
   expect(databaseLoadTarget("conn-a", true)).toBeNull();
 });
+
+test("locked with no active connection resolves to null", () => {
+  expect(databaseLoadTarget(null, true)).toBeNull();
+});
