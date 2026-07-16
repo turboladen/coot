@@ -24,6 +24,7 @@
   import { isTabDirty } from "./lib/tabsLogic";
   import { treeRefresh } from "./lib/tree/refresh.svelte";
   import { dbStore, load as loadDatabases } from "./lib/databases.svelte";
+  import { databaseLoadTarget } from "./lib/databasesLogic";
   import { setTheme, theme } from "./lib/theme.svelte";
   import { Database, Monitor, Moon, Network, Play, Save, Sun } from "./lib/icons";
 
@@ -102,8 +103,11 @@
 
   $effect(() => {
     treeRefresh.nonce; // track: a Refresh re-issues the load
-    if (lockedConn) return; // billz-85b: wait for unlock before hitting the DB
-    loadDatabases(conns.activeId);
+    // billz-85b: a locked (session-only, not-yet-unlocked) connection must not hit
+    // the DB. billz-zmw: but it must still load `null` to CLEAR the shared dbStore
+    // — early-returning here leaves the PREVIOUS connection's databases showing
+    // under the locked one (stale tree/picker → silent wrong-target risk).
+    loadDatabases(databaseLoadTarget(conns.activeId, !!lockedConn));
   });
 
   // The active tab's stored target DB (null = connection default). Derived so the
