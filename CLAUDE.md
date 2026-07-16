@@ -14,7 +14,7 @@ enough for me" beats "general-purpose." Do not build for scale, multi-user, or d
 - `PLAN.md` — architecture, data models, phases, non-goals.
 - The two spike probes (`core/examples/typed_probe.rs` typed, `core/examples/dynamic_dump.rs`
   untyped dump) — **working proof** of the exact `mssql-client` calls the plan relies on. When in
-  doubt about the driver, read/run them (`cargo run -p billz-core --example <name>`), don't guess.
+  doubt about the driver, read/run them (`cargo run -p coot-core --example <name>`), don't guess.
   (`billz-ce1.7` ports them into `core`'s env-gated integration tests.)
 
 ## Non-negotiable invariants

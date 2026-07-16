@@ -4,7 +4,7 @@
 // persist on write, degrade to {} on a corrupt / absent / quota blob.
 import { MAX_WIDTH_SIGNATURES, evictSignatures, parseWidthStore } from "./columnWidthsLogic";
 
-const STORAGE_KEY = "billz.columnWidths.v1";
+const STORAGE_KEY = "coot.columnWidths.v1";
 
 // signature -> (columnName -> width px)
 type WidthStore = Record<string, Record<string, number>>;
@@ -23,7 +23,7 @@ function load(): WidthStore {
     trimmedOnLoad = evict.length > 0;
     return parsed;
   } catch (e) {
-    console.warn("billz: failed to load column widths from localStorage", e);
+    console.warn("coot: failed to load column widths from localStorage", e);
     return {};
   }
 }
@@ -40,7 +40,7 @@ function persist(): void {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(widths));
   } catch (e) {
-    console.warn("billz: failed to persist column widths to localStorage", e);
+    console.warn("coot: failed to persist column widths to localStorage", e);
   }
 }
 

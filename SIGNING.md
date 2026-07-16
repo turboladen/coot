@@ -1,6 +1,6 @@
 # macOS code signing — killing the Keychain prompt
 
-`billz` stores connection passwords in the macOS Keychain. macOS only lets an app
+`coot` stores connection passwords in the macOS Keychain. macOS only lets an app
 read a Keychain item without prompting if the app has a **stable code-signing
 identity** that matches the item's access-control list. Two things follow:
 
@@ -24,13 +24,13 @@ This is set up to be turnkey.
 cd app/ui && bun run tauri build
 
 # 3. Launch the built app and click "Always Allow" on the single Keychain prompt:
-open target/release/bundle/macos/billz.app
+open target/release/bundle/macos/coot.app
 #    (this is a Cargo workspace, so bundles land in the shared root `target/`,
 #    NOT app/src-tauri/target/. The .dmg is alongside in target/release/bundle/dmg/.)
 ```
 
 That's it. `app/tauri.conf.json` is already wired to sign with the identity
-(`bundle.macOS.signingIdentity = "billz Local Signing"`), so every future
+(`bundle.macOS.signingIdentity = "coot Local Signing"`), so every future
 `bun run tauri build` reuses the same identity and the "Always Allow" keeps working.
 
 > On the **first** `tauri build`, `codesign` may itself pop one "wants to sign
@@ -39,7 +39,7 @@ That's it. `app/tauri.conf.json` is already wired to sign with the identity
 
 ## What the script does
 
-Creates a self-signed certificate named **"billz Local Signing"** with the
+Creates a self-signed certificate named **"coot Local Signing"** with the
 `codeSigning` extended key usage, imports it into your **login** keychain (private
 key accessible to `codesign`), and trusts it for the code-signing policy. It only
 touches your login keychain — no sudo, no system changes, nothing for distribution
@@ -51,12 +51,12 @@ self-signed identity for signing your own tool on your own Mac).
 If the script fails on your machine, Keychain Access does the same thing reliably:
 
 1. **Keychain Access → Certificate Assistant → Create a Certificate…**
-2. Name: **`billz Local Signing`** · Identity Type: **Self-Signed Root** ·
+2. Name: **`coot Local Signing`** · Identity Type: **Self-Signed Root** ·
    Certificate Type: **Code Signing** → Create.
 3. Re-run `cd app/ui && bun run tauri build`.
 
 ## Undo
 
-Delete the **"billz Local Signing"** certificate in **Keychain Access** (login
+Delete the **"coot Local Signing"** certificate in **Keychain Access** (login
 keychain). Optionally remove `bundle.macOS.signingIdentity` from
 `app/tauri.conf.json` to go back to unsigned builds.

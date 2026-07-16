@@ -50,7 +50,7 @@ allow = [
   "CDLA-Permissive-2.0", # webpki-roots (via mssql-tls -> mssql-client)
 ]
 
-# Our own crates (billz-core/billz-app) carry no license field — correct for a
+# Our own crates (coot-core/coot-app) carry no license field — correct for a
 # private, non-distributed personal app (both are `publish = false`). Skip them.
 [licenses.private]
 ignore = true

@@ -133,7 +133,7 @@ pub fn build_connection_string(cfg: &ConnectionConfig, password: &str) -> String
     // in that shape; left unquoted so the driver's host/port split is untouched.
     let mut s = format!(
         "Server={server};User Id={user};Password={password};Encrypt={encrypt};\
-         TrustServerCertificate={trust};Application Name=billz",
+         TrustServerCertificate={trust};Application Name=coot",
         server = cfg.server,
         user = ado_quote(&cfg.username),
         password = ado_quote(password),
@@ -161,7 +161,7 @@ pub trait SecretStore: Send + Sync {
 }
 
 /// Production secret store: the macOS Keychain via `keyring::v1::Entry`,
-/// service = `"billz"`, account = the connection id. `keyring`'s `NoEntry`
+/// service = `"coot"`, account = the connection id. `keyring`'s `NoEntry`
 /// (nothing stored) maps to `Ok(None)` on read and `Ok(())` on delete
 /// (idempotent); every other keyring error is stringified into
 /// [`CoreError::Secret`] so the driver-agnostic error surface (`PLAN.md` §3) is
@@ -169,7 +169,7 @@ pub trait SecretStore: Send + Sync {
 pub struct KeychainSecretStore;
 
 impl KeychainSecretStore {
-    const SERVICE: &'static str = "billz";
+    const SERVICE: &'static str = "coot";
 
     fn entry(id: &ConnectionId) -> Result<keyring::v1::Entry> {
         keyring::v1::Entry::new(Self::SERVICE, &id.0).map_err(|e| CoreError::Secret(e.to_string()))
@@ -659,7 +659,7 @@ mod tests {
         assert!(s.contains("Password=\"pw\""));
         assert!(s.contains("Encrypt=false"));
         assert!(s.contains("TrustServerCertificate=true"));
-        assert!(s.contains("Application Name=billz"));
+        assert!(s.contains("Application Name=coot"));
         // No default database → no ;Database= clause.
         assert!(!s.contains(";Database="));
     }

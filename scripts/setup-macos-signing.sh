@@ -1,6 +1,6 @@
 #!/bin/sh
 # Create a stable, self-signed **code-signing** certificate in your login
-# keychain so `bun run tauri build` produces a `billz.app` with a consistent
+# keychain so `bun run tauri build` produces a `coot.app` with a consistent
 # code identity. That lets you click "Always Allow" ONCE on the macOS Keychain
 # prompt and never be asked again — the authorization is keyed to the signing
 # identity, which stays the same across rebuilds (unlike `tauri dev`'s unsigned,
@@ -13,10 +13,10 @@
 #
 # Personal/local use only: this is a self-signed cert you trust to sign your own
 # app on your own Mac. It is NOT for distribution (no Apple Developer ID / no
-# notarization). To undo: delete "billz Local Signing" in Keychain Access.
+# notarization). To undo: delete "coot Local Signing" in Keychain Access.
 set -eu
 
-IDENTITY="billz Local Signing"
+IDENTITY="coot Local Signing"
 KEYCHAIN="login.keychain-db"
 
 if security find-identity -v -p codesigning 2>/dev/null | grep -qF "$IDENTITY"; then
@@ -51,11 +51,11 @@ EOF
   -config "$TMP/req.cnf" -extensions ext
 
 /usr/bin/openssl pkcs12 -export -out "$TMP/id.p12" \
-  -inkey "$TMP/key.pem" -in "$TMP/cert.pem" -name "$IDENTITY" -passout pass:billz
+  -inkey "$TMP/key.pem" -in "$TMP/cert.pem" -name "$IDENTITY" -passout pass:coot
 
 # Import the key+cert into the login keychain; -A lets local tools (codesign)
 # use the private key without a per-build access prompt.
-security import "$TMP/id.p12" -k "$KEYCHAIN" -P billz -A -T /usr/bin/codesign
+security import "$TMP/id.p12" -k "$KEYCHAIN" -P coot -A -T /usr/bin/codesign
 
 # Trust the self-signed cert for the codeSign policy so it validates as a real
 # code-signing identity. This is the step that prompts for your login password.
@@ -67,7 +67,7 @@ if security find-identity -v -p codesigning | grep -qF "$IDENTITY"; then
   echo
   echo "Next:"
   echo "  1. cd app/ui && bun run tauri build"
-  echo "  2. Launch the built app (src-tauri/target/release/bundle/macos/billz.app,"
+  echo "  2. Launch the built app (src-tauri/target/release/bundle/macos/coot.app,"
   echo "     or the .dmg) and click 'Always Allow' on the one Keychain prompt."
   echo "  3. That's it — no more prompts, even after future rebuilds."
 else
