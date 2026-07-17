@@ -1,4 +1,4 @@
-# Releasing coot
+# Releasing Coot
 
 How to cut a release: build the signed macOS `.dmg` locally and publish it to
 GitHub Releases. Written to be followed cold — you should not have to remember
@@ -70,8 +70,8 @@ just app-build     # = cd app/ui && bun run tauri build
 ```
 Output lands in the **workspace root** `target/` (this is a Cargo workspace, so
 bundles do NOT go under `app/`):
-- App: `target/release/bundle/macos/coot.app`
-- DMG: `target/release/bundle/dmg/coot_X.Y.Z_aarch64.dmg`
+- App: `target/release/bundle/macos/Coot.app`
+- DMG: `target/release/bundle/dmg/Coot_X.Y.Z_aarch64.dmg`
 
 > On the first-ever build, macOS `codesign` may pop one "wants to sign using key…"
 > prompt — click **Always Allow** and it won't ask again.
@@ -84,7 +84,7 @@ bundles do NOT go under `app/`):
 
 ### 6. Smoke-test the DMG locally
 
-Mount it, drag `coot.app` to `/Applications`, launch it, connect once, and run a
+Mount it, drag `Coot.app` to `/Applications`, launch it, connect once, and run a
 query. Check each of these — they're the things that only break in the *packaged*
 build, not in `just dev`:
 - **The SQL editor AND the results grid render with proper styling** — editor:
@@ -108,9 +108,9 @@ but a downloader will, which is why the release notes must document it.)
 ### 7. Publish the GitHub Release
 
 ```fish
-set -l DMG (ls target/release/bundle/dmg/coot_*_aarch64.dmg)
+set -l DMG (ls target/release/bundle/dmg/Coot_*_aarch64.dmg)
 gh release create vX.Y.Z "$DMG" \
-    --title "coot vX.Y.Z" \
+    --title "Coot vX.Y.Z" \
     --notes-file RELEASE_NOTES.md
 ```
 Write `RELEASE_NOTES.md` from the changelog section for this version, and **always
@@ -121,13 +121,13 @@ it untracked). Alternatively use `--notes "…"` inline for short releases.
 
 The app is signed with a **local self-signed identity and is NOT Apple-notarized.**
 When someone downloads the `.dmg` from GitHub, macOS quarantines it, and Gatekeeper
-will refuse to open the app — showing the misleading message **"coot is damaged
+will refuse to open the app — showing the misleading message **"Coot is damaged
 and can't be opened."** It is not damaged; macOS just doesn't trust a self-signed
 build it didn't notarize. The recipient must strip the quarantine flag once:
 
-    # 1. Open the .dmg and drag coot.app to /Applications, then run:
-    xattr -dr com.apple.quarantine /Applications/coot.app
-    # 2. Launch coot normally. On first connect, click "Always Allow" on the
+    # 1. Open the .dmg and drag Coot.app to /Applications, then run:
+    xattr -dr com.apple.quarantine /Applications/Coot.app
+    # 2. Launch Coot normally. On first connect, click "Always Allow" on the
     #    Keychain prompt (expected and safe — passwords live in the macOS Keychain,
     #    never on disk).
 
