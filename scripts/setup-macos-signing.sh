@@ -1,6 +1,6 @@
 #!/bin/sh
 # Create a stable, self-signed **code-signing** certificate in your login
-# keychain so `bun run tauri build` produces a `coot.app` with a consistent
+# keychain so `bun run tauri build` produces a `Coot.app` with a consistent
 # code identity. That lets you click "Always Allow" ONCE on the macOS Keychain
 # prompt and never be asked again — the authorization is keyed to the signing
 # identity, which stays the same across rebuilds (unlike `tauri dev`'s unsigned,
@@ -67,7 +67,7 @@ if security find-identity -v -p codesigning | grep -qF "$IDENTITY"; then
   echo
   echo "Next:"
   echo "  1. cd app/ui && bun run tauri build"
-  echo "  2. Launch the built app (target/release/bundle/macos/coot.app,"
+  echo "  2. Launch the built app (target/release/bundle/macos/Coot.app,"
   echo "     or the .dmg) and click 'Always Allow' on the one Keychain prompt."
   echo "  3. That's it — no more prompts, even after future rebuilds."
 else

@@ -1,6 +1,6 @@
 # macOS code signing — killing the Keychain prompt
 
-`coot` stores connection passwords in the macOS Keychain. macOS only lets an app
+`Coot` stores connection passwords in the macOS Keychain. macOS only lets an app
 read a Keychain item without prompting if the app has a **stable code-signing
 identity** that matches the item's access-control list. Two things follow:
 
@@ -24,7 +24,7 @@ This is set up to be turnkey.
 cd app/ui && bun run tauri build
 
 # 3. Launch the built app and click "Always Allow" on the single Keychain prompt:
-open target/release/bundle/macos/coot.app
+open target/release/bundle/macos/Coot.app
 #    (this is a Cargo workspace, so bundles land in the shared root `target/`,
 #    NOT app/src-tauri/target/. The .dmg is alongside in target/release/bundle/dmg/.)
 ```
