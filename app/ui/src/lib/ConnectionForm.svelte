@@ -108,8 +108,10 @@
   <h2>{isNew ? "New connection" : `Edit: ${seed?.name}`}</h2>
 
   <label>Name<input bind:value={name} /></label>
-  <label>Server (host,port)<input bind:value={server} placeholder="myhost,1433" /></label>
-  <label>Username<input bind:value={username} /></label>
+  <!-- Identifier fields: no spell-check squiggle, no WebKit autocorrect/autocapitalize
+       mangling hostnames or logins like `sa` (billz-pj7). -->
+  <label>Server (host,port)<input bind:value={server} placeholder="myhost,1433" spellcheck="false" autocorrect="off" autocapitalize="off" /></label>
+  <label>Username<input bind:value={username} spellcheck="false" autocorrect="off" autocapitalize="off" /></label>
   <label>
     Password
     <input type="password" bind:value={password} placeholder={isNew ? "" : "(unchanged)"} />
@@ -118,7 +120,7 @@
     <input type="checkbox" bind:checked={rememberPassword} />
     Remember password in Keychain (else prompt each session)
   </label>
-  <label>Default database (optional)<input bind:value={defaultDatabase} /></label>
+  <label>Default database (optional)<input bind:value={defaultDatabase} spellcheck="false" autocorrect="off" autocapitalize="off" /></label>
   <label class="check">
     <input type="checkbox" bind:checked={encrypt} /> Encrypt
   </label>
