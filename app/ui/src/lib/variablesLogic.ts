@@ -3,7 +3,7 @@
 // are the runes wrappers. A Variable's `name` is its identity == the SQL token minus
 // the leading '@' (so "benchmark_user" ↔ @benchmark_user). Values resolve into any
 // @name reference; the library always wins over a query input of the same name.
-import type { Param, ResolvedParam, SavedQuery, SqlType } from "./api";
+import { SQL_TYPES, type Param, type ResolvedParam, type SavedQuery, type SqlType } from "./api";
 import { deriveParams } from "./paramBarLogic";
 
 export type Variable = {
@@ -31,10 +31,6 @@ export function variableFor(paramName: string, byName: Map<string, Variable>): V
 export function buildInsertToken(v: Variable): string {
   return `@${v.name}`;
 }
-
-const SQL_TYPES: readonly SqlType[] = [
-  "int", "bigint", "nvarchar", "bit", "date", "datetime2", "decimal", "uniqueidentifier", "money",
-];
 
 function asSqlType(v: unknown): SqlType | null {
   return typeof v === "string" && (SQL_TYPES as readonly string[]).includes(v) ? (v as SqlType) : null;
@@ -65,7 +61,11 @@ export function parseVariables(raw: string | null): Variable[] {
       note: typeof o.note === "string" ? o.note : "",
     });
   }
-  return out;
+  // De-dupe by name (name is identity) — keeps the LAST occurrence, mirroring how a
+  // plain-object/localStorage overwrite resolves a collision. Guards a hand-edited or
+  // corrupted blob from producing duplicate names, which would break indexByName's Map
+  // and VariablesLibrary's keyed {#each}.
+  return Array.from(new Map(out.map((v) => [v.name, v])).values());
 }
 
 export function serializeVariables(vars: Variable[]): string {
@@ -102,8 +102,10 @@ export function resolveRun(
 
 // Persist a saved query's INPUT values back as lastValue (per-query memory). Only
 // DECLARED params (from the stored SQL) are remembered — edited-in @params are scratch
-// (mirrors the old persistDeclared "stable template" rule). Library-matched params are
-// skipped: the library owns their value, not the query.
+// (mirrors the old persistDeclared "stable template" rule). A library-matched param's
+// lastValue is CLEARED, not left as-is: the library owns its value now, and clearing
+// stale query-input memory means that if the variable is later renamed/removed, the
+// param reverts to an empty field rather than silently resurfacing old data.
 export function persistInputs(
   stored: SavedQuery,
   values: Record<string, string>,
@@ -111,7 +113,7 @@ export function persistInputs(
 ): Param[] {
   const declared = deriveParams(stored.sql, stored.params);
   return declared.map((p) => {
-    if (variableFor(p.name, byName)) return p; // library owns it
+    if (variableFor(p.name, byName)) return { ...p, lastValue: null };
     if (!(p.name in values)) return p; // not surfaced this run
     return { ...p, lastValue: values[p.name] ?? "" };
   });

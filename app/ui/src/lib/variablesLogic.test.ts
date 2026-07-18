@@ -63,6 +63,14 @@ describe("parseVariables", () => {
       { name: "nonote", value: "3", sqlType: "bit", note: "" },
     ]);
   });
+
+  test("de-dupes a duplicate name, keeping the LAST occurrence's data", () => {
+    const raw = JSON.stringify([
+      { name: "dup", value: "first", sqlType: "int", note: "" },
+      { name: "dup", value: "second", sqlType: "nvarchar", note: "n" },
+    ]);
+    expect(parseVariables(raw)).toEqual([{ name: "dup", value: "second", sqlType: "nvarchar", note: "n" }]);
+  });
 });
 
 describe("migrateGlobalParams", () => {
@@ -106,12 +114,37 @@ describe("persistInputs", () => {
     params: [param("@user_id", "int"), param("@vendor", "nvarchar")],
   };
 
-  test("writes lastValue for declared inputs, skips library-owned names, ignores edited-in params", () => {
+  test("writes lastValue for declared inputs, clears library-owned names, ignores edited-in params", () => {
     const byName = indexByName([{ name: "vendor", value: "ACME", sqlType: "nvarchar", note: "" }]);
     const out = persistInputs(stored, { "@user_id": "42", "@vendor": "typed-but-ignored", "@scratch": "9" }, byName);
     expect(out).toEqual([
       { name: "@user_id", sqlType: "int", lastValue: "42", scope: "local" },
-      { name: "@vendor", sqlType: "nvarchar", lastValue: null, scope: "local" }, // library owns it → untouched
+      { name: "@vendor", sqlType: "nvarchar", lastValue: null, scope: "local" }, // library owns it → cleared
+    ]);
+  });
+
+  test("clears a STALE pre-existing lastValue once the library claims the name (no resurfacing old data)", () => {
+    const staleStored: SavedQuery = {
+      id: "q2", name: "q2", targetDatabase: null,
+      sql: "select * from t where v=@vendor",
+      params: [param("@vendor", "nvarchar", "OLD_VALUE")], // had a lastValue before "vendor" was a library variable
+    };
+    const byName = indexByName([{ name: "vendor", value: "ACME", sqlType: "nvarchar", note: "" }]);
+    const out = persistInputs(staleStored, {}, byName);
+    expect(out).toEqual([{ name: "@vendor", sqlType: "nvarchar", lastValue: null, scope: "local" }]);
+  });
+
+  test("leaves a declared param's lastValue untouched when it isn't surfaced this run", () => {
+    const storedWithValue: SavedQuery = {
+      id: "q3", name: "q3", targetDatabase: null,
+      sql: "select * from t where a=@user_id and v=@vendor",
+      params: [param("@user_id", "int", "OLD"), param("@vendor", "nvarchar")],
+    };
+    // Only @vendor is surfaced this run — @user_id's lastValue must survive untouched.
+    const out = persistInputs(storedWithValue, { "@vendor": "42" }, new Map());
+    expect(out).toEqual([
+      { name: "@user_id", sqlType: "int", lastValue: "OLD", scope: "local" },
+      { name: "@vendor", sqlType: "nvarchar", lastValue: "42", scope: "local" },
     ]);
   });
 });
