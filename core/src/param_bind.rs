@@ -162,51 +162,179 @@ fn param_err(type_name: &str, raw: &str, detail: impl Display) -> CoreError {
 ///     value; anything else (a bind `@name`, an unknown alias) is left literal.
 ///
 /// Because a spliced value is emitted and never re-scanned, a raw value that itself
-/// contains `@x` stays literal. The pass is **context-free** (no SQL lexer): a
-/// `@name` inside a string literal IS spliced, and a lone `@` (or `@` before a
-/// non-identifier char) emits `@` literally and advances one char — no hang, no
-/// panic. Bind `@name`s left literal here compose correctly with `query_named`.
+/// contains `@x` stays literal. The pass is **lexer-aware** (billz-7c9): a `@name` is
+/// only recognized in NORMAL SQL context — inside single-quote strings (incl. `N'…'`
+/// and the `''` escape), `[..]` / `"…"` quoted identifiers (`]]` / `""` escapes), `--`
+/// line comments, and `/* */` block comments (which T-SQL NESTS), the text is copied
+/// verbatim and no `@name` is spliced. `@@…` system vars stay literal, and a lone `@`
+/// (or `@` before a non-identifier char) emits `@` literally — no hang, no panic. Bind
+/// `@name`s left literal here compose correctly with `query_named`. This is the shared
+/// lexical contract with the frontend `scanParamNames` (paramBarLogic.ts), kept in
+/// lockstep by a mirrored corpus (the billz-7c9 splice_* tests).
 ///
-/// `@` and identifier chars are ASCII, so byte-scanning for `@` is UTF-8-safe: a
-/// `0x40` byte never appears inside a multibyte sequence.
+/// All delimiters (`@ ' [ ] " - / *` and `\n`) are ASCII (< 0x80), so byte-scanning is
+/// UTF-8-safe: none appears inside a multibyte sequence, and every slice boundary lands
+/// on a char boundary.
 pub fn splice_raw_text(sql: &str, raw: &[(&str, &str)]) -> String {
+    // n=normal, string, line/block comment, bracket, double-quote identifier.
+    enum Lex {
+        Normal,
+        SingleQuote,
+        LineComment,
+        BlockComment(u32),
+        Bracket,
+        DoubleQuote,
+    }
     let bytes = sql.as_bytes();
     let mut out = String::with_capacity(sql.len());
     let mut i = 0;
+    let mut state = Lex::Normal;
     while i < bytes.len() {
-        if bytes[i] == b'@' {
-            // `@@…` system var — emit both `@`s literally, skip past them so the
-            // trailing identifier isn't misread as a `@ROWCOUNT` param token.
-            if i + 1 < bytes.len() && bytes[i + 1] == b'@' {
-                out.push_str("@@");
-                i += 2;
-                continue;
+        match state {
+            // The `@` handling below is byte-identical to the pre-billz-7c9 splicer —
+            // it is merely gated behind Normal state, so all splice_1..10 guarantees
+            // (prefix-collision boundary, replace-all, @@, single-pass, lone-@) hold.
+            Lex::Normal => match bytes[i] {
+                b'@' => {
+                    // `@@…` system var — emit both `@`s literally.
+                    if i + 1 < bytes.len() && bytes[i + 1] == b'@' {
+                        out.push_str("@@");
+                        i += 2;
+                    } else {
+                        // Read the full identifier after `@`.
+                        let start = i + 1;
+                        let mut j = start;
+                        while j < bytes.len() && is_ident_byte(bytes[j]) {
+                            j += 1;
+                        }
+                        if j == start {
+                            // Lone `@` (or `@` before a non-identifier char).
+                            out.push('@');
+                            i += 1;
+                        } else {
+                            let candidate = &sql[i..j]; // includes the leading `@`
+                            match raw.iter().find(|(name, _)| *name == candidate) {
+                                Some((_, value)) => out.push_str(value),
+                                None => out.push_str(candidate),
+                            }
+                            i = j;
+                        }
+                    }
+                }
+                b'\'' => {
+                    out.push('\'');
+                    state = Lex::SingleQuote;
+                    i += 1;
+                }
+                b'[' => {
+                    out.push('[');
+                    state = Lex::Bracket;
+                    i += 1;
+                }
+                b'"' => {
+                    out.push('"');
+                    state = Lex::DoubleQuote;
+                    i += 1;
+                }
+                b'-' if i + 1 < bytes.len() && bytes[i + 1] == b'-' => {
+                    out.push_str("--");
+                    state = Lex::LineComment;
+                    i += 2;
+                }
+                b'/' if i + 1 < bytes.len() && bytes[i + 1] == b'*' => {
+                    out.push_str("/*");
+                    state = Lex::BlockComment(1);
+                    i += 2;
+                }
+                _ => {
+                    // Ordinary text — copy in one slice up to the next byte that could
+                    // open a param/string/comment/identifier. A lone `-`/`/` lands here
+                    // and is emitted literally (minus / division operators).
+                    let start = i;
+                    i += 1;
+                    while i < bytes.len()
+                        && !matches!(bytes[i], b'@' | b'\'' | b'[' | b'"' | b'-' | b'/')
+                    {
+                        i += 1;
+                    }
+                    out.push_str(&sql[start..i]);
+                }
+            },
+            Lex::SingleQuote => {
+                let start = i;
+                while i < bytes.len() && bytes[i] != b'\'' {
+                    i += 1;
+                }
+                if i < bytes.len() {
+                    if i + 1 < bytes.len() && bytes[i + 1] == b'\'' {
+                        i += 2; // `''` escape — stay in the string
+                    } else {
+                        i += 1; // closing quote
+                        state = Lex::Normal;
+                    }
+                }
+                out.push_str(&sql[start..i]);
             }
-            // Read the full identifier after `@`.
-            let start = i + 1;
-            let mut j = start;
-            while j < bytes.len() && is_ident_byte(bytes[j]) {
-                j += 1;
+            Lex::Bracket => {
+                let start = i;
+                while i < bytes.len() && bytes[i] != b']' {
+                    i += 1;
+                }
+                if i < bytes.len() {
+                    if i + 1 < bytes.len() && bytes[i + 1] == b']' {
+                        i += 2; // `]]` escape
+                    } else {
+                        i += 1; // closing bracket
+                        state = Lex::Normal;
+                    }
+                }
+                out.push_str(&sql[start..i]);
             }
-            if j == start {
-                // Lone `@` (or `@` before a non-identifier char) — emit literally.
-                out.push('@');
-                i += 1;
-                continue;
+            Lex::DoubleQuote => {
+                let start = i;
+                while i < bytes.len() && bytes[i] != b'"' {
+                    i += 1;
+                }
+                if i < bytes.len() {
+                    if i + 1 < bytes.len() && bytes[i + 1] == b'"' {
+                        i += 2; // `""` escape
+                    } else {
+                        i += 1; // closing quote
+                        state = Lex::Normal;
+                    }
+                }
+                out.push_str(&sql[start..i]);
             }
-            let candidate = &sql[i..j]; // includes the leading `@`
-            match raw.iter().find(|(name, _)| *name == candidate) {
-                Some((_, value)) => out.push_str(value),
-                None => out.push_str(candidate),
+            Lex::LineComment => {
+                let start = i;
+                while i < bytes.len() && bytes[i] != b'\n' {
+                    i += 1;
+                }
+                if i < bytes.len() {
+                    i += 1; // consume the newline (itself normal)
+                    state = Lex::Normal;
+                }
+                out.push_str(&sql[start..i]);
             }
-            i = j;
-        } else {
-            // Copy through to the next `@` (or end) in one slice.
-            let start = i;
-            while i < bytes.len() && bytes[i] != b'@' {
-                i += 1;
+            Lex::BlockComment(mut depth) => {
+                let start = i;
+                while i < bytes.len() {
+                    if bytes[i] == b'/' && i + 1 < bytes.len() && bytes[i + 1] == b'*' {
+                        depth += 1; // T-SQL block comments nest
+                        i += 2;
+                    } else if bytes[i] == b'*' && i + 1 < bytes.len() && bytes[i + 1] == b'/' {
+                        depth -= 1;
+                        i += 2;
+                        if depth == 0 {
+                            state = Lex::Normal;
+                            break;
+                        }
+                    } else {
+                        i += 1;
+                    }
+                }
+                out.push_str(&sql[start..i]);
             }
-            out.push_str(&sql[start..i]);
         }
     }
     out
@@ -347,17 +475,110 @@ mod tests {
     }
 
     #[test]
-    fn splice_11_context_free_inside_string_literal() {
-        // Raw `@dir` inside a string literal IS spliced (context-free BY DESIGN).
+    fn splice_11_string_literal_left_literal() {
+        // billz-7c9: a `@name` inside a string literal is NOT spliced — SQL Server
+        // itself does not substitute `@params` inside string literals, so the lexer
+        // leaves them alone (both raw keys AND bind names).
         assert_eq!(
             splice_raw_text("WHERE note = '@dir'", &[("@dir", "x")]),
-            "WHERE note = 'x'"
+            "WHERE note = '@dir'"
         );
-        // A BIND name (not in `raw`) is left literal — composes correctly, since
-        // SQL Server itself does not substitute `@params` inside string literals.
         assert_eq!(
             splice_raw_text("WHERE note='@cust'", &[]),
             "WHERE note='@cust'"
+        );
+    }
+
+    // ---- billz-7c9 lexer-safe corpus (mirrors paramBarLogic.test.ts scanParamNames) ----
+
+    #[test]
+    fn splice_12_n_prefixed_string_left_literal() {
+        // #3: N'…' unicode string — the `N` is ordinary text, the `'` opens the string.
+        assert_eq!(
+            splice_raw_text("WHERE n = N'@dir'", &[("@dir", "x")]),
+            "WHERE n = N'@dir'"
+        );
+    }
+
+    #[test]
+    fn splice_13_doubled_quote_escape_keeps_one_string() {
+        // #4: '@a''@b' is a single string (the '' is an escaped quote); @c splices.
+        assert_eq!(
+            splice_raw_text(
+                "SELECT '@a''@b', @c",
+                &[("@a", "1"), ("@b", "2"), ("@c", "Z")]
+            ),
+            "SELECT '@a''@b', Z"
+        );
+    }
+
+    #[test]
+    fn splice_14_line_comment_left_literal() {
+        // #5/#13: a `--` comment runs to end of line; @dir on the next line splices,
+        // and the same name echoed in the comment stays literal.
+        assert_eq!(
+            splice_raw_text("SELECT 1 -- @x\nWHERE y=@z", &[("@x", "1"), ("@z", "9")]),
+            "SELECT 1 -- @x\nWHERE y=9"
+        );
+        assert_eq!(
+            splice_raw_text("ORDER BY @dir -- keep @dir", &[("@dir", "name DESC")]),
+            "ORDER BY name DESC -- keep @dir"
+        );
+    }
+
+    #[test]
+    fn splice_15_block_comment_nested_left_literal() {
+        // #6: simple block comment.
+        assert_eq!(
+            splice_raw_text("SELECT /* @a */ @b", &[("@a", "1"), ("@b", "2")]),
+            "SELECT /* @a */ 2"
+        );
+        // #7: nested — a single `*/` does not exit the outer comment.
+        assert_eq!(
+            splice_raw_text(
+                "SELECT /* @a /* @b */ @c */ @d",
+                &[("@a", "X"), ("@b", "X"), ("@c", "X"), ("@d", "D")]
+            ),
+            "SELECT /* @a /* @b */ @c */ D"
+        );
+    }
+
+    #[test]
+    fn splice_16_bracketed_identifier_left_literal() {
+        // #8: [@col] is a quoted identifier — not spliced; @real is.
+        assert_eq!(
+            splice_raw_text("SELECT [@col], @real", &[("@col", "C"), ("@real", "R")]),
+            "SELECT [@col], R"
+        );
+        // #9: ]] is an escaped bracket, so the identifier closes at the final `]`.
+        assert_eq!(
+            splice_raw_text("SELECT [we]]ird @x], @y", &[("@x", "1"), ("@y", "2")]),
+            "SELECT [we]]ird @x], 2"
+        );
+    }
+
+    #[test]
+    fn splice_17_the_reason_for_the_backend_fix() {
+        // #14: a REAL raw-text param whose name ALSO appears inside a string literal.
+        // Splices in normal context, stays literal inside the string — the case a
+        // frontend-only fix cannot catch.
+        assert_eq!(
+            splice_raw_text("WHERE note='@dir' ORDER BY @dir", &[("@dir", "c DESC")]),
+            "WHERE note='@dir' ORDER BY c DESC"
+        );
+    }
+
+    #[test]
+    fn splice_18_double_quote_and_unterminated_string() {
+        // #15: "@col" quoted identifier skipped; @x splices.
+        assert_eq!(
+            splice_raw_text("SELECT \"@col\", @x", &[("@col", "C"), ("@x", "X")]),
+            "SELECT \"@col\", X"
+        );
+        // #16: an unterminated string does not hang and leaves the tail literal.
+        assert_eq!(
+            splice_raw_text("WHERE a='@x", &[("@x", "y")]),
+            "WHERE a='@x"
         );
     }
 
