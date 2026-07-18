@@ -4,6 +4,7 @@
 // the leading '@' (so "benchmark_user" ↔ @benchmark_user). Values resolve into any
 // @name reference; the library always wins over a query input of the same name.
 import type { Param, ResolvedParam, SavedQuery, SqlType } from "./api";
+import { deriveParams } from "./paramBarLogic";
 
 export type Variable = {
   name: string; // identity == token minus '@'; must match /^[A-Za-z_]\w*$/
@@ -82,4 +83,36 @@ export function migrateGlobalParams(global: Record<string, string>): Variable[] 
     out.push({ name, value, sqlType: "nvarchar", note: "" });
   }
   return out;
+}
+
+// Execute-time params. A library-matched @name binds to the VARIABLE's value+type
+// (the library always wins — its own param sqlType is ignored). Every other @name is a
+// query input taking its bar field value + the param's own type. Feeds run_params.
+export function resolveRun(
+  params: Param[],
+  values: Record<string, string>,
+  byName: Map<string, Variable>,
+): ResolvedParam[] {
+  return params.map((p) => {
+    const v = variableFor(p.name, byName);
+    if (v) return { name: p.name, sqlType: v.sqlType, value: v.value };
+    return { name: p.name, sqlType: p.sqlType, value: values[p.name] ?? "" };
+  });
+}
+
+// Persist a saved query's INPUT values back as lastValue (per-query memory). Only
+// DECLARED params (from the stored SQL) are remembered — edited-in @params are scratch
+// (mirrors the old persistDeclared "stable template" rule). Library-matched params are
+// skipped: the library owns their value, not the query.
+export function persistInputs(
+  stored: SavedQuery,
+  values: Record<string, string>,
+  byName: Map<string, Variable>,
+): Param[] {
+  const declared = deriveParams(stored.sql, stored.params);
+  return declared.map((p) => {
+    if (variableFor(p.name, byName)) return p; // library owns it
+    if (!(p.name in values)) return p; // not surfaced this run
+    return { ...p, lastValue: values[p.name] ?? "" };
+  });
 }

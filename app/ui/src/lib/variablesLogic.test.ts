@@ -74,3 +74,44 @@ describe("migrateGlobalParams", () => {
     ]);
   });
 });
+
+import type { Param, SavedQuery } from "./api";
+import { persistInputs, resolveRun } from "./variablesLogic";
+
+const param = (name: string, sqlType: Param["sqlType"] = null, lastValue: string | null = null): Param => ({
+  name, sqlType, lastValue, scope: "local",
+});
+
+describe("resolveRun", () => {
+  test("library hit binds to the VARIABLE's value+type; miss uses the input field + param type", () => {
+    const byName = indexByName([{ name: "vendor", value: "ACME", sqlType: "nvarchar", note: "" }]);
+    const params = [param("@vendor", "int"), param("@user_id", "int")]; // @vendor's own type is ignored
+    const resolved = resolveRun(params, { "@user_id": "42" }, byName);
+    expect(resolved).toEqual([
+      { name: "@vendor", sqlType: "nvarchar", value: "ACME" },
+      { name: "@user_id", sqlType: "int", value: "42" },
+    ]);
+  });
+
+  test("a missing input value → empty string", () => {
+    const resolved = resolveRun([param("@x", "int")], {}, new Map());
+    expect(resolved).toEqual([{ name: "@x", sqlType: "int", value: "" }]);
+  });
+});
+
+describe("persistInputs", () => {
+  const stored: SavedQuery = {
+    id: "q1", name: "q", targetDatabase: null,
+    sql: "select * from t where a=@user_id and v=@vendor",
+    params: [param("@user_id", "int"), param("@vendor", "nvarchar")],
+  };
+
+  test("writes lastValue for declared inputs, skips library-owned names, ignores edited-in params", () => {
+    const byName = indexByName([{ name: "vendor", value: "ACME", sqlType: "nvarchar", note: "" }]);
+    const out = persistInputs(stored, { "@user_id": "42", "@vendor": "typed-but-ignored", "@scratch": "9" }, byName);
+    expect(out).toEqual([
+      { name: "@user_id", sqlType: "int", lastValue: "42", scope: "local" },
+      { name: "@vendor", sqlType: "nvarchar", lastValue: null, scope: "local" }, // library owns it → untouched
+    ]);
+  });
+});
