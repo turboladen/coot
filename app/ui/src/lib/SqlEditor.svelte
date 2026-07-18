@@ -93,6 +93,15 @@
   export function focus(): void {
     view?.focus();
   }
+  // Insert text at the cursor (replacing any selection) and place the caret after it,
+  // then focus. Used by the Variables panel's click-to-insert. The updateListener
+  // fires onchange, so the tab's stored content stays in sync (no manual value write).
+  export function insertAtCursor(text: string): void {
+    if (!view) return;
+    const { from, to } = view.state.selection.main;
+    view.dispatch({ changes: { from, to, insert: text }, selection: { anchor: from + text.length } });
+    view.focus();
+  }
 </script>
 
 <div class="sql-editor" bind:this={host}></div>
