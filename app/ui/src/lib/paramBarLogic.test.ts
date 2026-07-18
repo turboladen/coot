@@ -10,6 +10,7 @@ import {
   queriesReferencingTable,
   resolve,
   routeWrites,
+  scanParamNames,
   toResolvedParams,
   valueSource,
 } from "./paramBarLogic";
@@ -44,6 +45,62 @@ describe("deriveParams", () => {
 
   test("skips @@globals (doubled @), keeps real @params", () => {
     expect(deriveParams("SELECT @@ROWCOUNT, @x", []).map((p) => p.name)).toEqual(["@x"]);
+  });
+
+  test("billz-7c9: a @word inside a string literal is NOT a phantom param", () => {
+    expect(deriveParams("SELECT * FROM u WHERE email = 'sales@vendor.com'", [])).toEqual([]);
+  });
+});
+
+describe("scanParamNames — lexer-safe (billz-7c9 corpus)", () => {
+  // The `P` column of the shared corpus mirrored in core/src/param_bind.rs splice tests.
+  test("#1 plain params, first-appearance order", () => {
+    expect(scanParamNames("WHERE a=@b AND c=@a")).toEqual(["@b", "@a"]);
+  });
+  test("#2 single-quote string literal is skipped", () => {
+    expect(scanParamNames("WHERE note = '@dir'")).toEqual([]);
+  });
+  test("#3 N'...' unicode string literal is skipped", () => {
+    expect(scanParamNames("WHERE n = N'@dir'")).toEqual([]);
+  });
+  test("#4 '' escape keeps one string; trailing param seen", () => {
+    expect(scanParamNames("SELECT '@a''@b', @c")).toEqual(["@c"]);
+  });
+  test("#5 -- line comment skipped; next line param seen", () => {
+    expect(scanParamNames("SELECT 1 -- @x\nWHERE y=@z")).toEqual(["@z"]);
+  });
+  test("#6 /* */ block comment skipped", () => {
+    expect(scanParamNames("SELECT /* @a */ @b")).toEqual(["@b"]);
+  });
+  test("#7 nested block comment — single close does not exit", () => {
+    expect(scanParamNames("SELECT /* @a /* @b */ @c */ @d")).toEqual(["@d"]);
+  });
+  test("#8 bracketed identifier skipped", () => {
+    expect(scanParamNames("SELECT [@col], @real")).toEqual(["@real"]);
+  });
+  test("#9 ]] escaped bracket keeps identifier closed correctly", () => {
+    expect(scanParamNames("SELECT [we]]ird @x], @y")).toEqual(["@y"]);
+  });
+  test("#10 @@ system var skipped", () => {
+    expect(scanParamNames("SELECT @@ROWCOUNT, @x")).toEqual(["@x"]);
+  });
+  test("#11 param immediately after a string closes", () => {
+    expect(scanParamNames("WHERE a='x'@y")).toEqual(["@y"]);
+  });
+  test("#12 lone @ and @, are not params", () => {
+    expect(scanParamNames("SELECT @ , @, @dir")).toEqual(["@dir"]);
+  });
+  test("#13 param in normal context, same name echoed in a comment", () => {
+    expect(scanParamNames("ORDER BY @dir -- keep @dir")).toEqual(["@dir"]);
+  });
+  test("#14 real param also appearing inside a string literal (deduped to one)", () => {
+    expect(scanParamNames("WHERE note='@dir' ORDER BY @dir")).toEqual(["@dir"]);
+  });
+  test("#15 double-quoted identifier skipped", () => {
+    expect(scanParamNames('SELECT "@col", @x')).toEqual(["@x"]);
+  });
+  test("#16 unterminated string does not hang and yields no param", () => {
+    expect(scanParamNames("WHERE a='@x")).toEqual([]);
   });
 });
 

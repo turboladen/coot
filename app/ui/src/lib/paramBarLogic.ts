@@ -2,33 +2,110 @@
 // via paramBarLogic.test.ts; ParamBar.svelte / App.svelte are the runes wrappers.
 import type { ColumnInfo, Param, ResolvedParam, SavedQuery, SqlType } from "./api";
 
-// Matches T-SQL param placeholders. `(?<!@)` skips server globals like
-// @@ROWCOUNT / @@IDENTITY (the doubled @). NOTE (billz-u2t / PLAN §6): a regex
-// still matches @x inside a string literal/comment, or a DECLARE'd @local → a
-// harmless extra field (the actual substitution is still d28.2's typed bind /
-// flagged raw-text splice). A proper T-SQL lexer would tighten this; deferred
-// with u2t.
-const PARAM_RE = /(?<!@)@[A-Za-z_]\w*/g;
-
-// Detects a literal @table reference (d28.7 scoped-run). `(?<!@)` skips @@table;
-// `(?![A-Za-z0-9_])` is the word boundary so @table2 / @tablename don't count.
-// Case-sensitive: @table is the convention openScopedQuery fills.
-const TABLE_PARAM_RE = /(?<!@)@table(?![A-Za-z0-9_])/;
+// Ordered, first-appearance, deduped @param names found in NORMAL SQL context only
+// (billz-7c9). A small T-SQL lexer skips text where an @word is NOT a parameter:
+// single-quote strings (incl. N'…' and the '' escape), [..] / "..." quoted
+// identifiers (]] / "" escapes), -- line comments, /* */ block comments (T-SQL
+// NESTS these), and @@ system vars. A lone @ / @ before a non-ident is not a param.
+//
+// This is the SHARED lexical contract with core/src/param_bind.rs::splice_raw_text —
+// the two implementations are kept in lockstep by a mirrored edge-case corpus (the
+// "billz-7c9 corpus" in both test files). NOT handled (deferred, semantic not
+// lexical): a DECLARE'd @local still surfaces as a harmless unset param field.
+export function scanParamNames(sql: string): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const isStart = (c: string) => /[A-Za-z_]/.test(c);
+  const isCont = (c: string) => /[A-Za-z0-9_]/.test(c);
+  // n=normal s=single-quote br=bracket dq=double-quote lc=line-comment bc=block-comment
+  let state: "n" | "s" | "br" | "dq" | "lc" | "bc" = "n";
+  let depth = 0; // block-comment nesting depth (only meaningful in "bc")
+  let i = 0;
+  const n = sql.length;
+  while (i < n) {
+    const c = sql[i];
+    const d = sql[i + 1];
+    switch (state) {
+      case "n":
+        if (c === "'") {
+          state = "s";
+          i++;
+        } else if (c === "[") {
+          state = "br";
+          i++;
+        } else if (c === '"') {
+          state = "dq";
+          i++;
+        } else if (c === "-" && d === "-") {
+          state = "lc";
+          i += 2;
+        } else if (c === "/" && d === "*") {
+          state = "bc";
+          depth = 1;
+          i += 2;
+        } else if (c === "@" && d === "@") {
+          i += 2; // @@ROWCOUNT etc. — a system var, never a param
+        } else if (c === "@" && d !== undefined && isStart(d)) {
+          let j = i + 1;
+          while (j < n && isCont(sql[j])) j++;
+          const name = sql.slice(i, j);
+          if (!seen.has(name)) {
+            seen.add(name);
+            out.push(name);
+          }
+          i = j;
+        } else {
+          i++;
+        }
+        break;
+      case "s": // '…' — the '' doubled-quote is an escape, not a close
+        if (c === "'" && d === "'") i += 2;
+        else if (c === "'") {
+          state = "n";
+          i++;
+        } else i++;
+        break;
+      case "br": // […] — ]] is an escaped bracket
+        if (c === "]" && d === "]") i += 2;
+        else if (c === "]") {
+          state = "n";
+          i++;
+        } else i++;
+        break;
+      case "dq": // "…" — skipped whether QUOTED_IDENTIFIER is ON (ident) or OFF (string)
+        if (c === '"' && d === '"') i += 2;
+        else if (c === '"') {
+          state = "n";
+          i++;
+        } else i++;
+        break;
+      case "lc": // -- … to end of line
+        if (c === "\n") state = "n";
+        i++;
+        break;
+      case "bc": // /* … */ with nesting
+        if (c === "/" && d === "*") {
+          depth++;
+          i += 2;
+        } else if (c === "*" && d === "/") {
+          depth--;
+          if (depth === 0) state = "n";
+          i += 2;
+        } else i++;
+        break;
+    }
+  }
+  return out;
+}
 
 // Ordered param list for a query: scan @names in `sql` (dedup, first-appearance
 // order) and merge with `stored` — an existing name keeps its sqlType/scope/
 // lastValue; a new name defaults to raw-text (null) / local / unset.
 export function deriveParams(sql: string, stored: Param[]): Param[] {
   const byName = new Map(stored.map((p) => [p.name, p]));
-  const seen = new Set<string>();
-  const out: Param[] = [];
-  for (const m of sql.matchAll(PARAM_RE)) {
-    const name = m[0];
-    if (seen.has(name)) continue;
-    seen.add(name);
-    out.push(byName.get(name) ?? { name, sqlType: null, lastValue: null, scope: "local" });
-  }
-  return out;
+  return scanParamNames(sql).map(
+    (name) => byName.get(name) ?? { name, sqlType: null, lastValue: null, scope: "local" },
+  );
 }
 
 // Execute-time params from the derived params + the bar's current field values
@@ -155,9 +232,11 @@ export function catalogTypeToSqlType(dataType: string): SqlType | null {
 }
 
 // Saved queries whose SQL references the literal @table param (the ones a table
-// right-click can scope, d28.7). See TABLE_PARAM_RE for the matching rules.
+// right-click can scope, d28.7). Uses scanParamNames so @table inside a string/
+// comment doesn't count, and @table2 / @tablename / @@table never match (each scans
+// to its own full name). @table is the case-sensitive convention openScopedQuery fills.
 export function queriesReferencingTable(queries: SavedQuery[]): SavedQuery[] {
-  return queries.filter((q) => TABLE_PARAM_RE.test(q.sql));
+  return queries.filter((q) => scanParamNames(q.sql).includes("@table"));
 }
 
 // Auto-type params from a table's columns (d28.7, consuming d28.5's mapping): for
