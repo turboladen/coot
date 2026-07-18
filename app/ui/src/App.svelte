@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, untrack } from "svelte";
-  import { type ConnectionConfig, type DbRunOutcome, type ParamScope, type QueryResult, type SqlType, runFanout, runParams, runSql, setSessionPassword } from "./lib/api";
+  import { type ConnectionConfig, type DbRunOutcome, type QueryResult, type SqlType, runFanout, runParams, runSql, setSessionPassword } from "./lib/api";
   import { SvelteSet } from "svelte/reactivity";
   import ConnectionForm from "./lib/ConnectionForm.svelte";
   import PasswordPrompt from "./lib/PasswordPrompt.svelte";
@@ -16,9 +16,9 @@
   import FanoutStatusBar from "./lib/FanoutStatusBar.svelte";
   import { combineFanoutResults, effectiveFanoutDatabases } from "./lib/fanoutLogic";
   import { type Message, summarize } from "./lib/resultSummary";
-  import { deriveParams, nextParamValues, persistDeclared, resolve, toResolvedParams, valueSource } from "./lib/paramBarLogic";
-  import { clearSessionParam, sessionParams, setSessionParams } from "./lib/sessionParams.svelte";
-  import { clearGlobalParam, globalParams, setGlobalParams } from "./lib/globalParams.svelte";
+  import { deriveParams, nextParamValues } from "./lib/paramBarLogic";
+  import { variables } from "./lib/variables.svelte";
+  import { indexByName, persistInputs, resolveRun, variableFor, type Variable } from "./lib/variablesLogic";
   import { conns, refresh } from "./lib/connections.svelte";
   import { library, refresh as refreshLibrary, save as saveQuery } from "./lib/savedQueries.svelte";
   import { activeContent, flushSave, restore, setActiveContent, setActiveDatabase, setFanout, tabsState } from "./lib/tabs.svelte";
@@ -133,10 +133,20 @@
   const curSavedQuery = $derived(
     curTab?.savedQueryId ? library.list.find((q) => q.id === curTab.savedQueryId) ?? null : null,
   );
-  // Params derived from the tab's live SQL merged with the saved query's declared
-  // params. Empty ⇒ no param bar, plain run_sql path.
-  const curParams = $derived(
-    curSavedQuery ? deriveParams(curTab?.content ?? "", curSavedQuery.params) : [],
+  // Params derived from the tab's live SQL in EVERY tab (V2 — no saved-query gate).
+  // Merged with the linked saved query's declared params when there is one; a scratch
+  // tab starts each param at raw-text/local/unset.
+  const curParams = $derived(deriveParams(curTab?.content ?? "", curSavedQuery?.params ?? []));
+
+  // Library index + the subset of curParams that resolve from a library variable (name
+  // match). libraryHits drives the ParamBar chips and resolveRun's "library wins".
+  const varsByName = $derived(indexByName(variables.list));
+  const libraryHits = $derived(
+    Object.fromEntries(
+      curParams
+        .map((p) => [p.name, variableFor(p.name, varsByName)] as const)
+        .filter((e): e is readonly [string, Variable] => e[1] !== null),
+    ),
   );
 
   // Fan-out (billz-0gh.1.3). The stored selection intersected with the CURRENT
@@ -175,20 +185,6 @@
     });
   }
 
-  // Which tier each param's displayed value resolves from (drives the badge).
-  // Reads the stores reactively so a badge updates live when a store changes.
-  const paramSources = $derived(
-    Object.fromEntries(curParams.map((p) => [p.name, valueSource(p, sessionParams, globalParams)])),
-  );
-
-  // Persist a scope change immediately (a rare, deliberate config choice — avoids
-  // a separate scope state map). Declares a newly-derived param in the process.
-  async function onScopeChange(name: string, scope: ParamScope) {
-    if (!curSavedQuery) return;
-    const params = curParams.map((p) => (p.name === name ? { ...p, scope } : p));
-    await saveQuery({ ...curSavedQuery, params });
-  }
-
   // Persist a type change immediately (mirrors onScopeChange). A typed param
   // routes through d28.2's sp_executesql bind path on the next Run; raw-text
   // (null) splices. Declares a newly-derived param in the process.
@@ -198,36 +194,14 @@
     await saveQuery({ ...curSavedQuery, params });
   }
 
-  // d28.9: clear the SURFACED tier value for a param (the one the inherited badge
-  // shows), then refresh the field to the new resolved value (a lower tier or
-  // empty). Reads the stores AFTER the clear. Chaining clears both tiers; a value
-  // shadowed by a Local value has no badge, so it isn't reachable here (rare).
-  function onClearTier(name: string, tier: "session" | "global") {
-    if (tier === "session") clearSessionParam(name);
-    else clearGlobalParam(name);
-    const param = curParams.find((p) => p.name === name);
-    if (param) paramValues[name] = resolve(param, sessionParams, globalParams) ?? "";
-  }
-
-  // Bar field values, keyed by param name. On a TAB SWITCH rebuild fresh from each
-  // param's resolved value (never bleed one query's values into another). On a
-  // same-tab recompute (an SQL keystroke changes curTab.content → curParams, or the
-  // library loads async after the tab opened) PRESERVE values the user typed but
-  // hasn't run yet, and seed any newly-appeared param from resolve. `valuesTabId`
-  // is effect-local bookkeeping; `untrack` reads state without subscribing (else
-  // writing paramValues below would re-trigger this effect).
   let paramValues = $state<Record<string, string>>({});
   let valuesTabId = "";
   $effect(() => {
     const id = tabsState.activeId; // tab switch → full reset
     const params = curParams; // track: late library load + new @names on edit
-    // Snapshot prior values + the stores via untrack (plain copies — reading the
-    // proxy keys outside untrack would subscribe and re-arm this effect). Session/
-    // Global changes are thus picked up on the next switch/rebuild, not mid-edit.
     const prev = untrack(() => ({ ...paramValues }));
-    const session = untrack(() => ({ ...sessionParams }));
-    const global = untrack(() => ({ ...globalParams }));
-    paramValues = nextParamValues(id !== valuesTabId, params, prev, session, global);
+    // No tier stores anymore — inputs seed from each param's own lastValue (or "").
+    paramValues = nextParamValues(id !== valuesTabId, params, prev, {}, {});
     valuesTabId = id;
   });
 
@@ -306,23 +280,18 @@
         activeTab = combo.canCombine || out[0].results.length > 0 ? 0 : "messages";
         return;
       }
-      // `effectiveDb` (not the raw stored value) so we never USE a DB absent from
-      // the active connection (cwt.9). Param-aware (d28.3): a saved-query tab with
-      // derived @params runs via run_params (bind/splice); everything else keeps
-      // the plain run_sql path (selection/GO-splitting).
+      // Param-aware run (V2). Any tab with derived @params runs via run_params
+      // (bind/splice); everything else keeps the plain run_sql path (selection/GO
+      // splitting). resolveRun binds library names to their variable value+type and
+      // leaves query inputs to their bar field. Saved-query INPUT values persist back
+      // as lastValue (per-query memory); library names are owned by the library.
       let out: QueryResult[];
-      if (curParams.length > 0 && curSavedQuery && curTab) {
-        // Persist values to their scope tiers (d28.4), but ONLY for params declared
-        // in the saved query's STORED sql (d28.8): a saved query is a stable
-        // template, so SQL edits and edited-in @params are scratch — run this
-        // session, remembered nowhere; editing a declared param out is
-        // non-destructive. (Explicit save-back = billz-d28.10.) The RUN below still
-        // uses curParams + curTab.content, so edited-in params execute fine now.
-        const routed = persistDeclared(curSavedQuery, paramValues);
-        await saveQuery({ ...curSavedQuery, params: routed.params });
-        setSessionParams(routed.session);
-        setGlobalParams(routed.global);
-        const resolved = toResolvedParams(curParams, paramValues);
+      if (curParams.length > 0 && curTab) {
+        if (curSavedQuery) {
+          const params = persistInputs(curSavedQuery, paramValues, varsByName);
+          await saveQuery({ ...curSavedQuery, params });
+        }
+        const resolved = resolveRun(curParams, paramValues, varsByName);
         out = await runParams(id, effectiveDb, curTab.content, resolved);
       } else {
         const t = editor?.getRunTarget();
@@ -492,7 +461,7 @@
         <!-- Always a grid child (empty placeholder when no params) so the 5-track
              .workspace template stays aligned (d28.3). -->
         {#if curParams.length > 0}
-          <ParamBar params={curParams} values={paramValues} sources={paramSources} onScopeChange={onScopeChange} onTypeChange={onTypeChange} onClearTier={onClearTier} />
+          <ParamBar params={curParams} values={paramValues} libraryHits={libraryHits} savedTab={!!curSavedQuery} onTypeChange={onTypeChange} />
         {:else}
           <div class="param-bar-slot"></div>
         {/if}
