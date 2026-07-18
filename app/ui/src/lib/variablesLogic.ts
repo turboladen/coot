@@ -30,3 +30,56 @@ export function variableFor(paramName: string, byName: Map<string, Variable>): V
 export function buildInsertToken(v: Variable): string {
   return `@${v.name}`;
 }
+
+const SQL_TYPES: readonly SqlType[] = [
+  "int", "bigint", "nvarchar", "bit", "date", "datetime2", "decimal", "uniqueidentifier", "money",
+];
+
+function asSqlType(v: unknown): SqlType | null {
+  return typeof v === "string" && (SQL_TYPES as readonly string[]).includes(v) ? (v as SqlType) : null;
+}
+
+// Tolerant parse of coot.variables.v1 (a JSON array of Variable). Drops malformed
+// entries (bad/absent name or value); unknown sqlType → null (raw-text); absent note
+// → "". Degrades to [] on null / non-array / bad JSON. Mirrors parseStringMap.
+export function parseVariables(raw: string | null): Variable[] {
+  if (raw === null) return [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(parsed)) return [];
+  const out: Variable[] = [];
+  for (const e of parsed) {
+    if (typeof e !== "object" || e === null) continue;
+    const o = e as Record<string, unknown>;
+    if (typeof o.name !== "string" || !isValidVariableName(o.name)) continue;
+    if (typeof o.value !== "string") continue;
+    out.push({
+      name: o.name,
+      value: o.value,
+      sqlType: asSqlType(o.sqlType),
+      note: typeof o.note === "string" ? o.note : "",
+    });
+  }
+  return out;
+}
+
+export function serializeVariables(vars: Variable[]): string {
+  return JSON.stringify(vars);
+}
+
+// One-time migration: legacy coot.globalParams.v1 (Record<'@name', value>) → Variable[].
+// Strips the leading '@'; defaults to nvarchar (safe bind — the old map stored no type)
+// and an empty note; skips keys that aren't identifier-safe after stripping.
+export function migrateGlobalParams(global: Record<string, string>): Variable[] {
+  const out: Variable[] = [];
+  for (const [key, value] of Object.entries(global)) {
+    const name = key.replace(/^@/, "");
+    if (!isValidVariableName(name)) continue;
+    out.push({ name, value, sqlType: "nvarchar", note: "" });
+  }
+  return out;
+}
