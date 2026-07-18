@@ -7,6 +7,7 @@
   import ConnectionList from "./lib/ConnectionList.svelte";
   import ObjectTree from "./lib/tree/ObjectTree.svelte";
   import SavedQueryLibrary from "./lib/SavedQueryLibrary.svelte";
+  import VariablesLibrary from "./lib/VariablesLibrary.svelte";
   import ParamBar from "./lib/ParamBar.svelte";
   import SqlEditor from "./lib/SqlEditor.svelte";
   import TabBar from "./lib/TabBar.svelte";
@@ -31,6 +32,7 @@
   // Sidebar lower region toggles between the object tree and the saved-query
   // library (d28.6) — the library gets its own full-height home per PLAN §5.
   let sidebarMode = $state<"objects" | "library">("objects");
+  let libraryTab = $state<"queries" | "variables">("queries");
 
   // The form pane: `undefined` = closed, `null` = new, a config = editing it.
   // `{#key}` on the form remounts it when the target changes so fields re-init.
@@ -448,7 +450,19 @@
           <ObjectTree />
         {/key}
       {:else}
-        <SavedQueryLibrary />
+        <div class="lib-subtabs">
+          <button class:active={libraryTab === "queries"} onclick={() => (libraryTab = "queries")}>
+            Saved queries
+          </button>
+          <button class:active={libraryTab === "variables"} onclick={() => (libraryTab = "variables")}>
+            Variables
+          </button>
+        </div>
+        {#if libraryTab === "queries"}
+          <SavedQueryLibrary />
+        {:else}
+          <VariablesLibrary onInsert={(t) => editor?.insertAtCursor(t)} />
+        {/if}
       {/if}
     </div>
   </aside>
@@ -672,6 +686,13 @@
     border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
     font-weight: 600;
   }
+  .lib-subtabs { display: flex; gap: 0.25rem; padding: 0.4rem 0.5rem 0; }
+  .lib-subtabs button {
+    flex: 1; font-size: 0.78rem; padding: 0.2rem 0.3rem; cursor: pointer;
+    border: 1px solid var(--border); border-radius: var(--r-sm);
+    background: var(--raised); color: var(--muted);
+  }
+  .lib-subtabs button.active { color: var(--text); border-color: var(--accent); background: var(--panel); }
   .lower-pane {
     flex: 1;
     min-height: 0;
