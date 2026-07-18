@@ -101,9 +101,12 @@ follow-on bead if it is ever missed.
 
 ### A. Variables panel
 
-A third sidebar mode: **Objects | Library | Variables** (`sidebarMode` gains
-`"variables"`; new `VariablesLibrary.svelte` mirrors `SavedQueryLibrary.svelte`). Each
-row:
+Variables live **inside the existing Library sidebar mode** as a segmented sub-view —
+a `Saved Queries | Variables` toggle at the top of that panel — not a third top-level
+mode and not a modal. Rationale: the user wants saved queries and variables to live
+together, dislikes a third mode and a modal, and the sidebar's broader real-estate
+problem (see below) is out of scope here. New `VariablesLibrary.svelte` mirrors
+`SavedQueryLibrary.svelte` and renders when the sub-view is `Variables`. Each row:
 
 ```
  benchmark_user   12345         [↧ insert] [✎] [🗑]
@@ -128,12 +131,23 @@ Rendered in **every** tab (gate removed). Per `@name`:
 
 ## Safety & bind types
 
-Unchanged engine, reused end-to-end. A variable's `sqlType` defaults by **inference on
-save**: value parses as an integer → `int`, else → `nvarchar`, so it rides the safe
-`sp_executesql` bind path by default. `raw-text` (`null`) stays the explicit,
+Unchanged engine, reused end-to-end. The variable editor exposes the **full existing
+`SqlType` set** — `int, bigint, nvarchar, bit, date, datetime2, decimal,
+uniqueidentifier, money` — the same closed set the param bar and core's
+`param_bind.rs` already support (so e.g. a `uniqueidentifier`/UUID variable binds via
+`Uuid::parse_str`, exactly as a typed param does today).
+
+**No type inference.** A new variable's `sqlType` defaults to `nvarchar` (safe bind) and
+the user picks the type explicitly. `raw-text` (`null`) stays the explicit,
 `raw!`-flagged opt-in for "splice an identifier/snippet" cases (e.g. a table name).
 `param_bind.rs` / `run_params` are untouched — `run_params` already accepts
 `ResolvedParam[] {name, sqlType, value}`; V2 only changes where `value` comes from.
+
+> Note: `uniqueidentifier` is already fully wired (UI dropdown + core bind). The reason
+> a UUID "local variable" felt undefinable before was the absence of a local-variable
+> feature (V3, deferred) plus the saved-query gate this spec removes — not a missing
+> type. `time` / `datetimeoffset` / `varbinary` remain genuinely unsupported; add a
+> bead if ever needed.
 
 ## Migration (additive, rollback-safe)
 
@@ -154,15 +168,17 @@ save**: value parses as an integer → `int`, else → `nvarchar`, so it rides t
   inference, migration mapping, library-vs-input classification, resolution.
 - **new** `app/ui/src/lib/variablesLogic.test.ts` — unit tests (the
   `paramBarLogic.test.ts` pattern).
-- **new** `app/ui/src/lib/VariablesLibrary.svelte` — the panel.
+- **new** `app/ui/src/lib/VariablesLibrary.svelte` — the panel (rendered inside the
+  Library sidebar mode's `Variables` sub-view).
 - **edit** `app/ui/src/lib/ParamBar.svelte` — chip vs input rendering; drop scope
   `<select>`.
 - **edit** `app/ui/src/lib/paramBarLogic.ts` — resolution/classification against the
   library; retire `resolve`/`valueSource`/`routeWrites` scope-tier logic (or reduce to
   library-vs-input).
 - **edit** `app/ui/src/App.svelte` — remove the `curSavedQuery` gate on `curParams`
-  (derive in every tab); add `"variables"` sidebar mode; wire click-to-insert;
-  build `ResolvedParam[]` from library + query inputs.
+  (derive in every tab); add the `Saved Queries | Variables` sub-view toggle within the
+  Library sidebar mode; wire click-to-insert; build `ResolvedParam[]` from library +
+  query inputs.
 - **retire** `globalParams.svelte.ts` / `sessionParams.svelte.ts` usage (kept only for
   the one-time migration read of `globalParams`).
 
@@ -182,3 +198,9 @@ save**: value parses as an integer → `int`, else → `nvarchar`, so it rides t
 4. Per-query override of a library value ("shadow to local for this run"), if missed.
 5. Cleanup — delete the vestigial `Param.scope` field and `sessionParams` module once
    migration has settled.
+6. **Sidebar rework** — the left sidebar is crowded: `ConnectionList` grows with each
+   added database and pushes the `Objects | Library` toggle far down. Rethink the
+   sidebar's layout / space allocation. Independent of V2; V2 nests Variables under the
+   existing Library mode precisely to avoid depending on this.
+7. Additional `SqlType`s (`time` / `datetimeoffset` / `varbinary`) if a real need
+   arises — currently unsupported by core `param_bind.rs`.
