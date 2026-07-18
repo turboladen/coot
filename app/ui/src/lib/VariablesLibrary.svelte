@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { SqlType } from "./api";
+  import { SQL_TYPES, type SqlType } from "./api";
   import { Plus, Search } from "./icons";
   import { removeVariable, upsertVariable, variables } from "./variables.svelte";
   import { buildInsertToken, isValidVariableName, type Variable } from "./variablesLogic";
@@ -10,9 +10,7 @@
   // to update, like renaming a column).
   let { onInsert }: { onInsert: (token: string) => void } = $props();
 
-  const TYPES: (SqlType | "")[] = [
-    "", "int", "bigint", "nvarchar", "bit", "date", "datetime2", "decimal", "uniqueidentifier", "money",
-  ];
+  const TYPES: (SqlType | "")[] = ["", ...SQL_TYPES];
 
   // Editing state. `editingName` is "" while adding a brand-new variable; otherwise the
   // name of the row being edited (the original, so we can delete-then-upsert on rename).
@@ -68,7 +66,11 @@
   }
 
   function onDelete(v: Variable) {
-    if (confirm(`Delete variable "@${v.name}"?`)) removeVariable(v.name);
+    if (!confirm(`Delete variable "@${v.name}"?`)) return;
+    removeVariable(v.name);
+    // If the deleted row's own edit form was open, close it — otherwise a stale
+    // Save afterward would silently re-create the variable the user just deleted.
+    if (editingName === v.name) cancel();
   }
 </script>
 

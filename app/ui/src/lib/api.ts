@@ -81,6 +81,13 @@ export type SqlType =
   | "uniqueidentifier"
   | "money";
 
+// The full SqlType set as a value, in the same order as the type union above — the
+// single source for every bind-type <select>/validator (ParamBar, VariablesLibrary,
+// variablesLogic's asSqlType) so the three don't drift out of sync with each other.
+export const SQL_TYPES: readonly SqlType[] = [
+  "int", "bigint", "nvarchar", "bit", "date", "datetime2", "decimal", "uniqueidentifier", "money",
+];
+
 export type ParamScope = "global" | "session" | "local";
 
 export type Param = {

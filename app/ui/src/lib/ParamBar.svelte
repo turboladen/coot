@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { Param, SqlType } from "./api";
+  import { SQL_TYPES, type Param, type SqlType } from "./api";
   import type { Variable } from "./variablesLogic";
 
   // Reframed param bar (V2). Each derived @name is EITHER a library hit (resolved from
@@ -24,12 +24,17 @@
 
 <div class="parambar">
   {#each params as p (p.name)}
-    {#if libraryHits[p.name]}
+    {#if Object.hasOwn(libraryHits, p.name)}
+      <!-- Object.hasOwn (not truthiness) guards against a param literally named e.g.
+           @constructor/@toString reading as a false hit via Object.prototype. -->
       <span class="param lib" title="Bound from the Variables Library (@{libraryHits[p.name].name})">
         <span class="pname">{p.name}</span>
         <span class="arrow">→</span>
         <span class="libval">{libraryHits[p.name].value}</span>
         <span class="badge">LIB</span>
+        {#if !libraryHits[p.name].sqlType}
+          <span class="chip raw" title="raw-text — spliced literally into the SQL (injectable)">raw!</span>
+        {/if}
       </span>
     {:else}
       <label class="param">
@@ -47,15 +52,9 @@
             title="Bind type — raw-text is spliced literally (injectable); a typed value binds via sp_executesql"
           >
             <option value="">raw-text</option>
-            <option value="int">int</option>
-            <option value="bigint">bigint</option>
-            <option value="nvarchar">nvarchar</option>
-            <option value="bit">bit</option>
-            <option value="date">date</option>
-            <option value="datetime2">datetime2</option>
-            <option value="decimal">decimal</option>
-            <option value="uniqueidentifier">uniqueidentifier</option>
-            <option value="money">money</option>
+            {#each SQL_TYPES as t (t)}
+              <option value={t}>{t}</option>
+            {/each}
           </select>
         {/if}
         {#if !p.sqlType || !savedTab}
