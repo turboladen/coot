@@ -8,6 +8,7 @@
 // wrapper + the localStorage adapter + the debounce. These tabs are ephemeral
 // SCRATCH editors (distinct from the Phase 3 saved-query library). Results are
 // never persisted — only the SQL text, the tab set, and the active id.
+import { conns } from "./connections.svelte";
 import { deriveTitle, deserialize, pickNeighbourId, type QueryTab, serialize, type TabsState } from "./tabsLogic";
 
 export type { QueryTab } from "./tabsLogic";
@@ -75,6 +76,7 @@ function newQueryTab(
   content: string,
   database: string | null = null,
   savedQueryId: string | null = null,
+  connectionId: string | null = conns.activeId,
 ): QueryTab {
   return {
     id: crypto.randomUUID(),
@@ -82,9 +84,22 @@ function newQueryTab(
     content,
     database,
     savedQueryId,
+    // Default a new tab to the currently-active connection (billz-a5y.1); callers
+    // that open from a specific origin (tree/scoped-query) pass it explicitly.
+    connectionId,
     fanout: false,
     fanoutDatabases: [],
   };
+}
+
+// Keep the mirror invariant `conns.activeId === activeTab.connectionId` true after
+// any op that changes which tab is active (billz-a5y.1). Imperative (NOT a
+// $effect — a `.svelte.ts` module has no effect root, and an effect here would
+// risk a sync loop). All sidebar-facing readers keep reading `conns.activeId`
+// unchanged; it now always equals the active tab's connection.
+function syncActiveConnection(): void {
+  const tab = tabsState.tabs.find((t) => t.id === tabsState.activeId);
+  conns.activeId = tab?.connectionId ?? null;
 }
 
 function seedDefault(): void {
@@ -105,6 +120,7 @@ export function newTab(): void {
   const tab = newQueryTab("");
   tabsState.tabs.push(tab);
   tabsState.activeId = tab.id;
+  syncActiveConnection(); // tab defaults to conns.activeId → a no-op, but defensive
   flushSave();
 }
 
@@ -116,10 +132,15 @@ export function newTabWithContent(
   content: string,
   database: string | null = null,
   savedQueryId: string | null = null,
+  connectionId: string | null = conns.activeId,
 ): void {
-  const tab = newQueryTab(content, database, savedQueryId);
+  const tab = newQueryTab(content, database, savedQueryId, connectionId);
   tabsState.tabs.push(tab);
   tabsState.activeId = tab.id;
+  // Load-bearing when a caller passes an explicit connectionId (tree double-click /
+  // scoped-open stamp the origin connection): the new active tab may differ from
+  // the old active connection, so the mirror must follow it (billz-a5y.1).
+  syncActiveConnection();
   flushSave();
 }
 
@@ -130,6 +151,21 @@ export function setActiveDatabase(database: string | null): void {
   const tab = tabsState.tabs.find((t) => t.id === tabsState.activeId);
   if (!tab) return;
   tab.database = database;
+  flushSave();
+}
+
+// Point the active tab at connection `id` and mirror it to `conns.activeId`
+// (billz-a5y.1). The sidebar's Select button routes here (via ConnectionList's
+// `onselect` prop) instead of the old global `select()`, so choosing a connection
+// retargets the ACTIVE tab — the deliberate .1 bridge (browse-Y-while-A-stays-on-X
+// arrives later). The tab's stored `database` is left untouched: App's effectiveDb
+// re-validates it against the new connection's databases (resolving to the default
+// if absent, and restoring the selection if you switch back). Structural → flushSave.
+export function setActiveConnection(id: string): void {
+  const tab = tabsState.tabs.find((t) => t.id === tabsState.activeId);
+  if (!tab) return;
+  tab.connectionId = id;
+  conns.activeId = id;
   flushSave();
 }
 
@@ -147,8 +183,12 @@ export function setFanout(fanout: boolean, databases: string[]): void {
 }
 
 export function selectTab(id: string): void {
-  if (tabsState.activeId === id) return;
+  if (tabsState.activeId === id) return; // same tab → activeId unchanged → mirror stays consistent
   tabsState.activeId = id;
+  // The newly-active tab may carry a different connection than the old one — the
+  // mirror MUST follow it, else the sidebar tree/DB-picker render the previous
+  // tab's connection under this one (billz-a5y.1's core wrong-server desync).
+  syncActiveConnection();
   flushSave();
 }
 
@@ -164,6 +204,9 @@ export function closeTab(id: string): void {
   } else if (tabsState.activeId === id) {
     tabsState.activeId = neighbour ?? tabsState.tabs[0].id;
   }
+  // The survivor (neighbour or reseeded tab) may carry a different connection than
+  // the closed one → re-mirror (billz-a5y.1).
+  syncActiveConnection();
   flushSave();
 }
 
@@ -186,4 +229,8 @@ export function restore(): void {
   } else {
     seedDefault();
   }
+  // Seed the mirror from whichever branch's active tab (billz-a5y.1). Legacy blobs
+  // backfill connectionId to null → conns.activeId starts null, matching today's
+  // no-persisted-active-connection behavior (the list isn't loaded yet either).
+  syncActiveConnection();
 }

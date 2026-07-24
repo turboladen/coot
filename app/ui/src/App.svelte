@@ -20,7 +20,7 @@
   import { clearGlobalParam, globalParams, setGlobalParams } from "./lib/globalParams.svelte";
   import { conns, refresh } from "./lib/connections.svelte";
   import { library, refresh as refreshLibrary, save as saveQuery } from "./lib/savedQueries.svelte";
-  import { activeContent, flushSave, restore, setActiveContent, setActiveDatabase, setFanout, tabsState } from "./lib/tabs.svelte";
+  import { activeContent, flushSave, restore, setActiveConnection, setActiveContent, setActiveDatabase, setFanout, tabsState } from "./lib/tabs.svelte";
   import { isTabDirty } from "./lib/tabsLogic";
   import { treeRefresh } from "./lib/tree/refresh.svelte";
   import { dbStore, load as loadDatabases } from "./lib/databases.svelte";
@@ -107,7 +107,12 @@
     // the DB. billz-zmw: but it must still load `null` to CLEAR the shared dbStore
     // — early-returning here leaves the PREVIOUS connection's databases showing
     // under the locked one (stale tree/picker → silent wrong-target risk).
-    loadDatabases(databaseLoadTarget(conns.activeId, !!lockedConn));
+    // billz-a5y.1: `conns.activeId` now mirrors the active tab's connection, which
+    // at cold start is set from a persisted tab BEFORE this list loads (and can be
+    // a dangling id after a delete). Gate on presence so an absent connection loads
+    // `null` (clear) instead of firing a premature list_databases.
+    const activeConn = conns.list.find((c) => c.id === conns.activeId);
+    loadDatabases(databaseLoadTarget(conns.activeId, !!lockedConn, !!activeConn));
   });
 
   // The active tab's stored target DB (null = connection default). Derived so the
@@ -253,8 +258,11 @@
 
   async function run() {
     if (running) return;
-    const id = conns.activeId;
-    if (!id) {
+    // billz-a5y.1: run against the ACTIVE TAB's own connection, not the global
+    // active. Nudge when it's unset (empty state) OR dangling (its connection was
+    // deleted) — both mean there's no valid server to target.
+    const id = curTab?.connectionId ?? null;
+    if (!id || !conns.list.some((c) => c.id === id)) {
       // Route the "pick a connection" nudge through the one output surface too,
       // and clear stale Result tabs from a prior run (implementer note A).
       results = null;
@@ -428,7 +436,7 @@
         ><Moon size={14} /></button>
       </div>
     </div>
-    <ConnectionList lockedIds={lockedIds} onnew={openNew} onedit={openEdit} />
+    <ConnectionList lockedIds={lockedIds} onnew={openNew} onedit={openEdit} onselect={setActiveConnection} />
     <!-- Segmented toggle: the lower region shows the object tree OR the saved-query
          library (d28.6). Objects need a connection; the library is independent. -->
     <div class="mode-toggle">
@@ -518,7 +526,7 @@
               class="db-picker"
               title="Target database — the runner issues USE [db] before your batch"
               value={effectiveDb ?? ""}
-              disabled={!conns.activeId}
+              disabled={!curTab?.connectionId || !conns.list.some((c) => c.id === curTab.connectionId)}
               onchange={(e) => setActiveDatabase(e.currentTarget.value || null)}
             >
               <option value="">(default database)</option>

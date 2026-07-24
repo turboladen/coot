@@ -1,19 +1,23 @@
 <script lang="ts">
   import type { ConnectionConfig } from "./api";
-  import { conns, remove, select } from "./connections.svelte";
+  import { conns, remove } from "./connections.svelte";
   import { Check } from "./icons";
 
   // The parent owns the form; the list just signals New/Edit up. `lockedIds` is
   // App's session-lock state (xhv.2) — surfaced here as a per-row status dot;
-  // default empty so the component still stands alone (e.g. in tests).
+  // default empty so the component still stands alone (e.g. in tests). `onselect`
+  // (billz-a5y.1) points the ACTIVE tab at a connection — App wires it to
+  // setActiveConnection (which stamps the tab + mirrors conns.activeId).
   let {
     lockedIds = new Set<string>(),
     onnew,
     onedit,
+    onselect,
   }: {
     lockedIds?: Set<string>;
     onnew: () => void;
     onedit: (cfg: ConnectionConfig) => void;
+    onselect: (id: string) => void;
   } = $props();
 
   async function onDelete(cfg: ConnectionConfig) {
@@ -47,7 +51,7 @@
             <span class="server">{cfg.server}</span>
           </div>
           <div class="actions">
-            <button onclick={() => select(cfg.id)}>Select</button>
+            <button onclick={() => onselect(cfg.id)}>Select</button>
             <button onclick={() => onedit(cfg)}>Edit</button>
             <button onclick={() => onDelete(cfg)}>Delete</button>
           </div>

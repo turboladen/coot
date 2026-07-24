@@ -23,6 +23,7 @@ export async function openScopedQuery(
   const typed = autoTypeParams(derived, columns);
   const params = typed.map((p) => (p.name === "@table" ? { ...p, lastValue: tableRef } : p));
   await saveQuery({ ...query, params });
-  // Target the table's DB (not query.targetDatabase) so @table resolves.
-  newTabWithContent(query.sql, db, query.id);
+  // Target the table's DB (not query.targetDatabase) so @table resolves, and the
+  // originating connection (billz-a5y.1) so the scoped run hits the right server.
+  newTabWithContent(query.sql, db, query.id, connId);
 }
