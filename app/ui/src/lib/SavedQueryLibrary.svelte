@@ -1,36 +1,14 @@
 <script lang="ts">
   import type { SavedQuery } from "./api";
   import { Search } from "./icons";
-  import { library, remove, save } from "./savedQueries.svelte";
-  import { filterQueries, promoteToSavedQuery } from "./savedQueriesLogic";
-  import { activeContent, newTabWithContent } from "./tabs.svelte";
-  import { deriveTitle } from "./tabsLogic";
+  import { library, remove } from "./savedQueries.svelte";
+  import { filterQueries } from "./savedQueriesLogic";
+  import { newTabWithContent } from "./tabs.svelte";
 
   // Search is component-local $state (avoids the cross-module $derived caveat noted
   // in tabs.svelte.ts): the filtered view derives from it + the shared library list.
   let search = $state("");
   const filtered = $derived(filterQueries(library.list, search));
-
-  // Promote-current-tab: the inline name row is revealed by the button, pre-filled
-  // with the active tab's derived title (mirrors ConnectionForm's field pattern —
-  // window.prompt is unreliable in the Tauri v2 WKWebView).
-  let promoting = $state(false);
-  let name = $state("");
-
-  function startPromote() {
-    name = deriveTitle(activeContent());
-    promoting = true;
-  }
-  function cancelPromote() {
-    promoting = false;
-  }
-  async function confirmPromote() {
-    const sql = activeContent();
-    // Guard: nothing to promote (empty SQL) or no name.
-    if (sql.trim() === "" || name.trim() === "") return;
-    await save(promoteToSavedQuery(crypto.randomUUID(), name, sql, null));
-    promoting = false;
-  }
 
   // Open = SQL into a fresh tab LINKED to this saved query (d28.3: savedQueryId
   // drives the param bar). Passes the query's target database too.
@@ -53,19 +31,9 @@
 <div class="list">
   <!-- billz-a5y.8 nit#1: the panel's own header ("Library" in LibraryPanel) is the
        single header now — this component's redundant "Saved queries" h2 is gone.
-       Promote-current-tab is the panel's primary action, given a full-width CTA. -->
-  <button class="promote-btn" onclick={startPromote}>Promote current tab</button>
-
-  {#if promoting}
-    <div class="promote">
-      <input placeholder="Query name" bind:value={name} />
-      <div class="actions">
-        <button onclick={confirmPromote}>Save</button>
-        <button onclick={cancelPromote}>Cancel</button>
-      </div>
-    </div>
-  {/if}
-
+       billz-he0: "Promote current tab" is gone too. Saving is a PUSH from the
+       editor toolbar (next to the SQL it saves), so this panel is purely a BROWSER
+       of saved queries — one save path, not two to keep in sync. -->
   <input class="search" placeholder="Search queries" bind:value={search} />
 
   {#if library.list.length === 0}
@@ -93,10 +61,6 @@
 
 <style>
   .list { padding: var(--sp-2); }
-  /* Full-width promote CTA at the body top (billz-a5y.8 nit#1) — inherits the
-     app.css outline-button system; kept secondary (not teal) so it doesn't compete
-     with Run. */
-  .promote-btn { width: 100%; margin-bottom: var(--sp-2); }
   .empty {
     display: flex;
     flex-direction: column;
@@ -114,7 +78,6 @@
   .empty p {
     margin: 0;
   }
-  .promote { display: flex; flex-direction: column; gap: 0.3rem; margin-bottom: 0.5rem; }
   .search { width: 100%; margin-bottom: 0.5rem; box-sizing: border-box; }
   input {
     font-size: 0.85rem;

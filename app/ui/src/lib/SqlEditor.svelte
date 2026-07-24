@@ -15,7 +15,13 @@
     // live source of truth. Not $bindable — edits flow OUT via `onchange`, not a bind.
     onchange, // called on every CM docChange with the new text (App wires it to setActiveContent)
     onrun, // fired by Cmd/Ctrl-Enter while CM holds focus (App wires it to run())
-  }: { value?: string; onchange?: (text: string) => void; onrun?: () => void } = $props();
+    onsave, // fired by Cmd/Ctrl-S (billz-he0); App routes it to save-or-update
+  }: {
+    value?: string;
+    onchange?: (text: string) => void;
+    onrun?: () => void;
+    onsave?: () => void;
+  } = $props();
 
   let host = $state<HTMLDivElement>(); // bind:this on the container div
   let view: EditorView | undefined;
@@ -31,6 +37,10 @@
       // CM has focus (basicSetup doesn't bind Mod-Enter). Returns true to stop
       // further handlers even if `onrun` is unset.
       { key: "Mod-Enter", run: () => { onrun?.(); return true; }, preventDefault: true },
+      // Cmd/Ctrl-S saves to the library (billz-he0). preventDefault matters here:
+      // nothing else in the app binds Mod-s (no Tauri menu, no accelerators), so
+      // without it the webview's own "save page" default is what would fire.
+      { key: "Mod-s", run: () => { onsave?.(); return true; }, preventDefault: true },
     ]),
     basicSetup, // line numbers, history, brackets, default keymap, highlighting, autocomplete
     sql({ dialect: MSSQL }), // T-SQL keywords + syntax highlighting
