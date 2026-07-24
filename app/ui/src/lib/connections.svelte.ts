@@ -1,6 +1,8 @@
 // UI state for the connection manager (Svelte 5 runes module). The single source
-// of truth for the connection list + which one is active. Mutate the exported
-// `$state` object's fields — never reassign the export.
+// of truth for the connection LIST. Since billz-a5y.1, `activeId` is a MIRROR of
+// the active tab's own `connectionId` — the tab owns which connection is active;
+// tabs.svelte.ts keeps `activeId` in sync (syncActiveConnection/setActiveConnection).
+// Mutate the exported `$state` object's fields — never reassign the export.
 import {
   type ConnectionConfig,
   deleteConnection,
@@ -26,8 +28,4 @@ export async function remove(id: string) {
   await deleteConnection(id);
   if (conns.activeId === id) conns.activeId = null;
   await refresh();
-}
-
-export function select(id: string) {
-  conns.activeId = id;
 }

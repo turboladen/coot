@@ -17,6 +17,11 @@ export type QueryTab = {
   title: string;
   content: string;
   database: string | null;
+  // The connection this tab targets (billz-a5y.1). null = no connection → the
+  // empty state (Run nudges "Select a connection first."). Each tab owns its own,
+  // so one tab can run against server X while another targets server Y — run() and
+  // the toolbar read THIS, not the global active connection (PLAN §4/§5).
+  connectionId: string | null;
   // The saved query this tab was opened from (d28.3) — drives the param bar.
   // null = a plain scratch tab.
   savedQueryId: string | null;
@@ -114,12 +119,20 @@ export function deserialize(json: string | null): TabsState | null {
       const fanoutDatabases = Array.isArray(raw.fanoutDatabases)
         ? (raw.fanoutDatabases.filter((x): x is string => typeof x === "string"))
         : [];
+      // `connectionId` is read-tolerant like `database` above (billz-a5y.1): a
+      // pre-a5y.1 blob has no key, and a garbled value must default rather than
+      // poison the whole set. Anything that isn't a non-empty string becomes null
+      // (= no connection → empty state); an empty string can't smuggle a dead id.
+      const connectionId = typeof raw.connectionId === "string" && raw.connectionId !== ""
+        ? raw.connectionId
+        : null;
       tabs.push({
         id: raw.id as string,
         title: raw.title as string,
         content: raw.content as string,
         database,
         savedQueryId,
+        connectionId,
         fanout,
         fanoutDatabases,
       });

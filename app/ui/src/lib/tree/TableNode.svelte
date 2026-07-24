@@ -41,9 +41,11 @@
   }
   // rqb.6: open a new tab pre-seeded with a 3-part SELECT TOP 1000 (not auto-run).
   // Pass `db` as the tab's target so the picker (cwt.9) shows the table's DB and
-  // any follow-up 2-part query the user types resolves against it.
+  // any follow-up 2-part query the user types resolves against it. Pass this node's
+  // `id` as the tab's connection (billz-a5y.1) so the new tab runs against the tree's
+  // connection even if a different tab was active when it was opened.
   function openSelect() {
-    newTabWithContent(selectTop1000(db, table.schema, table.name), db);
+    newTabWithContent(selectTop1000(db, table.schema, table.name), db, null, id);
   }
 
   // d28.7: right-click → context menu of saved queries that use @table.
