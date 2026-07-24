@@ -22,9 +22,9 @@
   import { library, refresh as refreshLibrary, save as saveQuery } from "./lib/savedQueries.svelte";
   import { activeContent, flushSave, restore, setActiveConnection, setActiveContent, setActiveDatabase, setFanout, tabsState } from "./lib/tabs.svelte";
   import { isTabDirty } from "./lib/tabsLogic";
-  import { treeRefresh } from "./lib/tree/refresh.svelte";
-  import { dbStore, load as loadDatabases } from "./lib/databases.svelte";
-  import { databaseLoadTarget } from "./lib/databasesLogic";
+  import { refreshNonce } from "./lib/tree/refresh.svelte";
+  import { clearDatabases, databasesFor, ensureDatabases } from "./lib/databases.svelte";
+  import { databaseLoadAction } from "./lib/databasesLogic";
   import { setTheme, theme } from "./lib/theme.svelte";
   import { Database, Monitor, Moon, Network, Play, Save, Sun } from "./lib/icons";
 
@@ -71,10 +71,12 @@
   let fanoutResults = $state<DbRunOutcome[] | null>(null);
   let selectedFanoutDb = $state(0);
 
-  // Single trigger for the shared databases store (cwt.10): App is always
-  // mounted, so it owns the load; the tree's root and the DB picker both just
-  // read `dbStore`. Reloads on connection switch and on a schema Refresh
-  // (treeRefresh.nonce); the store drops out-of-order responses.
+  // Single trigger for the per-connection databases store (billz-a5y.2): App is
+  // always mounted, so it owns loading the ACTIVE connection's entry (the tree root
+  // and the DB picker read it via `databasesFor`). This effect persists into the
+  // multi-root sidebar (billz-a5y.3) — the picker needs the active connection's list
+  // even when its tree root isn't expanded; `ensureDatabases` dedupes against a root
+  // that also loaded it. Refresh is self-contained in ObjectTree now (no nonce here).
   // billz-85b: session-only password unlock. `unlocked` = connection ids with a
   // session password set this app-session (same lifetime as the backend session
   // map — both empty on restart). `dismissed` = ids whose prompt the user closed
@@ -102,18 +104,25 @@
   }
 
   $effect(() => {
-    treeRefresh.nonce; // track: a Refresh re-issues the load
     // billz-85b: a locked (session-only, not-yet-unlocked) connection must not hit
-    // the DB. billz-zmw: but it must still load `null` to CLEAR the shared dbStore
-    // — early-returning here leaves the PREVIOUS connection's databases showing
-    // under the locked one (stale tree/picker → silent wrong-target risk).
-    // billz-a5y.1: `conns.activeId` now mirrors the active tab's connection, which
-    // at cold start is set from a persisted tab BEFORE this list loads (and can be
-    // a dangling id after a delete). Gate on presence so an absent connection loads
-    // `null` (clear) instead of firing a premature list_databases.
+    // the DB. billz-zmw: but it must still CLEAR its own entry to empty — otherwise
+    // the tree/picker keep rendering the PREVIOUS connection's databases under the
+    // locked one (stale → silent wrong-target risk).
+    // billz-a5y.1: `conns.activeId` mirrors the active tab's connection, which at
+    // cold start is set from a persisted tab BEFORE this list loads (and can be a
+    // dangling id after a delete). Gate on presence so an absent connection is a
+    // noop instead of firing a premature list_databases (nothing stale to clear —
+    // its per-connection entry is idle-empty).
     const activeConn = conns.list.find((c) => c.id === conns.activeId);
-    loadDatabases(databaseLoadTarget(conns.activeId, !!lockedConn, !!activeConn));
+    const action = databaseLoadAction(conns.activeId, !!lockedConn, !!activeConn);
+    if (action.kind === "load") ensureDatabases(action.connectionId);
+    else if (action.kind === "clear") clearDatabases(action.connectionId);
   });
+
+  // The active connection's database list (billz-a5y.2). The DB picker, effectiveDb,
+  // and effFanoutDbs all resolve against this ONE per-connection entry, so they can
+  // never diverge — the same role the single shared `dbStore.list` played before.
+  const activeDbs = $derived(databasesFor(conns.activeId).list);
 
   // The active tab's stored target DB (null = connection default). Derived so the
   // picker, which lives outside the per-tab {#key} block, tracks tab switches + edits.
@@ -128,7 +137,7 @@
   // silent USE [db] against the wrong server. The stored value is left untouched,
   // so returning to its own connection restores the selection.
   const effectiveDb = $derived(
-    activeDb !== null && dbStore.list.some((d) => d.name === activeDb) ? activeDb : null,
+    activeDb !== null && activeDbs.some((d) => d.name === activeDb) ? activeDb : null,
   );
 
   // The active editor tab + the saved query it was opened from (d28.3).
@@ -147,7 +156,7 @@
   // DB absent/offline on this connection; a persisted selection can carry stale
   // names). run() sends this, not the raw stored list.
   const effFanoutDbs = $derived(
-    curTab ? effectiveFanoutDatabases(curTab.fanoutDatabases, dbStore.list) : [],
+    curTab ? effectiveFanoutDatabases(curTab.fanoutDatabases, activeDbs) : [],
   );
   // Whether the last fan-out run's ok DBs stack into one grid (identical column
   // shapes, one result set each) + the synthesized combined QueryResult. Null when
@@ -452,8 +461,8 @@
         <!-- Tree for the active connection. The key remounts it on a connection
              switch (every node resets to idle and reloads) and on a Refresh bump
              (rqb.5 — drops the node-local memos so the invalidated core cache re-queries). -->
-        {#key `${conns.activeId}:${treeRefresh.nonce}`}
-          <ObjectTree />
+        {#key `${conns.activeId}:${refreshNonce(conns.activeId)}`}
+          <ObjectTree locked={!!lockedConn} />
         {/key}
       {:else}
         <SavedQueryLibrary />
@@ -520,7 +529,7 @@
             <Network size={14} /> Fan-out
           </button>
           {#if curTab?.fanout}
-            <FanoutPicker selected={effFanoutDbs} onchange={(dbs) => setFanout(true, dbs)} />
+            <FanoutPicker databases={activeDbs} selected={effFanoutDbs} onchange={(dbs) => setFanout(true, dbs)} />
           {:else}
             <select
               class="db-picker"
@@ -530,7 +539,7 @@
               onchange={(e) => setActiveDatabase(e.currentTarget.value || null)}
             >
               <option value="">(default database)</option>
-              {#each dbStore.list as db (db.databaseId)}
+              {#each activeDbs as db (db.databaseId)}
                 <option value={db.name} disabled={db.stateDesc !== "ONLINE"}>
                   {db.name}{db.stateDesc !== "ONLINE" ? ` (${db.stateDesc.toLowerCase()})` : ""}
                 </option>

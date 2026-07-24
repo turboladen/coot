@@ -1,16 +1,19 @@
 <script lang="ts">
-  // billz-0gh.1.3 — multi-select database checklist for a fan-out run, over the
-  // shared dbStore. ONLINE databases are selectable; non-ONLINE are disabled
-  // (mirrors the single-DB picker in App). A glob pattern box bulk-selects
-  // matching ONLINE databases (`ESP_Nomad_*`). Presentational: App owns the
-  // selection (the active tab's `fanoutDatabases`) and persists via `onchange`.
-  import { dbStore } from "./databases.svelte";
+  // billz-0gh.1.3 — multi-select database checklist for a fan-out run. ONLINE
+  // databases are selectable; non-ONLINE are disabled (mirrors the single-DB picker
+  // in App). A glob pattern box bulk-selects matching ONLINE databases
+  // (`ESP_Nomad_*`). Presentational: App owns the selection (the active tab's
+  // `fanoutDatabases`) and persists via `onchange`, and (billz-a5y.2) passes the
+  // active connection's database list in as a prop rather than us reading a store.
+  import type { DatabaseInfo } from "./api";
   import { matchPattern } from "./fanoutLogic";
 
   let {
+    databases,
     selected,
     onchange,
   }: {
+    databases: DatabaseInfo[];
     selected: string[];
     onchange: (databases: string[]) => void;
   } = $props();
@@ -24,16 +27,16 @@
     const next = new Set(selected);
     if (checked) next.add(name);
     else next.delete(name);
-    // Emit in dbStore order so the persisted list is stable/predictable.
-    onchange(dbStore.list.filter((d) => next.has(d.name)).map((d) => d.name));
+    // Emit in list order so the persisted selection is stable/predictable.
+    onchange(databases.filter((d) => next.has(d.name)).map((d) => d.name));
   }
 
   // Union the pattern matches into the current selection (additive — never
   // deselects). matchPattern already restricts to ONLINE names.
   function selectMatching(): void {
     const next = new Set(selected);
-    for (const name of matchPattern(pattern, dbStore.list)) next.add(name);
-    onchange(dbStore.list.filter((d) => next.has(d.name)).map((d) => d.name));
+    for (const name of matchPattern(pattern, databases)) next.add(name);
+    onchange(databases.filter((d) => next.has(d.name)).map((d) => d.name));
   }
 
   function clearAll(): void {
@@ -57,7 +60,7 @@
     <span class="count">{selected.length} selected</span>
   </div>
   <div class="list">
-    {#each dbStore.list as db (db.databaseId)}
+    {#each databases as db (db.databaseId)}
       {@const online = db.stateDesc === "ONLINE"}
       <label class="row" class:disabled={!online}>
         <input
@@ -70,7 +73,7 @@
         {#if !online}<span class="state">({db.stateDesc.toLowerCase()})</span>{/if}
       </label>
     {/each}
-    {#if dbStore.list.length === 0}
+    {#if databases.length === 0}
       <div class="empty">No databases loaded.</div>
     {/if}
   </div>
