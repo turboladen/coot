@@ -5,7 +5,6 @@
   import ConnectionForm from "./lib/ConnectionForm.svelte";
   import PasswordPrompt from "./lib/PasswordPrompt.svelte";
   import ConnectionList from "./lib/ConnectionList.svelte";
-  import ObjectTree from "./lib/tree/ObjectTree.svelte";
   import LibraryPanel from "./lib/LibraryPanel.svelte";
   import ParamBar from "./lib/ParamBar.svelte";
   import SqlEditor from "./lib/SqlEditor.svelte";
@@ -20,9 +19,9 @@
   import { clearGlobalParam, globalParams, setGlobalParams } from "./lib/globalParams.svelte";
   import { conns, refresh } from "./lib/connections.svelte";
   import { library, refresh as refreshLibrary, save as saveQuery } from "./lib/savedQueries.svelte";
-  import { activeContent, flushSave, restore, setActiveConnection, setActiveContent, setActiveDatabase, setFanout, tabsState } from "./lib/tabs.svelte";
+  import { activeContent, flushSave, restore, setActiveContent, setActiveDatabase, setFanout, tabsState } from "./lib/tabs.svelte";
   import { isTabDirty } from "./lib/tabsLogic";
-  import { refreshNonce } from "./lib/tree/refresh.svelte";
+  import { expandRoot } from "./lib/sidebar.svelte";
   import { clearDatabases, databasesFor, ensureDatabases } from "./lib/databases.svelte";
   import { databaseLoadAction } from "./lib/databasesLogic";
   import { setTheme, theme } from "./lib/theme.svelte";
@@ -84,7 +83,6 @@
     const c = conns.list.find((c) => c.id === conns.activeId);
     return c && !c.rememberPassword && !unlocked.has(c.id) ? c : null;
   });
-  const showPrompt = $derived(!!lockedConn && !dismissed.has(lockedConn.id));
 
   // ids that are session-only and not yet unlocked this session → "locked"
   // (xhv.2: surfaces existing unlocked/rememberPassword state as the
@@ -93,9 +91,23 @@
     new Set(conns.list.filter((c) => !c.rememberPassword && !unlocked.has(c.id)).map((c) => c.id)),
   );
 
+  // billz-a5y.5 (B1): a connection the user explicitly chose to unlock from the sidebar
+  // (a locked root's "Enter password" button). Distinct from the ACTIVE-connection
+  // auto-prompt (lockedConn) so you can unlock a NON-active connection you're browsing
+  // WITHOUT retargeting the active tab. The explicit target takes precedence over the
+  // auto-prompt and shows REGARDLESS of `dismissed` (it's an explicit request); the
+  // active auto-prompt still respects `dismissed` (Cancel → 🔒 banner).
+  let unlockTarget = $state<string | null>(null);
+  const targetConn = $derived(unlockTarget ? conns.list.find((c) => c.id === unlockTarget) ?? null : null);
+  const targetLocked = $derived(!!targetConn && lockedIds.has(targetConn.id));
+  const promptConn = $derived(targetLocked ? targetConn : lockedConn);
+  const isExplicit = $derived(targetLocked && promptConn?.id === unlockTarget);
+  const showPrompt = $derived(targetLocked || (!!lockedConn && !dismissed.has(lockedConn.id)));
+
   async function unlock(id: string, password: string) {
     await setSessionPassword(id, password); // await BEFORE marking unlocked (no desync)
     dismissed.delete(id);
+    unlockTarget = null; // this connection is no longer locked; clear any explicit request
     unlocked.add(id); // re-derives lockedConn → null → the load effect fires
   }
 
@@ -379,8 +391,19 @@
   onMount(() => {
     // Load persisted tabs (or seed the default) before the editor mounts.
     restore();
-    // Falls back silently outside a Tauri webview (plain `vite` in a browser).
-    refresh().catch(() => {});
+    // billz-a5y.3: AWAIT the connection list, THEN auto-expand the active connection's
+    // root so launch shows its object tree immediately (matching the pre-multi-root
+    // single-tree behavior). Fire-and-forget would run expandRoot against an empty
+    // list → the presence guard skips → a collapsed tree on launch (regression). Falls
+    // back silently outside a Tauri webview (plain `vite`).
+    (async () => {
+      try {
+        await refresh();
+      } catch {
+        return; // no list (outside Tauri) — nothing to expand
+      }
+      if (conns.activeId) expandRoot(conns.activeId); // guard: null → noop
+    })();
     refreshLibrary().catch(() => {});
     // Flush any pending debounced save on app quit (Cmd-Q). Tauri's WKWebView
     // doesn't reliably deliver `beforeunload` at termination, so hook the window
@@ -441,28 +464,27 @@
         ><Moon size={14} /></button>
       </div>
     </div>
-    <ConnectionList lockedIds={lockedIds} onnew={openNew} onedit={openEdit} onselect={setActiveConnection} />
-    <!-- The lower region always shows the object tree now — the saved-query Library
-         moved to its own collapsible right panel (billz-a5y.6), so the old
-         [Objects | Library] mode-toggle is gone. -->
-    <div class="lower-pane">
-      <!-- Tree for the active connection. The key remounts it on a connection
-           switch (every node resets to idle and reloads) and on a Refresh bump
-           (rqb.5 — drops the node-local memos so the invalidated core cache re-queries). -->
-      {#key `${conns.activeId}:${refreshNonce(conns.activeId)}`}
-        <ObjectTree locked={!!lockedConn} />
-      {/key}
+    <!-- billz-a5y.3: multi-root connection tree — each connection is a collapsible
+         root with its own object tree beneath it (the flat list + the single
+         lower-pane ObjectTree merged; "Objects" heading gone). Scrolls as one region.
+         `onunlock` opens the password prompt for a locked root's own connection. -->
+    <div class="conn-tree">
+      <ConnectionList lockedIds={lockedIds} onnew={openNew} onedit={openEdit} onunlock={(id) => (unlockTarget = id)} />
     </div>
   </aside>
   <section>
-    <!-- billz-85b: unlock prompt / 🔒 banner for a session-only active connection.
-         Rendered at section top (outside .workspace's 5-track grid) — the modal is
-         position:fixed; the banner is a thin block above the content. -->
-    {#if showPrompt && lockedConn}
+    <!-- billz-85b: unlock prompt / 🔒 banner for a session-only connection. Rendered
+         at section top (outside .workspace's 5-track grid) — the modal is
+         position:fixed; the banner is a thin block above the content. billz-a5y.5 (B1):
+         `promptConn` is the explicit sidebar unlock target if any (shown regardless of
+         `dismissed`), else the active locked connection (auto-prompt, respects
+         `dismissed`). Cancel on the explicit path clears the target ONLY; on the active
+         path it dismisses (→ banner). The banner below is the ACTIVE connection's. -->
+    {#if showPrompt && promptConn}
       <PasswordPrompt
-        name={lockedConn.name}
-        onsubmit={(pw) => unlock(lockedConn.id, pw)}
-        oncancel={() => dismissed.add(lockedConn.id)}
+        name={promptConn.name}
+        onsubmit={(pw) => unlock(promptConn.id, pw)}
+        oncancel={() => { if (isExplicit) unlockTarget = null; else dismissed.add(promptConn.id); }}
       />
     {:else if lockedConn}
       <div class="locked-note">
@@ -602,9 +624,8 @@
     grid-template-columns: 20rem minmax(0, 1fr) auto;
     height: 100vh;
   }
-  /* Two-row sidebar: ConnectionList at natural height, the tree scrolling below
-     it. min-height:0 on the tree region lets it shrink so it scrolls internally
-     under a long connection list. */
+  /* Two-row sidebar: the brand header at natural height, the multi-root connection
+     tree (.conn-tree) scrolling below it (billz-a5y.3). */
   aside {
     display: flex;
     flex-direction: column;
@@ -653,11 +674,13 @@
   /* Icons follow the button's own colour (currentColor), overriding the
      brand-purple `.brand :global(svg)` rule above via later source order. */
   .theme-toggle :global(svg) { color: inherit; }
-  .lower-pane {
+  /* billz-a5y.3: the multi-root connection tree scrolls as one region below the
+     brand header — connection roots at natural height, their object trees expanding
+     inline. min-height:0 lets it shrink so it scrolls internally under many roots. */
+  .conn-tree {
     flex: 1;
     min-height: 0;
     overflow: auto;
-    border-top: 1px solid var(--border);
   }
   /* min-height:0 lets the section's children shrink so they scroll internally;
      min-width:0 lets the workspace track shrink under a wide Library panel
