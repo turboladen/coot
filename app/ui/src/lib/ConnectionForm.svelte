@@ -4,7 +4,7 @@
   import { listDatabases, testConnection } from "./api";
   import { save } from "./connections.svelte";
   import { formatServer, parseServer } from "./connectionFormLogic";
-  import { Eye, EyeOff, X } from "./icons";
+  import { Check, Eye, EyeOff, X } from "./icons";
 
   // `editing` = the config to edit, or null for a new connection. The parent
   // wraps this in {#key} so a new target remounts the form (fields re-init).
@@ -202,7 +202,7 @@
   </div>
 
   {#if status}
-    <p class="status {status.kind}">{#if status.kind === "error"}<span class="status-icon" aria-hidden="true"><X size={13} /></span>{/if}{status.text}</p>
+    <p class="status {status.kind}"><span class="status-icon" aria-hidden="true">{#if status.kind === "error"}<X size={13} />{:else}<Check size={13} />{/if}</span>{status.text}</p>
   {/if}
 </div>
 
@@ -258,25 +258,16 @@
   }
   .eye:hover { color: var(--text); }
   .helper { color: var(--muted); font-size: var(--fs-sm); font-style: italic; }
+  /* Tie checkboxes into the palette (billz-a5y.8) — form-scoped so it doesn't
+     reach other checkboxes app-wide. */
+  input[type="checkbox"] { accent-color: var(--accent); }
   .actions { display: flex; gap: var(--sp-1); margin-top: var(--sp-2); }
-  button {
-    cursor: pointer;
-    padding: var(--sp-1) var(--sp-3);
-    border-radius: var(--r-sm);
-    border: 1px solid var(--border-strong);
-    background: var(--raised);
-    color: var(--text);
-    font: inherit;
-    transition: background var(--dur-fast) var(--ease);
-  }
-  button.primary {
-    background: var(--accent);
-    color: var(--accent-fg);
-    border-color: var(--accent);
-  }
-  button:disabled { opacity: 0.5; cursor: default; }
+  /* Save/Test/Cancel use the global app.css button + .primary system (billz-a5y.8:
+     dropped the local duplicate so they gain the shared hover states + stay in sync).
+     `.eye`'s own border:none/background:none rules still win (class > element). */
   .status { font-size: var(--fs-sm); }
   .status.ok { color: var(--ok); }
   .status.error { color: var(--danger); white-space: pre-wrap; }
-  .status-icon { margin-right: var(--sp-1); }
+  /* Icon-paired feedback (app.css status principle): X for error, Check for ok. */
+  .status-icon { margin-right: var(--sp-1); vertical-align: text-bottom; }
 </style>

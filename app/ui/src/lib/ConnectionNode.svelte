@@ -1,10 +1,12 @@
 <script lang="ts">
   import { tick } from "svelte";
+  import { slide } from "svelte/transition";
+  import { prefersReducedMotion } from "svelte/motion";
   import type { ConnectionConfig } from "./api";
   import { conns, remove } from "./connections.svelte";
   import { clampMenuPosition } from "./contextMenuLogic";
   import { databasesFor } from "./databases.svelte";
-  import { ChevronDown, ChevronRight, MoreHorizontal, Pencil, Trash2 } from "./icons";
+  import { ChevronRight, MoreHorizontal, Pencil, Trash2 } from "./icons";
   import { sidebar, toggleRoot, expandRoot } from "./sidebar.svelte";
   import { connectionStatus, type ConnStatus } from "./sidebarLogic";
   import { setActiveConnection } from "./tabs.svelte";
@@ -39,6 +41,14 @@
     error: "Couldn't load databases",
     neutral: "Not loaded yet this session",
   };
+
+  // billz-a5y.8: the one restrained expand/collapse motion for connection roots.
+  // Mirrors --dur-fast (120ms); the slide is zeroed under reduced-motion via the
+  // runtime `prefersReducedMotion` read (a JS transition can't read the CSS token
+  // app.css zeroes, so we gate on the same signal here). The chevron rotation is
+  // pure CSS on --dur-fast (auto-zeroed) — see the .chev rule.
+  const EXPAND_MS = 120;
+  const slideDur = $derived(prefersReducedMotion.current ? 0 : EXPAND_MS);
 
   async function onDelete() {
     if (confirm(`Delete connection "${conn.name}"?`)) {
@@ -89,6 +99,9 @@
     menu = clampMenuPosition({
       x: r.right - EST_MENU_W,
       y: r.bottom,
+      // billz-a5y.8 nit#4: when the list bottom forces an upward flip, anchor the
+      // menu above the trigger's TOP (not its bottom) so it never overlaps the ⋯ button.
+      anchorTop: r.top,
       menuW: EST_MENU_W,
       menuH: EST_MENU_H,
       viewportW: window.innerWidth,
@@ -145,7 +158,10 @@
         toggleRoot(conn.id);
       }}
     >
-      {#if expanded}<ChevronDown size={14} />{:else}<ChevronRight size={14} />{/if}
+      <!-- billz-a5y.8: one chevron that ROTATES 90° on expand (CSS transition on
+           --dur-fast) — replaces the down/right icon swap so the twisty animates
+           in both directions and auto-stills under reduced-motion. -->
+      <span class="chev"><ChevronRight size={14} /></span>
     </button>
     <!-- RETARGET: point the active tab at this connection (billz-a5y.1's tab-owned
          retarget) + expand its tree. The explicit "use this connection" gesture. -->
@@ -188,12 +204,18 @@
   </div>
 
   {#if expanded}
-    <!-- The key remounts the subtree on a Refresh bump (rqb.5 — drops node-local memos
-         so the invalidated core cache re-queries). Per connection (billz-a5y.2) so one
-         root's refresh never collapses another's. -->
-    {#key `${conn.id}:${refreshNonce(conn.id)}`}
-      <ObjectTree id={conn.id} {locked} {onunlock} />
-    {/key}
+    <!-- billz-a5y.8: slide the subtree open/closed (the one restrained root motion).
+         ObjectTree stays INSIDE the {#if} so a collapsed root never mounts it (its
+         ensureDatabases effect must not fire on collapsed roots — the honest-dot
+         model). The slide animates this wrapper's height only. -->
+    <div transition:slide={{ duration: slideDur }}>
+      <!-- The key remounts the subtree on a Refresh bump (rqb.5 — drops node-local memos
+           so the invalidated core cache re-queries). Per connection (billz-a5y.2) so one
+           root's refresh never collapses another's. -->
+      {#key `${conn.id}:${refreshNonce(conn.id)}`}
+        <ObjectTree id={conn.id} {locked} {onunlock} />
+      {/key}
+    </div>
   {/if}
 </li>
 
@@ -222,15 +244,21 @@
     border-radius: var(--r-sm);
     margin-bottom: 0.15rem;
   }
+  /* Active root = the current tab's execution context. The accent tint plus a 2px
+     inset accent marker on the leading edge make "this is the connection I'm
+     running against" unmistakable (billz-a5y.8) — no new color, --r-sm clips it. */
   li.active {
     background: color-mix(in srgb, var(--accent) 12%, transparent);
+    box-shadow: inset 2px 0 0 var(--accent);
   }
   .root-row {
     position: relative; /* anchor for the absolute .actions overlay (billz-a5y.4) */
     display: flex;
     align-items: center;
     gap: 0.2rem;
-    padding: 0.15rem 0.3rem;
+    /* Roots are the primary sidebar element — a touch more room than deep tree
+       rows (billz-a5y.8). */
+    padding: 0.25rem 0.35rem;
   }
   .twisty {
     display: inline-flex;
@@ -247,9 +275,18 @@
   }
   .twisty:hover { background: color-mix(in srgb, var(--brand) 8%, transparent); }
   .twisty :global(svg) { color: inherit; }
+  /* billz-a5y.8: the chevron rotates 90° on expand (pure CSS on --dur-fast, which
+     app.css zeroes under reduced-motion). Replaces the down/right icon swap. */
+  .chev {
+    display: inline-flex;
+    transition: transform var(--dur-fast) var(--ease);
+  }
+  .twisty[aria-expanded="true"] .chev { transform: rotate(90deg); }
   .name {
     display: flex;
-    align-items: center;
+    /* flex-start so the dot aligns to the connection-NAME line, not the center of
+       the two-line name+server block (billz-a5y.8). */
+    align-items: flex-start;
     gap: var(--sp-2);
     flex: 1;
     min-width: 0;
@@ -270,6 +307,22 @@
     display: flex;
     flex-direction: column;
     min-width: 0;
+    flex: 1;
+  }
+  /* nit#3: while the hover/focus action cluster is shown, fade the name's right
+     edge under it so a long name never renders beneath the icons. Mask (no reflow,
+     no jump) is primary; the @supports fallback reserves space where mask is
+     unsupported (kept for the WKWebView, billz-a5y.8). */
+  .root-row:hover .meta,
+  .root-row:focus-within .meta {
+    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 4.5rem), transparent);
+    mask-image: linear-gradient(to right, #000 calc(100% - 4.5rem), transparent);
+  }
+  @supports not ((mask-image: linear-gradient(#000, #000)) or (-webkit-mask-image: linear-gradient(#000, #000))) {
+    .root-row:hover .meta,
+    .root-row:focus-within .meta {
+      padding-right: 4.5rem;
+    }
   }
   .meta strong {
     font-size: 0.9rem;
@@ -288,22 +341,24 @@
      legible treatments; `loading` is a faint/transient variant of neutral. */
   .dot {
     display: inline-block;
-    width: 0.6rem;
-    height: 0.6rem;
+    width: 0.5rem;
+    height: 0.5rem;
+    /* Center on the ~1.2rem name line (the .name is flex-start now). */
+    margin-top: 0.35rem;
     border-radius: var(--r-pill);
     flex: none;
   }
   .dot.loaded {
     background: var(--ok);
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 22%, transparent);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--ok) 18%, transparent);
   }
   .dot.locked {
     background: var(--warn);
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--warn) 20%, transparent);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--warn) 18%, transparent);
   }
   .dot.error {
     background: var(--danger);
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger) 20%, transparent);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--danger) 18%, transparent);
   }
   .dot.neutral {
     background: transparent;

@@ -88,9 +88,10 @@
     /* Reset the global button base's justify-content:center (app.css) — without
        this the chevron+icon+label cluster centers in the full-width row. */
     justify-content: flex-start;
-    gap: 0.3rem;
+    gap: var(--sp-1);
     width: 100%;
-    padding: 0.15rem 0.3rem;
+    /* Uniform 0.2rem vertical padding across all tree rows (billz-a5y.8). */
+    padding: 0.2rem 0.3rem;
     background: none;
     border: none;
     border-radius: var(--r-sm);
@@ -120,13 +121,16 @@
   .row.muted .label { color: var(--faint); }
   .state { color: var(--faint); font-size: 0.75rem; }
   ul { list-style: none; margin: 0; padding: 0; }
+  /* Static grouping labels — aligned with the depth-2 table/view rows' left edge
+     (1.2rem), with a little top rhythm so Tables/Views read as separate blocks. */
   .group {
-    padding: 0.1rem 0 0.1rem 0.7rem;
+    padding: 0.1rem 0 0.1rem 1.2rem;
+    margin-top: 0.15rem;
     font-size: 0.75rem;
     color: var(--muted);
     text-transform: uppercase;
     letter-spacing: 0.03em;
   }
-  .note { padding: 0.1rem 0 0.1rem 0.7rem; font-size: 0.8rem; color: var(--muted); }
+  .note { padding: 0.1rem 0 0.1rem 1.2rem; font-size: 0.8rem; color: var(--muted); }
   .err { color: var(--danger); white-space: normal; }
 </style>

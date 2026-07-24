@@ -25,6 +25,18 @@
   // stored value can never overflow a small window.
   const renderWidth = $derived(dragging ? dragWidth : layout.libraryWidth);
 
+  // billz-a5y.8 nit#2: the divider's aria-valuenow must reflect the ACTUAL rendered
+  // width, not the stored value — on a narrow window the CSS `min()` cap shrinks the
+  // panel below the stored width. `bind:clientWidth` measures the real width (already
+  // capped, auto-updates on resize); before the first measurement fall back to
+  // renderWidth. Clamped into [MIN, MAX] so the reported value stays within the
+  // separator's advertised range even when the viewport caps it below MIN.
+  let panelW = $state(0);
+  const effectiveWidth = $derived(panelW > 0 ? panelW : renderWidth);
+  const ariaWidth = $derived(
+    Math.round(Math.min(MAX_LIBRARY_WIDTH, Math.max(MIN_LIBRARY_WIDTH, effectiveWidth))),
+  );
+
   function onDragStart(e: PointerEvent) {
     e.preventDefault();
     dragging = true;
@@ -68,6 +80,7 @@
   class:collapsed={!layout.libraryOpen}
   class:dragging
   style="--lib-width: {renderWidth}px"
+  bind:clientWidth={panelW}
 >
   {#if layout.libraryOpen}
     <!-- Drag divider on the panel's left edge. Keyboard-resizable (Arrow keys).
@@ -84,7 +97,7 @@
       aria-label="Resize library panel"
       aria-valuemin={MIN_LIBRARY_WIDTH}
       aria-valuemax={MAX_LIBRARY_WIDTH}
-      aria-valuenow={Math.round(renderWidth)}
+      aria-valuenow={ariaWidth}
       tabindex="0"
       onpointerdown={onDragStart}
       onpointermove={onDragMove}
@@ -156,9 +169,15 @@
     transition: background var(--dur-fast) var(--ease);
     z-index: 1;
   }
-  .divider:hover,
-  .divider:focus-visible {
+  .divider:hover {
     background: color-mix(in srgb, var(--accent) 40%, transparent);
+  }
+  /* Keyboard focus is a STRONGER, wider accent bar than hover so it's clearly
+     distinct (billz-a5y.8) — the bar is the focus indicator that replaces the
+     global ring (which reads oddly on a 5px-wide splitter). */
+  .divider:focus-visible {
+    background: var(--accent);
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent);
     outline: none;
   }
   .panel-inner {
@@ -194,7 +213,10 @@
     cursor: pointer;
     transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
   }
-  .collapse-btn:hover { color: var(--muted); }
+  .collapse-btn:hover {
+    color: var(--muted);
+    background: color-mix(in srgb, var(--brand) 8%, transparent);
+  }
   .collapse-btn :global(svg) { color: inherit; }
   .panel-body {
     flex: 1;

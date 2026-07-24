@@ -28,9 +28,10 @@
     align-items: baseline;
     /* Reset the global button base's justify-content:center (app.css). */
     justify-content: flex-start;
-    gap: 0.35rem;
+    gap: var(--sp-1);
     width: 100%;
-    padding: 0.1rem 0.3rem 0.1rem 1.4rem;
+    /* depth-3 indent (2.1rem) — one step below the table row (billz-a5y.8). */
+    padding: 0.2rem 0.3rem 0.2rem 2.1rem;
     background: none;
     border: none;
     border-radius: var(--r-sm);
