@@ -70,6 +70,17 @@ fast-moving and single-maintainer).
   `tauri::generate_context!` only requires `frontendDist` for `tauri build` bundling.
 - **CSP (`app.security.csp` in `tauri.conf.json`) only applies to the packaged build, not `just dev`** —
   verify CSP-affected rendering (CodeMirror editor, results grid, fonts) at the DMG smoke-test. See `RELEASING.md`.
+- **`/code-review` is `disable-model-invocation`** — agents can't run the skill; for an automated-review
+  step substitute the `pr-review-toolkit:code-reviewer` agent. `/code-review` (and `/code-review ultra`)
+  are user-triggered only.
+- Editor/LSP flags `bun:test`, `lucide-svelte`, and local `./*Logic` imports as "cannot find module" in
+  `*.test.ts` — **false positives**. `just ui-check` (svelte-check, which excludes `src/**/*.test.ts`) is
+  the real gate; trust it over inline diagnostics.
+- **Visual-verify without a DEV box:** outside Tauri (plain `vite`/`just dev`) `invoke()` fails, so the
+  connection/db/library stores stay empty. Seed populated states by mocking Tauri `invoke` via Playwright
+  `addInitScript`/`browser_evaluate` against `:1420`, then screenshot light+dark.
+- `app/ui/src/App.svelte` is the frontend hub (layout grid, sidebar, toolbar, `run()`, store effects) —
+  most sidebar/layout work touches it, so parallel frontend units serialize on it unless file-disjoint.
 
 ## Shell & commands
 
@@ -81,6 +92,8 @@ fast-moving and single-maintainer).
 - I use **fish**. Emit fish-compatible commands (`set -x FOO bar`, not `export FOO=bar`).
 - Under the hood: frontend tooling is **bun** (`app/ui`); Rust is **cargo** (workspace root); the
   Tauri CLI runs via bun (`bun run tauri …`, wired with `TAURI_APP_PATH=..`).
+- A fresh `git worktree` has no `app/ui/node_modules` (gitignored, not copied) — run `bun install` in
+  `app/ui` there before `just verify` / `ui-*`, or the frontend gates fail with module-not-found.
 - **CI** (`.github/workflows/`): `ci.yml` runs `just verify` on `ubuntu-latest` (Tauri needs apt
   `libwebkit2gtk-4.1-dev`/`libgtk-3-dev`/`librsvg2-dev`/`libayatana-appindicator3-dev`/`libxdo-dev`);
   `audit.yml` runs `cargo deny` weekly + on dep changes. Linux is 10× cheaper than macOS on private repos.
