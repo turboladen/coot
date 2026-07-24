@@ -10,6 +10,7 @@
   import SqlEditor from "./lib/SqlEditor.svelte";
   import TabBar from "./lib/TabBar.svelte";
   import ResultTabs from "./lib/ResultTabs.svelte";
+  import ToastHost from "./lib/ToastHost.svelte";
   import FanoutPicker from "./lib/FanoutPicker.svelte";
   import FanoutStatusBar from "./lib/FanoutStatusBar.svelte";
   import { combineFanoutResults, effectiveFanoutDatabases } from "./lib/fanoutLogic";
@@ -614,6 +615,10 @@
        (billz-a5y.6). Open/collapsed + width persist across launches. -->
   <LibraryPanel />
 </main>
+
+<!-- Transient app-level feedback (billz-086). Mounted once, fixed-position, so it
+     sits outside the grid. Query output belongs in the Messages pane, not here. -->
+<ToastHost />
 
 <style>
   main {
