@@ -4,29 +4,54 @@
   //
   // Scope: transient app-level events only. Query execution output stays in the
   // Messages pane — see the note at the top of toastLogic.ts.
+  import { tick } from "svelte";
   import { AlertCircle, Check, Info, X } from "./icons";
   import { dismiss, toasts } from "./toasts.svelte";
-  import type { ToastKind } from "./toastLogic";
+  import { isAssertive, type ToastKind } from "./toastLogic";
 
-  const ICONS = { success: Check, error: AlertCircle, info: Info };
+  // Annotated (not inferred) so adding a ToastKind fails HERE, on the missing
+  // entry, rather than as an index error down in the markup.
+  const ICONS: Record<ToastKind, typeof Info> = {
+    success: Check,
+    error: AlertCircle,
+    info: Info,
+  };
 
-  // Errors announce assertively (role="alert"); the container's aria-live="polite"
-  // covers the rest. This is the app's first live region.
-  function isAssertive(kind: ToastKind): boolean {
-    return kind === "error";
+  let host = $state<HTMLDivElement>();
+
+  /**
+   * Dismiss from the ✕, keeping keyboard focus inside the stack.
+   *
+   * Unmounting the focused button drops focus to <body>, so the user's next Tab
+   * restarts from the top of the document. Only re-aims focus when the button
+   * actually had it — WebKit doesn't focus a button on mouse-down, so a click
+   * dismissal correctly leaves focus where it was.
+   */
+  async function dismissFromButton(event: Event, id: string, index: number) {
+    const hadFocus = event.currentTarget === document.activeElement;
+    dismiss(id);
+    if (!hadFocus) return;
+    await tick();
+    const buttons = host?.querySelectorAll<HTMLButtonElement>(".close");
+    if (buttons === undefined || buttons.length === 0) return;
+    buttons[Math.min(index, buttons.length - 1)].focus();
   }
 </script>
 
 <!-- aria-atomic=false so a new toast announces on its own rather than re-reading
      the whole stack. The region stays mounted (never {#if}-gated) — screen readers
      only pick up additions to a live region that already existed. -->
-<div class="host" aria-live="polite" aria-atomic="false">
-  {#each toasts.list as toast (toast.id)}
+<div class="host" bind:this={host} aria-live="polite" aria-atomic="false">
+  {#each toasts.list as toast, i (toast.id)}
     {@const Icon = ICONS[toast.kind]}
     <div class="toast {toast.kind}" role={isAssertive(toast.kind) ? "alert" : undefined}>
       <Icon size={15} />
       <span class="text">{toast.text}</span>
-      <button class="close" aria-label="Dismiss notification" onclick={() => dismiss(toast.id)}>
+      <button
+        class="close"
+        aria-label="Dismiss notification"
+        onclick={(e) => dismissFromButton(e, toast.id, i)}
+      >
         <X size={13} />
       </button>
     </div>
@@ -100,13 +125,26 @@
   .toast.info > :global(svg) {
     color: var(--brand);
   }
-  .toast :global(svg) {
+  /* Child combinator here too, for the same reason as the color rules above: the
+     1px optical nudge lines the KIND icon up with the first line of text, and must
+     not also shift the ✕ inside the (already centered) close button. */
+  .toast > :global(svg) {
     flex: none;
     margin-top: 1px;
   }
+  .close :global(svg) {
+    flex: none;
+  }
   .text {
-    /* Long SQL errors wrap instead of stretching the toast off-screen. */
+    /* Long SQL errors wrap instead of stretching the toast off-screen... */
     overflow-wrap: anywhere;
+    /* ...and are clamped vertically for the same reason. The stack is anchored to
+       `bottom` and grows UP, so a toast taller than the viewport pushes its own ✕
+       (top-right, under `align-items: flex-start`) above y=0 — and `position:
+       fixed` means nothing can scroll it back. Combined with sticky errors that
+       makes a long message permanently undismissable. ~6 lines, then scroll. */
+    max-height: 8.4em;
+    overflow-y: auto;
   }
   .close {
     flex: none;

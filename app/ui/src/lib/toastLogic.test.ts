@@ -2,8 +2,16 @@
 // with no Svelte compiler (unlike toasts.svelte.ts). Excluded from svelte-check
 // via tsconfig `exclude`, same as tabsLogic.test.ts / savedQueriesLogic.test.ts.
 import { describe, expect, test } from "bun:test";
-import type { Toast, ToastKind } from "./toastLogic";
-import { addToast, autoDismissMs, dismissToast, MAX_TOASTS, TOAST_MS } from "./toastLogic";
+import {
+  addToast,
+  autoDismissMs,
+  dismissToast,
+  isAssertive,
+  MAX_TOASTS,
+  type Toast,
+  type ToastKind,
+  TOAST_MS,
+} from "./toastLogic";
 
 function t(id: string, kind: ToastKind = "info"): Toast {
   return { id, kind, text: `toast ${id}` };
@@ -59,6 +67,11 @@ describe("dismissToast", () => {
     expect(dismissToast(list, "zzz").map((x) => x.id)).toEqual(["a", "b"]);
   });
 
+  test("unknown id hands the SAME list back (no needless $state invalidation)", () => {
+    const list = [t("a"), t("b")];
+    expect(dismissToast(list, "zzz")).toBe(list);
+  });
+
   test("does not mutate the input list", () => {
     const before = [t("a"), t("b")];
     dismissToast(before, "a");
@@ -80,5 +93,13 @@ describe("autoDismissMs", () => {
   // toasts exist to fix, so errors stay until explicitly dismissed.
   test("errors are sticky", () => {
     expect(autoDismissMs("error")).toBeNull();
+  });
+});
+
+describe("isAssertive", () => {
+  test("only errors interrupt the screen reader", () => {
+    expect(isAssertive("error")).toBe(true);
+    expect(isAssertive("success")).toBe(false);
+    expect(isAssertive("info")).toBe(false);
   });
 });
