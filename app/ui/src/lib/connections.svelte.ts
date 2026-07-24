@@ -10,6 +10,7 @@ import {
   saveConnection,
 } from "./api";
 import { dropDatabases } from "./databases.svelte";
+import { pruneRoot } from "./sidebar.svelte";
 
 export const conns = $state<{ list: ConnectionConfig[]; activeId: string | null }>({
   list: [],
@@ -29,5 +30,6 @@ export async function remove(id: string) {
   await deleteConnection(id);
   if (conns.activeId === id) conns.activeId = null;
   dropDatabases(id); // billz-a5y.2: drop the cached entry so a removed id can't linger as "loaded this session"
+  pruneRoot(id); // billz-a5y.3: drop it from the sidebar's expanded set + focus (tidy; stale ids are otherwise inert)
   await refresh();
 }

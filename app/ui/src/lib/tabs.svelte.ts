@@ -9,6 +9,8 @@
 // SCRATCH editors (distinct from the Phase 3 saved-query library). Results are
 // never persisted — only the SQL text, the tab set, and the active id.
 import { conns } from "./connections.svelte";
+import { sidebar } from "./sidebar.svelte";
+import { defaultTabConnection } from "./sidebarLogic";
 import { deriveTitle, deserialize, pickNeighbourId, type QueryTab, serialize, type TabsState } from "./tabsLogic";
 
 export type { QueryTab } from "./tabsLogic";
@@ -72,11 +74,22 @@ export function flushSave(): void {
 }
 
 // --- Helpers -----------------------------------------------------------------
+
+// billz-a5y.3: a new tab defaults to the FOCUSED connection (the last sidebar root
+// you browsed/retargeted), else the active tab's connection, else null — validated
+// against the live list so a dangling id never becomes a target. Decouples "what new
+// tabs target" from the active tab, so expanding Y to browse defaults new tabs to Y
+// WITHOUT retargeting the current tab. Callers with a specific origin (tree/scoped)
+// pass connectionId explicitly and bypass this.
+function defaultConn(): string | null {
+  return defaultTabConnection(sidebar.focusedId, conns.activeId, conns.list.map((c) => c.id));
+}
+
 function newQueryTab(
   content: string,
   database: string | null = null,
   savedQueryId: string | null = null,
-  connectionId: string | null = conns.activeId,
+  connectionId: string | null = defaultConn(),
 ): QueryTab {
   return {
     id: crypto.randomUUID(),
@@ -84,8 +97,9 @@ function newQueryTab(
     content,
     database,
     savedQueryId,
-    // Default a new tab to the currently-active connection (billz-a5y.1); callers
-    // that open from a specific origin (tree/scoped-query) pass it explicitly.
+    // Default resolved by the caller's `connectionId` param (defaultConn — focused
+    // connection, billz-a5y.3); callers that open from a specific origin
+    // (tree/scoped-query) pass it explicitly.
     connectionId,
     fanout: false,
     fanoutDatabases: [],
@@ -132,7 +146,7 @@ export function newTabWithContent(
   content: string,
   database: string | null = null,
   savedQueryId: string | null = null,
-  connectionId: string | null = conns.activeId,
+  connectionId: string | null = defaultConn(),
 ): void {
   const tab = newQueryTab(content, database, savedQueryId, connectionId);
   tabsState.tabs.push(tab);
@@ -155,12 +169,12 @@ export function setActiveDatabase(database: string | null): void {
 }
 
 // Point the active tab at connection `id` and mirror it to `conns.activeId`
-// (billz-a5y.1). The sidebar's Select button routes here (via ConnectionList's
-// `onselect` prop) instead of the old global `select()`, so choosing a connection
-// retargets the ACTIVE tab — the deliberate .1 bridge (browse-Y-while-A-stays-on-X
-// arrives later). The tab's stored `database` is left untouched: App's effectiveDb
-// re-validates it against the new connection's databases (resolving to the default
-// if absent, and restoring the selection if you switch back). Structural → flushSave.
+// (billz-a5y.1). billz-a5y.3: a ConnectionNode's NAME click routes here (the explicit
+// "use this connection for the current tab" RETARGET gesture) — distinct from the
+// chevron's pure browse, which only expands/focuses and never touches conns.activeId.
+// The tab's stored `database` is left untouched: App's effectiveDb re-validates it
+// against the new connection's databases (resolving to the default if absent, and
+// restoring the selection if you switch back). Structural → flushSave.
 export function setActiveConnection(id: string): void {
   const tab = tabsState.tabs.find((t) => t.id === tabsState.activeId);
   if (!tab) return;
