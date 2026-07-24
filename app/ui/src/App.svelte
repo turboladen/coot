@@ -6,7 +6,7 @@
   import PasswordPrompt from "./lib/PasswordPrompt.svelte";
   import ConnectionList from "./lib/ConnectionList.svelte";
   import ObjectTree from "./lib/tree/ObjectTree.svelte";
-  import SavedQueryLibrary from "./lib/SavedQueryLibrary.svelte";
+  import LibraryPanel from "./lib/LibraryPanel.svelte";
   import ParamBar from "./lib/ParamBar.svelte";
   import SqlEditor from "./lib/SqlEditor.svelte";
   import TabBar from "./lib/TabBar.svelte";
@@ -27,10 +27,6 @@
   import { databaseLoadAction } from "./lib/databasesLogic";
   import { setTheme, theme } from "./lib/theme.svelte";
   import { Database, Monitor, Moon, Network, Play, Save, Sun } from "./lib/icons";
-
-  // Sidebar lower region toggles between the object tree and the saved-query
-  // library (d28.6) — the library gets its own full-height home per PLAN §5.
-  let sidebarMode = $state<"objects" | "library">("objects");
 
   // The form pane: `undefined` = closed, `null` = new, a config = editing it.
   // `{#key}` on the form remounts it when the target changes so fields re-init.
@@ -446,27 +442,16 @@
       </div>
     </div>
     <ConnectionList lockedIds={lockedIds} onnew={openNew} onedit={openEdit} onselect={setActiveConnection} />
-    <!-- Segmented toggle: the lower region shows the object tree OR the saved-query
-         library (d28.6). Objects need a connection; the library is independent. -->
-    <div class="mode-toggle">
-      <button class:active={sidebarMode === "objects"} onclick={() => (sidebarMode = "objects")}>
-        Objects
-      </button>
-      <button class:active={sidebarMode === "library"} onclick={() => (sidebarMode = "library")}>
-        Library
-      </button>
-    </div>
+    <!-- The lower region always shows the object tree now — the saved-query Library
+         moved to its own collapsible right panel (billz-a5y.6), so the old
+         [Objects | Library] mode-toggle is gone. -->
     <div class="lower-pane">
-      {#if sidebarMode === "objects"}
-        <!-- Tree for the active connection. The key remounts it on a connection
-             switch (every node resets to idle and reloads) and on a Refresh bump
-             (rqb.5 — drops the node-local memos so the invalidated core cache re-queries). -->
-        {#key `${conns.activeId}:${refreshNonce(conns.activeId)}`}
-          <ObjectTree locked={!!lockedConn} />
-        {/key}
-      {:else}
-        <SavedQueryLibrary />
-      {/if}
+      <!-- Tree for the active connection. The key remounts it on a connection
+           switch (every node resets to idle and reloads) and on a Refresh bump
+           (rqb.5 — drops the node-local memos so the invalidated core cache re-queries). -->
+      {#key `${conns.activeId}:${refreshNonce(conns.activeId)}`}
+        <ObjectTree locked={!!lockedConn} />
+      {/key}
     </div>
   </aside>
   <section>
@@ -603,12 +588,18 @@
       </div>
     {/if}
   </section>
+  <!-- Saved-query Library: collapsible right panel adjacent to the workspace
+       (billz-a5y.6). Open/collapsed + width persist across launches. -->
+  <LibraryPanel />
 </main>
 
 <style>
   main {
     display: grid;
-    grid-template-columns: 20rem 1fr;
+    /* sidebar · workspace · Library panel (auto = the panel's own width, which
+       shrinks to a narrow rail when collapsed). minmax(0,1fr) lets the workspace
+       shrink instead of overflowing when the panel is wide (billz-a5y.6). */
+    grid-template-columns: 20rem minmax(0, 1fr) auto;
     height: 100vh;
   }
   /* Two-row sidebar: ConnectionList at natural height, the tree scrolling below
@@ -632,11 +623,10 @@
     color: var(--text);
   }
   .brand :global(svg) { color: var(--brand); }
-  /* Color-theme control (billz-xhv.6). Its own class — NOT `.mode-toggle`, which
-     owns the Objects/Library selector — sharing would couple unrelated controls.
-     Lives INSIDE the `.brand` header (pushed right via margin-auto), so there's
-     no border-top bar to double up against the brand's border-bottom. Icon-only
-     ghost buttons; the active state reuses the accent-tint visual language. */
+  /* Color-theme control (billz-xhv.6). Lives INSIDE the `.brand` header (pushed
+     right via margin-auto), so there's no border-top bar to double up against the
+     brand's border-bottom. Icon-only ghost buttons; the active state reuses the
+     accent-tint visual language. */
   .theme-toggle {
     display: flex;
     gap: 0.15rem;
@@ -663,41 +653,18 @@
   /* Icons follow the button's own colour (currentColor), overriding the
      brand-purple `.brand :global(svg)` rule above via later source order. */
   .theme-toggle :global(svg) { color: inherit; }
-  /* Segmented [Objects | Library] toggle between the connection list and the
-     scrolling lower region. */
-  .mode-toggle {
-    display: flex;
-    gap: 0.25rem;
-    padding: 0.3rem 0.5rem;
-    border-top: 1px solid var(--border);
-  }
-  .mode-toggle button {
-    flex: 1;
-    font: inherit;
-    font-size: var(--fs-sm);
-    padding: var(--sp-1) var(--sp-2);
-    border: 1px solid var(--border);
-    border-radius: var(--r-sm);
-    background: var(--raised);
-    color: var(--muted);
-    cursor: pointer;
-    transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
-  }
-  .mode-toggle button.active {
-    background: color-mix(in srgb, var(--accent) 14%, var(--raised));
-    color: var(--accent-press);
-    border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
-    font-weight: 600;
-  }
   .lower-pane {
     flex: 1;
     min-height: 0;
     overflow: auto;
     border-top: 1px solid var(--border);
   }
-  /* min-height:0 lets the section's children shrink so they scroll internally. */
+  /* min-height:0 lets the section's children shrink so they scroll internally;
+     min-width:0 lets the workspace track shrink under a wide Library panel
+     instead of pushing <main> past 100vw (billz-a5y.6). */
   section {
     min-height: 0;
+    min-width: 0;
     overflow: hidden;
   }
   .locked-note {
