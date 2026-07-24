@@ -40,9 +40,15 @@ export function addToast(
   return { list: next.slice(overflow), evicted: next.slice(0, overflow) };
 }
 
-/** Remove one toast by id. Unknown ids are a no-op (a double-click on ✕ races the timer). */
+/**
+ * Remove one toast by id. Unknown ids are a no-op (a double-click on ✕ races the
+ * timer) — and a *true* no-op: the input list is handed straight back when nothing
+ * matched, so the store's `toasts.list = dismissToast(...)` doesn't invalidate the
+ * `$state` field (and re-run the each-block) for a dismissal that did nothing.
+ */
 export function dismissToast(list: Toast[], id: string): Toast[] {
-  return list.filter((t) => t.id !== id);
+  const next = list.filter((t) => t.id !== id);
+  return next.length === list.length ? list : next;
 }
 
 /**
@@ -53,4 +59,15 @@ export function dismissToast(list: Toast[], id: string): Toast[] {
  */
 export function autoDismissMs(kind: ToastKind): number | null {
   return kind === "error" ? null : TOAST_MS;
+}
+
+/**
+ * Does this kind interrupt the screen reader, or wait its turn?
+ *
+ * Lives here rather than in ToastHost so ALL per-kind policy is in one file next
+ * to `autoDismissMs` — otherwise "errors are the special kind" is encoded in two
+ * places that can drift apart.
+ */
+export function isAssertive(kind: ToastKind): boolean {
+  return kind === "error";
 }
