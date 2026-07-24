@@ -32,6 +32,12 @@
   let name = $state(untrack(() => value));
   let input = $state<HTMLInputElement>();
 
+  // Per-instance id for the label↔input association. NOT a hardcoded literal: this
+  // dialog is deliberately reusable (billz-1kn wants it for RENAME too), and two
+  // mounted instances sharing one DOM id makes the document invalid and points both
+  // labels at whichever input the browser resolves first.
+  const inputId = `name-dialog-${crypto.randomUUID()}`;
+
   // Focus the field once mounted, and pre-select the suggestion so typing replaces
   // it (the suggested title is a starting point, not something to edit around).
   $effect(() => {
@@ -62,8 +68,8 @@
       if (valid) onsubmit(name);
     }}
   >
-    <label for="name-dialog-input">{label}</label>
-    <input id="name-dialog-input" bind:this={input} bind:value={name} />
+    <label for={inputId}>{label}</label>
+    <input id={inputId} bind:this={input} bind:value={name} />
     <div class="actions">
       <button type="submit" disabled={!valid}>{submitLabel}</button>
       <button type="button" onclick={oncancel}>Cancel</button>

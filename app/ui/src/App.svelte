@@ -23,7 +23,7 @@
   import { promoteToSavedQuery } from "./lib/savedQueriesLogic";
   import { pushToast } from "./lib/toasts.svelte";
   import NameDialog from "./lib/NameDialog.svelte";
-  import { activeContent, flushSave, restore, setActiveContent, setActiveDatabase, setActiveSavedQuery, setFanout, tabsState } from "./lib/tabs.svelte";
+  import { activeContent, flushSave, restore, setActiveContent, setActiveDatabase, setFanout, setTabSavedQuery, tabsState } from "./lib/tabs.svelte";
   import { deriveTitle, isTabDirty } from "./lib/tabsLogic";
   import { expandRoot } from "./lib/sidebar.svelte";
   import { clearDatabases, databasesFor, ensureDatabases } from "./lib/databases.svelte";
@@ -203,29 +203,59 @@
       // just went out, which is easy to miss while you're reading SQL.
       pushToast("success", `Updated "${name}".`);
     } catch (e) {
-      pushToast("error", `Couldn't update "${name}": ${e}`);
+      pushToast("error", `Couldn't update "${name}": ${String(e)}`);
     }
   }
 
   // billz-he0: the PUSH flow. Saving a query is more naturally done from the editor
   // you're looking at than by opening the Library panel and pulling the tab in, so
   // the toolbar owns this and the Library panel's promote CTA is gone.
-  let naming = $state(false);
+  //
+  // The dialog captures its TARGET TAB (id + content + database) at OPEN time
+  // rather than re-reading `curTab` on submit. The modal backdrop hides the TabBar
+  // but its tabs keep `tabindex="0"`, so the active tab really can change while the
+  // dialog is up — and again during the async save. Reading it late saves one tab's
+  // SQL under another tab's suggested name, and links the wrong tab.
+  type NameTarget = { tabId: string; sql: string; database: string | null; suggested: string };
+  let naming = $state<NameTarget | null>(null);
   const canSave = $derived(!!curTab && curTab.content.trim() !== "");
 
+  function openNameDialog() {
+    if (!curTab || !canSave) return;
+    naming = {
+      tabId: curTab.id,
+      sql: curTab.content,
+      database: curTab.database,
+      suggested: deriveTitle(curTab.content),
+    };
+  }
+
+  // Closing the dialog must hand focus BACK to the editor. It's a keyboard flow
+  // (⌘S → type → Enter); without this, focus lands on <body> and the next ⌘S /
+  // ⌘Enter silently does nothing until you click into CodeMirror again.
+  function closeNameDialog() {
+    naming = null;
+    editor?.focus();
+  }
+
   async function saveToLibrary(name: string) {
-    naming = false;
-    if (!curTab) return;
+    const target = naming;
+    closeNameDialog();
+    const trimmed = name.trim();
+    // NameDialog's submit button already enforces both, but this is the boundary
+    // the retired confirmPromote() guarded — keep the check where the write is.
+    if (!target || trimmed === "") return;
     const id = crypto.randomUUID();
     try {
-      await saveQuery(promoteToSavedQuery(id, name, curTab.content, curTab.database));
+      await saveQuery(promoteToSavedQuery(id, trimmed, target.sql, target.database));
       // LINK the tab to what we just saved. Without this the tab stays a scratch
       // tab, so the toolbar keeps offering "Save to library" and a second save
-      // mints a DUPLICATE entry instead of updating the first.
-      setActiveSavedQuery(id);
-      pushToast("success", `Saved "${name.trim()}" to the library.`);
+      // mints a DUPLICATE entry instead of updating the first. By id, not "the
+      // active tab" — see setTabSavedQuery.
+      setTabSavedQuery(target.tabId, id);
+      pushToast("success", `Saved "${trimmed}" to the library.`);
     } catch (e) {
-      pushToast("error", `Couldn't save "${name.trim()}": ${e}`);
+      pushToast("error", `Couldn't save "${trimmed}": ${String(e)}`);
     }
   }
 
@@ -236,9 +266,30 @@
   function saveFromEditor() {
     if (curSavedQuery) {
       if (dirty) updateSavedQuery();
-    } else if (canSave) {
-      naming = true;
+    } else {
+      openNameDialog();
     }
+  }
+
+  /**
+   * App-level ⌘S/Ctrl-S.
+   *
+   * SqlEditor binds Mod-s inside CodeMirror's keymap, which is right when the
+   * editor has focus but means the shortcut dies anywhere else — the DB picker,
+   * the Library search box, a toast's ✕ — while BOTH toolbar tooltips advertise
+   * "⌘S". A shortcut the UI promises has to work wherever the app has focus.
+   *
+   * No double-fire: CodeMirror's binding sets `preventDefault`, so when it
+   * handled the key this bubble-phase listener sees `defaultPrevented` and bails.
+   * That's also why this can't simply replace the CM binding — inside the editor
+   * CM must still win to stop the webview's own save-page default.
+   */
+  function onWindowKeydown(e: KeyboardEvent) {
+    if (e.key !== "s" || !(e.metaKey || e.ctrlKey) || e.altKey) return;
+    if (e.defaultPrevented) return; // CodeMirror already handled it
+    if (naming || editing !== undefined || showPrompt) return; // a dialog owns the keyboard
+    e.preventDefault();
+    saveFromEditor();
   }
 
   // Which tier each param's displayed value resolves from (drives the badge).
@@ -336,11 +387,25 @@
     running = true;
     try {
       // Fan-out path (billz-0gh.1.3): run the raw batch across many DBs in
-      // parallel. Takes priority over the param/run_sql paths; the toggle is
-      // disabled on a param'd tab (fanoutDisabled), so a fan-out tab never carries
-      // @params. Uses effFanoutDbs (stored ∩ current ONLINE) — an empty set (no
-      // selection, or all stale) nudges instead of calling the backend.
+      // parallel. Takes priority over the param/run_sql paths. Uses effFanoutDbs
+      // (stored ∩ current ONLINE) — an empty set (no selection, or all stale)
+      // nudges instead of calling the backend.
       if (curTab?.fanout) {
+        // A fan-out tab can NOW acquire @params without ever touching the toggle:
+        // billz-he0's save-to-library links the tab to a saved query, and
+        // `curParams` derives from that. Fan-out runs the raw batch text with no
+        // binding, so continuing here would splice nothing and fire N round trips
+        // that each fail with "must declare the scalar variable". Nudge instead.
+        if (curParams.length > 0) {
+          results = null;
+          fanoutResults = null;
+          messages = [{
+            kind: "error",
+            text: "Fan-out doesn't support parameters yet — turn fan-out off to run this query.",
+          }];
+          activeTab = "messages";
+          return;
+        }
         if (effFanoutDbs.length === 0) {
           results = null;
           fanoutResults = null;
@@ -572,10 +637,12 @@
           <button
             class="fanout-toggle"
             class:active={curTab?.fanout}
-            disabled={!curTab || fanoutDisabled}
+            disabled={!curTab || (fanoutDisabled && !curTab.fanout)}
             aria-pressed={!!curTab?.fanout}
             title={fanoutDisabled
-              ? "Fan-out doesn't support parameters yet."
+              ? curTab?.fanout
+                ? "Fan-out doesn't support parameters yet — turn it off to run this query."
+                : "Fan-out doesn't support parameters yet."
               : "Fan-out: run this query across many databases in parallel"}
             onclick={() => curTab && setFanout(!curTab.fanout, curTab.fanoutDatabases)}
           >
@@ -612,7 +679,7 @@
             </button>
           {:else}
             <button
-              onclick={() => (naming = true)}
+              onclick={openNameDialog}
               disabled={!canSave}
               title="Save this query to the library (⌘S)"
             >
@@ -671,15 +738,21 @@
   <LibraryPanel />
 </main>
 
-<!-- Save-to-library name prompt (billz-he0). Suggested name is the tab's derived
-     title — the same default the retired Library-panel promote row used. -->
+<!-- App-level ⌘S (billz-he0). Bails on defaultPrevented so CodeMirror's own
+     Mod-s binding still wins while the editor has focus. -->
+<svelte:window onkeydown={onWindowKeydown} />
+
+<!-- Save-to-library name prompt (billz-he0). Suggested name is the target tab's
+     derived title — the same default the retired Library-panel promote row used.
+     It comes from the captured target, not a live re-read, so it can't drift onto
+     a different tab while the dialog is open. -->
 {#if naming}
   <NameDialog
     title="Save to library"
     label="Query name"
-    value={deriveTitle(activeContent())}
+    value={naming.suggested}
     onsubmit={saveToLibrary}
-    oncancel={() => (naming = false)}
+    oncancel={closeNameDialog}
   />
 {/if}
 
@@ -827,9 +900,9 @@
   }
   .db-picker:disabled { color: var(--faint); }
   /* Fan-out toggle: a ghost button that reuses the theme-toggle's accent-tint
-     active language. When on, the toolbar wraps so the checklist gets its own row. */
+     active language. When on, the checklist gets its own (already-wrapping) row and
+     the controls top-align against its height. */
   .toolbar.fanout {
-    flex-wrap: wrap;
     align-items: flex-start;
   }
   .fanout-toggle {

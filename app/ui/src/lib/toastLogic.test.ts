@@ -73,6 +73,15 @@ describe("addToast", () => {
       expect(ids(evicted)).toEqual(["i0"]);
     });
 
+    // A cap no real caller passes, but the loop must terminate rather than
+    // splice(-1) the newest error away and spin.
+    test("a cap smaller than the sticky count terminates without eating errors", () => {
+      const errs = Array.from({ length: 3 }, (_, i) => t(`e${i}`, "error"));
+      const { list, evicted } = addToast(errs, t("e3", "error"), 0);
+      expect(list).toHaveLength(4);
+      expect(evicted).toEqual([]);
+    });
+
     test("the transient budget counts only transients", () => {
       const errs = Array.from({ length: 6 }, (_, i) => t(`e${i}`, "error"));
       let list = [...errs];
