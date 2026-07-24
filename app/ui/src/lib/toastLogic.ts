@@ -6,6 +6,13 @@
 // connection failed, background refresh error). Query execution output — row
 // counts, batch results, SQL errors — stays in the Messages pane, which is a
 // durable record you re-read. Don't reroute those here.
+//
+// RETENTION vs DISPLAY are two different limits, deliberately separated:
+//   - Errors are never auto-dismissed AND never evicted. They accumulate.
+//   - Only MAX_VISIBLE toasts are RENDERED; the older ones collapse behind a
+//     counter (partitionToasts) rather than being destroyed.
+// Conflating the two is how "errors stay until you dismiss them" quietly stops
+// being true in exactly the session that's generating errors.
 
 export type ToastKind = "success" | "error" | "info";
 
@@ -15,14 +22,21 @@ export type Toast = {
   text: string;
 };
 
-/** Most toasts on screen at once; older ones are evicted to make room. */
-export const MAX_TOASTS = 4;
+/**
+ * How many toasts render at once. Purely a display bound — see the note above.
+ * Also caps how many TRANSIENT toasts are retained, since those expire anyway.
+ */
+export const MAX_VISIBLE = 4;
 
 /** How long a non-sticky toast lives. */
 export const TOAST_MS = 4000;
 
 /**
- * Append `t`, evicting the oldest entries until the stack fits `max`.
+ * Append `t`, evicting only TRANSIENT toasts to stay within `maxTransient`.
+ *
+ * Sticky toasts (errors) are never evicted — they leave the stack only when the
+ * user dismisses them. A burst of routine success toasts therefore cannot
+ * destroy an unread error.
  *
  * Returns the evicted toasts alongside the new list *by design*: the store owns
  * a pending `setTimeout` per auto-dismissing toast, and an evicted toast's timer
@@ -33,11 +47,30 @@ export const TOAST_MS = 4000;
 export function addToast(
   list: Toast[],
   t: Toast,
-  max = MAX_TOASTS,
+  maxTransient = MAX_VISIBLE,
 ): { list: Toast[]; evicted: Toast[] } {
   const next = [...list, t];
-  const overflow = Math.max(0, next.length - max);
-  return { list: next.slice(overflow), evicted: next.slice(0, overflow) };
+  const evicted: Toast[] = [];
+  while (next.filter((x) => !isSticky(x.kind)).length > maxTransient) {
+    const oldest = next.findIndex((x) => !isSticky(x.kind));
+    evicted.push(...next.splice(oldest, 1));
+  }
+  return { list: next, evicted };
+}
+
+/**
+ * Split the stack into what renders and what collapses behind a counter.
+ *
+ * The newest `maxVisible` are shown, so a just-raised toast is always on screen;
+ * anything older stays in `hidden`, still readable once expanded, never dropped.
+ */
+export function partitionToasts(
+  list: Toast[],
+  maxVisible = MAX_VISIBLE,
+): { visible: Toast[]; hidden: Toast[] } {
+  if (list.length <= maxVisible) return { visible: list, hidden: [] };
+  const cut = list.length - maxVisible;
+  return { visible: list.slice(cut), hidden: list.slice(0, cut) };
 }
 
 /**
@@ -51,6 +84,11 @@ export function dismissToast(list: Toast[], id: string): Toast[] {
   return next.length === list.length ? list : next;
 }
 
+/** Clear the stack. Errors pile up unbounded, so "dismiss all" is a real need. */
+export function dismissAllToasts(_list: Toast[]): Toast[] {
+  return [];
+}
+
 /**
  * How long this kind stays up, or `null` for "until dismissed".
  *
@@ -59,6 +97,14 @@ export function dismissToast(list: Toast[], id: string): Toast[] {
  */
 export function autoDismissMs(kind: ToastKind): number | null {
   return kind === "error" ? null : TOAST_MS;
+}
+
+/**
+ * Does this kind stay until dismissed? Derived from `autoDismissMs` rather than
+ * re-testing the kind, so the retention rule and the timer rule cannot drift.
+ */
+export function isSticky(kind: ToastKind): boolean {
+  return autoDismissMs(kind) === null;
 }
 
 /**
