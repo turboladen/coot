@@ -2,7 +2,7 @@
 // to just these. Add here first if a component needs a new one.
 export {
   Database, Table2, Eye, EyeOff, Play, Save, RefreshCw,
-  Plus, Lock, ChevronDown, ChevronRight, Search, X,
+  Plus, Lock, ChevronDown, ChevronLeft, ChevronRight, Search, X,
   Check, Clock, Globe,
   Sun, Moon, Monitor,
   Network,
