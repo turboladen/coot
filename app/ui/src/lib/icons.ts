@@ -6,4 +6,5 @@ export {
   Check, Clock, Globe,
   Sun, Moon, Monitor,
   Network,
+  Pencil, Trash2, MoreHorizontal,
 } from "lucide-svelte";
