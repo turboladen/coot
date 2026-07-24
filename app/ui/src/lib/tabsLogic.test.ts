@@ -10,8 +10,9 @@ function tab(
   content = "",
   database: string | null = null,
   savedQueryId: string | null = null,
+  connectionId: string | null = null,
 ): QueryTab {
-  return { id, title: deriveTitle(content), content, database, savedQueryId, fanout: false, fanoutDatabases: [] };
+  return { id, title: deriveTitle(content), content, database, savedQueryId, connectionId, fanout: false, fanoutDatabases: [] };
 }
 
 describe("deriveTitle", () => {
@@ -202,6 +203,40 @@ describe("serialize / deserialize", () => {
       activeId: "a",
     });
     expect(deserialize(mixed)?.tabs[0].fanoutDatabases).toEqual(["DB_A", "DB_B"]);
+  });
+
+  test("round-trips a tab's connectionId (billz-a5y.1)", () => {
+    const withConn: TabsState = {
+      tabs: [tab("a", "SELECT 1", null, null, "conn-x"), tab("b", "SELECT 2", null, null, null)],
+      activeId: "a",
+    };
+    expect(deserialize(serialize(withConn))).toEqual(withConn);
+  });
+
+  test("a pre-a5y.1 blob without a connectionId field defaults to null", () => {
+    // Tabs persisted before a5y.1 have no `connectionId` key — must load, not poison,
+    // and default to null (= no connection → empty state), not inherit a stale id.
+    const legacy = JSON.stringify({
+      tabs: [{ id: "a", title: "t", content: "SELECT 1", database: null, savedQueryId: null }],
+      activeId: "a",
+    });
+    expect(deserialize(legacy)?.tabs[0].connectionId).toBe(null);
+  });
+
+  test("a non-string, non-null connectionId coerces to null", () => {
+    const bad = JSON.stringify({
+      tabs: [{ id: "a", title: "t", content: "SELECT 1", connectionId: 42 }],
+      activeId: "a",
+    });
+    expect(deserialize(bad)?.tabs[0].connectionId).toBe(null);
+  });
+
+  test("an empty-string connectionId normalizes to null (no dead-id target)", () => {
+    const empty = JSON.stringify({
+      tabs: [{ id: "a", title: "t", content: "SELECT 1", connectionId: "" }],
+      activeId: "a",
+    });
+    expect(deserialize(empty)?.tabs[0].connectionId).toBe(null);
   });
 
   test("dangling activeId is repaired to the first tab", () => {

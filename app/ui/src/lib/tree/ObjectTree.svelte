@@ -14,8 +14,19 @@
   // effect and shared with the DB picker; this component only READS it.
   const activeId = conns.activeId;
 
+  // billz-a5y.1: `conns.activeId` now mirrors the active tab's connection, which
+  // can be a DANGLING id — its connection was deleted while another tab still
+  // referenced it, and a later tab switch re-mirrors that stale id here. Presence-
+  // gate the tree the same way run(), the DB picker, and `databaseLoadTarget` do,
+  // so a dangling id lands on the empty state instead of a permanent "Loading…"
+  // spinner (App's load effect resolves it to `null` → dbStore stays idle, which
+  // the final `else` would otherwise render as a stuck spinner). `$derived` (not a
+  // mount-captured const) so it flips true once `conns.list` finishes loading at
+  // cold start — `activeId` itself stays mount-fixed under the {#key} remount.
+  const known = $derived(activeId != null && conns.list.some((c) => c.id === activeId));
+
   async function refresh() {
-    if (!activeId) return;
+    if (!activeId || !known) return; // `|| !activeId` also narrows activeId to string below
     // Invalidate core FIRST, then bump: App.svelte's effect re-runs the shared
     // load (missing the just-cleared cache → re-queries SQL) and the {#key}
     // remounts the tree so every node returns to idle. Bumping before invalidate
@@ -28,10 +39,12 @@
 <div class="tree">
   <div class="header">
     <h2>Objects</h2>
-    <button class="refresh" onclick={refresh} disabled={!activeId} title="Refresh"><RefreshCw size={13} /></button>
+    <button class="refresh" onclick={refresh} disabled={!known} title="Refresh"><RefreshCw size={13} /></button>
   </div>
 
-  {#if !activeId}
+  {#if !activeId || !known}
+    <!-- `!activeId ||` is logically redundant (known ⇒ activeId != null) but narrows
+         activeId to `string` in the else branches below (DatabaseNode's `id`). -->
     <div class="empty-tree">
       <Database size={20} />
       <p class="hint">Select a connection to browse its objects.</p>
