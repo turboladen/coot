@@ -49,8 +49,33 @@ describe("promoteToSavedQuery", () => {
     expect(promoteToSavedQuery("id1", "n", "SELECT 1", null).id).toBe("id1");
   });
 
-  test("params is always []", () => {
-    expect(promoteToSavedQuery("id1", "n", "SELECT * FROM t WHERE x = @x", null).params).toEqual([]);
+  test("no @params → params is []", () => {
+    expect(promoteToSavedQuery("id1", "n", "SELECT 1", null).params).toEqual([]);
+  });
+
+  // billz-he0: promote used to hardcode `params: []`, while the sibling save paths
+  // (openScopedQuery, App.updateSavedQuery) both ran deriveParams — so a promoted
+  // query with @params came back with an empty param list and no param bar.
+  test("derives @params from the sql", () => {
+    const q = promoteToSavedQuery("id1", "n", "SELECT * FROM t WHERE x = @x AND y = @y", null);
+    // The sigil is part of the name throughout the param model (paramBarLogic).
+    expect(q.params.map((p) => p.name)).toEqual(["@x", "@y"]);
+  });
+
+  test("derived params start unconfigured and local-scoped", () => {
+    const [p] = promoteToSavedQuery("id1", "n", "SELECT @a", null).params;
+    expect(p).toEqual({ name: "@a", sqlType: null, lastValue: null, scope: "local" });
+  });
+
+  test("first-appearance order, deduped", () => {
+    const q = promoteToSavedQuery("id1", "n", "SELECT @b, @a, @b", null);
+    expect(q.params.map((p) => p.name)).toEqual(["@b", "@a"]);
+  });
+
+  // A literal/comment @word is not a param — deriveParams is lexer-aware (billz-7c9),
+  // and promote inherits that rather than re-implementing a naive scan.
+  test("ignores @words inside string literals", () => {
+    expect(promoteToSavedQuery("id1", "n", "SELECT '@notaparam'", null).params).toEqual([]);
   });
 
   test("passes through sql and targetDatabase", () => {

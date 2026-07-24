@@ -20,8 +20,11 @@
   import { clearGlobalParam, globalParams, setGlobalParams } from "./lib/globalParams.svelte";
   import { conns, refresh } from "./lib/connections.svelte";
   import { library, refresh as refreshLibrary, save as saveQuery } from "./lib/savedQueries.svelte";
-  import { activeContent, flushSave, restore, setActiveContent, setActiveDatabase, setFanout, tabsState } from "./lib/tabs.svelte";
-  import { isTabDirty } from "./lib/tabsLogic";
+  import { promoteToSavedQuery } from "./lib/savedQueriesLogic";
+  import { pushToast } from "./lib/toasts.svelte";
+  import NameDialog from "./lib/NameDialog.svelte";
+  import { activeContent, flushSave, restore, setActiveContent, setActiveDatabase, setActiveSavedQuery, setFanout, tabsState } from "./lib/tabs.svelte";
+  import { deriveTitle, isTabDirty } from "./lib/tabsLogic";
   import { expandRoot } from "./lib/sidebar.svelte";
   import { clearDatabases, databasesFor, ensureDatabases } from "./lib/databases.svelte";
   import { databaseLoadAction } from "./lib/databasesLogic";
@@ -189,11 +192,53 @@
   // targetDatabase + param values untouched. Re-checks dirty (stale-click no-op).
   async function updateSavedQuery() {
     if (!curSavedQuery || !curTab || !dirty) return;
-    await saveQuery({
-      ...curSavedQuery,
-      sql: curTab.content,
-      params: deriveParams(curTab.content, curSavedQuery.params),
-    });
+    const name = curSavedQuery.name;
+    try {
+      await saveQuery({
+        ...curSavedQuery,
+        sql: curTab.content,
+        params: deriveParams(curTab.content, curSavedQuery.params),
+      });
+      // billz-he0: this path previously gave NO feedback at all — the dirty dot
+      // just went out, which is easy to miss while you're reading SQL.
+      pushToast("success", `Updated "${name}".`);
+    } catch (e) {
+      pushToast("error", `Couldn't update "${name}": ${e}`);
+    }
+  }
+
+  // billz-he0: the PUSH flow. Saving a query is more naturally done from the editor
+  // you're looking at than by opening the Library panel and pulling the tab in, so
+  // the toolbar owns this and the Library panel's promote CTA is gone.
+  let naming = $state(false);
+  const canSave = $derived(!!curTab && curTab.content.trim() !== "");
+
+  async function saveToLibrary(name: string) {
+    naming = false;
+    if (!curTab) return;
+    const id = crypto.randomUUID();
+    try {
+      await saveQuery(promoteToSavedQuery(id, name, curTab.content, curTab.database));
+      // LINK the tab to what we just saved. Without this the tab stays a scratch
+      // tab, so the toolbar keeps offering "Save to library" and a second save
+      // mints a DUPLICATE entry instead of updating the first.
+      setActiveSavedQuery(id);
+      pushToast("success", `Saved "${name.trim()}" to the library.`);
+    } catch (e) {
+      pushToast("error", `Couldn't save "${name.trim()}": ${e}`);
+    }
+  }
+
+  // Cmd/Ctrl-S from the editor. A linked tab saves back; a scratch tab opens the
+  // name dialog. On a linked tab with nothing to save this is a deliberate no-op —
+  // it matches the toolbar button's own disabled state, and a "nothing to save"
+  // toast on every stray Cmd-S is noise, not information.
+  function saveFromEditor() {
+    if (curSavedQuery) {
+      if (dirty) updateSavedQuery();
+    } else if (canSave) {
+      naming = true;
+    }
   }
 
   // Which tier each param's displayed value resolves from (drives the badge).
@@ -512,7 +557,7 @@
                tab its own doc/undo/cursor (no bleed across tabs). `value` is
                init-only; edits flow back via onchange → tabsState → autosave. -->
           {#key tabsState.activeId}
-            <SqlEditor bind:this={editor} value={activeContent()} onchange={setActiveContent} onrun={run} />
+            <SqlEditor bind:this={editor} value={activeContent()} onchange={setActiveContent} onrun={run} onsave={saveFromEditor} />
           {/key}
         </div>
         <!-- DB picker + Run button. Cmd/Ctrl-Enter → getRunTarget() → runSql →
@@ -555,13 +600,23 @@
             </select>
           {/if}
           <button class="primary" onclick={run} disabled={running}><Play size={14} /> {running ? "Running…" : "Run"}</button>
+          <!-- One adaptive save affordance (billz-he0): a linked tab saves BACK,
+               a scratch tab saves NEW. Cmd/Ctrl-S routes to whichever applies. -->
           {#if curSavedQuery}
             <button
               onclick={updateSavedQuery}
               disabled={!dirty}
-              title="Save the tab's edited SQL back to this saved query"
+              title="Save the tab's edited SQL back to this saved query (⌘S)"
             >
               <Save size={14} /> Update saved query
+            </button>
+          {:else}
+            <button
+              onclick={() => (naming = true)}
+              disabled={!canSave}
+              title="Save this query to the library (⌘S)"
+            >
+              <Save size={14} /> Save to library
             </button>
           {/if}
         </div>
@@ -615,6 +670,18 @@
        (billz-a5y.6). Open/collapsed + width persist across launches. -->
   <LibraryPanel />
 </main>
+
+<!-- Save-to-library name prompt (billz-he0). Suggested name is the tab's derived
+     title — the same default the retired Library-panel promote row used. -->
+{#if naming}
+  <NameDialog
+    title="Save to library"
+    label="Query name"
+    value={deriveTitle(activeContent())}
+    onsubmit={saveToLibrary}
+    oncancel={() => (naming = false)}
+  />
+{/if}
 
 <!-- Transient app-level feedback (billz-086). Mounted once, fixed-position, so it
      sits outside the grid. Query output belongs in the Messages pane, not here. -->
@@ -727,6 +794,12 @@
     gap: 0.75rem;
     padding: 0.4rem 0.6rem;
     border-bottom: 1px solid var(--border);
+    /* Wrap the ROW rather than the labels (billz-he0). The workspace column gets
+       genuinely tight with the Library panel open on a smaller window; wrapping
+       here costs a second toolbar row, while not wrapping clips a control off the
+       edge entirely — losing the button is worse than moving it. */
+    flex-wrap: wrap;
+    row-gap: var(--sp-1);
   }
   .toolbar :global(svg) { color: var(--muted); flex: none; }
   /* The primary Run button's Play icon must read on the teal fill, not muted. */
@@ -735,6 +808,12 @@
     display: inline-flex;
     align-items: center;
     gap: var(--sp-1);
+    /* Don't wrap the label. The toolbar is a flex row that gets tight once the
+       Library panel is open on a smaller window, and a wrapped "Save to library"
+       breaks onto three lines and inflates the whole toolbar's height (billz-he0).
+       flex:none stops the button being squeezed in the first place. */
+    white-space: nowrap;
+    flex: none;
   }
   .db-picker {
     font: inherit;
