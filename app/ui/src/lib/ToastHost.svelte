@@ -44,11 +44,13 @@
     display: flex;
     flex-direction: column;
     gap: var(--sp-2);
-    /* The container spans no more than it needs, and never blocks clicks on the
-       app behind it — only the toasts themselves are interactive. */
-    align-items: flex-end;
+    /* Uniform width rather than shrink-to-fit: a stack whose left edge is ragged
+       reads as sloppy, and a one-line toast next to a wrapped one is the common
+       case. The container never blocks clicks on the app behind it — only the
+       toasts themselves are interactive. */
+    width: min(24rem, calc(100vw - 2 * var(--sp-4)));
+    align-items: stretch;
     pointer-events: none;
-    max-width: min(24rem, calc(100vw - 2 * var(--sp-4)));
   }
   .toast {
     pointer-events: auto;
@@ -86,13 +88,16 @@
   .toast.info {
     border-left-color: var(--brand);
   }
-  .toast.success :global(svg:first-child) {
+  /* Child combinator, not a descendant selector: the kind icon is a DIRECT child
+     of .toast, whereas the ✕ is nested in the close button — where it is also a
+     first child, so `svg:first-child` would tint it the kind color too. */
+  .toast.success > :global(svg) {
     color: var(--ok);
   }
-  .toast.error :global(svg:first-child) {
+  .toast.error > :global(svg) {
     color: var(--danger);
   }
-  .toast.info :global(svg:first-child) {
+  .toast.info > :global(svg) {
     color: var(--brand);
   }
   .toast :global(svg) {
@@ -107,7 +112,9 @@
     flex: none;
     display: flex;
     align-items: center;
-    margin-left: var(--sp-1);
+    /* auto, not a fixed gap: pushes ✕ to the right edge now that the stack is a
+       uniform width rather than shrink-to-fit. */
+    margin-left: auto;
     padding: 2px;
     border: none;
     border-radius: var(--r-sm);
