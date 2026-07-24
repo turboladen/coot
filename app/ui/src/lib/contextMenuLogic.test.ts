@@ -36,3 +36,24 @@ test("clampMenuPosition: margin defaults to 8 when omitted", () => {
     clampMenuPosition({ x: 999, y: 100, menuW: 176, menuH: 88, viewportW: 1000, viewportH: 800 }),
   ).toEqual({ x: 1000 - 8 - 176, y: 100 });
 });
+
+// billz-a5y.8 nit#4: when the menu is anchored to a trigger button (the ⋯ button),
+// a bottom overflow must flip the menu ABOVE the trigger — its bottom edge at the
+// trigger's TOP — not above y (the trigger's bottom), which would overlap the button.
+test("clampMenuPosition: a bottom-overflow flip anchors above anchorTop when given", () => {
+  // Trigger rect top=760, bottom=780. y=780 (r.bottom) overflows → flip using
+  // anchorTop=760 so the menu's bottom lands at 760 (the trigger's top), clearing it.
+  expect(
+    clampMenuPosition({ x: 100, y: 780, anchorTop: 760, ...BIG }),
+  ).toEqual({ x: 100, y: 760 - 88 });
+});
+
+test("clampMenuPosition: anchorTop is ignored when the menu fits below y", () => {
+  // No bottom overflow → drops down from y regardless of anchorTop.
+  expect(clampMenuPosition({ x: 100, y: 100, anchorTop: 80, ...BIG })).toEqual({ x: 100, y: 100 });
+});
+
+test("clampMenuPosition: without anchorTop a bottom-overflow flip still uses y - menuH", () => {
+  // Regression guard for the cursor path (right-click), which passes no anchorTop.
+  expect(clampMenuPosition({ x: 100, y: 780, ...BIG })).toEqual({ x: 100, y: 780 - 88 });
+});

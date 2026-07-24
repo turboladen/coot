@@ -91,7 +91,7 @@
 </div>
 
 <style>
-  .tree { padding: 0.25rem 0.5rem 0.5rem; }
+  .tree { padding: 0.1rem var(--sp-2) var(--sp-2); }
   .header { display: flex; align-items: center; justify-content: flex-end; }
   .refresh {
     display: inline-flex;

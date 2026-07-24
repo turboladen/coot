@@ -26,9 +26,11 @@
     align-items: center;
     /* Reset the global button base's justify-content:center (app.css). */
     justify-content: flex-start;
-    gap: 0.3rem;
+    gap: var(--sp-1);
     width: 100%;
-    padding: 0.1rem 0.3rem 0.1rem 1.4rem;
+    /* Views are siblings of Tables — same depth-2 indent (1.2rem), not 1.4
+       (billz-a5y.8: they were mis-indented one step deeper than tables). */
+    padding: 0.2rem 0.3rem 0.2rem 1.2rem;
     background: none;
     border: none;
     border-radius: var(--r-sm);
