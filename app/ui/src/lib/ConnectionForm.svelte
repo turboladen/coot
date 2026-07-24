@@ -1,9 +1,10 @@
 <script lang="ts">
   import { untrack } from "svelte";
-  import type { ConnectionConfig } from "./api";
-  import { testConnection } from "./api";
+  import type { ConnectionConfig, DatabaseInfo } from "./api";
+  import { listDatabases, testConnection } from "./api";
   import { save } from "./connections.svelte";
-  import { X } from "./icons";
+  import { formatServer, parseServer } from "./connectionFormLogic";
+  import { Eye, EyeOff, X } from "./icons";
 
   // `editing` = the config to edit, or null for a new connection. The parent
   // wraps this in {#key} so a new target remounts the form (fields re-init).
@@ -34,16 +35,28 @@
   // Local form state, seeded from `seed` (or blank for new). Fields are mutated
   // directly — this is a fresh instance per edit target.
   let name = $state(seed?.name ?? "");
-  let server = $state(seed?.server ?? "");
+  // The stored `server` is "host,port" (or just "host"). Split it into separate
+  // Host/Port fields for editing (billz-a5y.7); recombined on save via
+  // formatServer in buildConfig.
+  const seeded = parseServer(seed?.server ?? "");
+  let host = $state(seeded.host);
+  let port = $state(seeded.port);
   let username = $state(seed?.username ?? "");
   let defaultDatabase = $state(seed?.defaultDatabase ?? "");
   let encrypt = $state(seed?.encrypt ?? false);
   let trustServerCertificate = $state(seed?.trustServerCertificate ?? true);
 
   let password = $state("");
+  // Eye-toggle: reveal the typed password (billz-a5y.7) by flipping the input's
+  // `type`; see the value+oninput note on the markup below.
+  let showPassword = $state(false);
   // Seeded from the saved config so editing shows the correct state (85b); default
   // true for a new connection (store in Keychain).
   let rememberPassword = $state(seed?.rememberPassword ?? true);
+
+  // Databases loaded by a successful Test (list_databases). Empty until then —
+  // the Default-database dropdown shows helper text meanwhile (billz-a5y.7).
+  let databases = $state<DatabaseInfo[]>([]);
 
   let status = $state<{ kind: "ok" | "error"; text: string } | null>(null);
   let busy = $state(false);
@@ -52,7 +65,7 @@
     return {
       id,
       name,
-      server,
+      server: formatServer(host, port),
       username,
       defaultDatabase: defaultDatabase.trim() === "" ? null : defaultDatabase.trim(),
       encrypt,
@@ -93,7 +106,21 @@
       await save(cfg, pw);
       if (pw !== null && !rememberPassword) onSessionUnlock(cfg.id);
       await testConnection(cfg.id);
-      status = { kind: "ok", text: "Connection OK (SELECT 1 succeeded)." };
+      // SELECT 1 passed. Test does double duty (billz-a5y.7): also load the
+      // database list to populate the Default-database dropdown. A list failure
+      // must NOT mask the successful SELECT 1 — hence the inner try/catch.
+      try {
+        databases = await listDatabases(cfg.id);
+        status = {
+          kind: "ok",
+          text: `Connection OK (SELECT 1 succeeded). Loaded ${databases.length} databases.`,
+        };
+      } catch (e) {
+        status = {
+          kind: "ok",
+          text: `Connection OK (SELECT 1 succeeded). Could not load databases: ${e}`,
+        };
+      }
     } catch (e) {
       // Surfaces e.g. Config("no stored password…") legibly when Remember was off
       // and no password has been entered this session.
@@ -107,20 +134,60 @@
 <div class="form">
   <h2>{isNew ? "New connection" : `Edit: ${seed?.name}`}</h2>
 
-  <label>Name<input bind:value={name} /></label>
-  <!-- Identifier fields: no spell-check squiggle, no WebKit autocorrect/autocapitalize
+  <label>Name<input class="field" bind:value={name} /></label>
+  <!-- Host + Port share one row; recombined into the stored "host,port" on save.
+       Identifier fields: no spell-check squiggle, no WebKit autocorrect/autocapitalize
        mangling hostnames or logins like `sa` (billz-pj7). -->
-  <label>Server (host,port)<input bind:value={server} placeholder="myhost,1433" spellcheck="false" autocorrect="off" autocapitalize="off" /></label>
-  <label>Username<input bind:value={username} spellcheck="false" autocorrect="off" autocapitalize="off" /></label>
+  <div class="row">
+    <label class="grow">Host<input class="field" bind:value={host} placeholder="myhost" spellcheck="false" autocorrect="off" autocapitalize="off" /></label>
+    <label class="port">Port<input class="field" bind:value={port} placeholder="1433" spellcheck="false" autocorrect="off" autocapitalize="off" /></label>
+  </div>
+  <label>Username<input class="field" bind:value={username} spellcheck="false" autocorrect="off" autocapitalize="off" /></label>
   <label>
     Password
-    <input type="password" bind:value={password} placeholder={isNew ? "" : "(unchanged)"} />
+    <!-- Eye-toggle reveals the typed password. `type` is dynamic, which Svelte
+         forbids together with `bind:value`, so we bind manually via value+oninput
+         (this also keeps a single element, preserving caret/focus on toggle). -->
+    <span class="pw-wrap">
+      <input
+        class="field"
+        type={showPassword ? "text" : "password"}
+        value={password}
+        oninput={(e) => (password = e.currentTarget.value)}
+        placeholder={isNew ? "" : "(unchanged)"}
+      />
+      <button
+        type="button"
+        class="eye"
+        aria-label={showPassword ? "Hide password" : "Show password"}
+        onclick={() => (showPassword = !showPassword)}
+      >
+        {#if showPassword}<EyeOff size={15} />{:else}<Eye size={15} />{/if}
+      </button>
+    </span>
   </label>
   <label class="check">
     <input type="checkbox" bind:checked={rememberPassword} />
     Remember password in Keychain (else prompt each session)
   </label>
-  <label>Default database (optional)<input bind:value={defaultDatabase} spellcheck="false" autocorrect="off" autocapitalize="off" /></label>
+  <label>
+    Default database (optional)
+    <!-- Dropdown populated by Test (list_databases). Empty until then. A saved
+         value not yet in the loaded list gets its own option so it still shows —
+         guarded so it never DUPLICATES a value already in `databases`. -->
+    <select class="field" bind:value={defaultDatabase}>
+      <option value="">(none)</option>
+      {#if defaultDatabase !== "" && !databases.some((d) => d.name === defaultDatabase)}
+        <option value={defaultDatabase}>{defaultDatabase}</option>
+      {/if}
+      {#each databases as d (d.name)}
+        <option value={d.name}>{d.name}</option>
+      {/each}
+    </select>
+    {#if databases.length === 0}
+      <span class="helper">Test the connection to load databases.</span>
+    {/if}
+  </label>
   <label class="check">
     <input type="checkbox" bind:checked={encrypt} /> Encrypt
   </label>
@@ -157,15 +224,40 @@
     font-size: var(--fs-sm);
   }
   label.check { flex-direction: row; align-items: center; gap: var(--sp-1); }
-  input[type="password"],
-  input:not([type]) {
+  /* Host + Port on one row. */
+  .row { display: flex; gap: var(--sp-2); }
+  .row .grow { flex: 1 1 auto; min-width: 0; }
+  .row .port { flex: 0 0 6rem; }
+  /* Class-based so styling survives the password input's dynamic type flip
+     (type="text" would otherwise match neither an attribute selector). */
+  input.field,
+  select.field {
     border: 1px solid var(--border-strong);
     border-radius: var(--r-sm);
     background: var(--raised);
     color: var(--text);
     padding: var(--sp-1) var(--sp-2);
     font: inherit;
+    width: 100%;
+    box-sizing: border-box;
   }
+  .pw-wrap { position: relative; display: flex; }
+  .pw-wrap .field { padding-right: 2rem; }
+  .eye {
+    position: absolute;
+    top: 0;
+    right: 0;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    padding: 0 var(--sp-2);
+    border: none;
+    background: none;
+    color: var(--muted);
+    cursor: pointer;
+  }
+  .eye:hover { color: var(--text); }
+  .helper { color: var(--muted); font-size: var(--fs-sm); font-style: italic; }
   .actions { display: flex; gap: var(--sp-1); margin-top: var(--sp-2); }
   button {
     cursor: pointer;
