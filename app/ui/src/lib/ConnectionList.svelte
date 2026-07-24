@@ -39,9 +39,9 @@
 </div>
 
 <style>
-  .list { padding: 0.5rem; }
+  .list { padding: var(--sp-2); }
   .header { display: flex; align-items: center; justify-content: space-between; }
-  h2 { font-size: 1rem; margin: 0.5rem 0; }
-  .empty { color: var(--muted); font-size: 0.9rem; }
+  h2 { font-size: var(--fs-md); margin: var(--sp-2) 0; }
+  .empty { color: var(--muted); font-size: var(--fs-sm); }
   ul { list-style: none; margin: 0; padding: 0; }
 </style>

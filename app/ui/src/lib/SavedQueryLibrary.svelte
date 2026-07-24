@@ -51,10 +51,10 @@
 </script>
 
 <div class="list">
-  <div class="header">
-    <h2>Saved queries</h2>
-    <button onclick={startPromote}>Promote current tab</button>
-  </div>
+  <!-- billz-a5y.8 nit#1: the panel's own header ("Library" in LibraryPanel) is the
+       single header now — this component's redundant "Saved queries" h2 is gone.
+       Promote-current-tab is the panel's primary action, given a full-width CTA. -->
+  <button class="promote-btn" onclick={startPromote}>Promote current tab</button>
 
   {#if promoting}
     <div class="promote">
@@ -92,9 +92,11 @@
 </div>
 
 <style>
-  .list { padding: 0.5rem; }
-  .header { display: flex; align-items: center; justify-content: space-between; }
-  h2 { font-size: 1rem; margin: 0.5rem 0; color: var(--text); }
+  .list { padding: var(--sp-2); }
+  /* Full-width promote CTA at the body top (billz-a5y.8 nit#1) — inherits the
+     app.css outline-button system; kept secondary (not teal) so it doesn't compete
+     with Run. */
+  .promote-btn { width: 100%; margin-bottom: var(--sp-2); }
   .empty {
     display: flex;
     flex-direction: column;

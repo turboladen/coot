@@ -158,8 +158,10 @@ Design rules:
 
 - **Tabs = scratch.** Ephemeral, autosaved so nothing is ever lost (this is "persist across
   sessions" from the original ask).
-- **Saved queries = intentional.** A named, searchable library you _promote_ things into. Its own
-  home in the UI, not reconstructed by scrolling old tabs.
+- **Saved queries = intentional.** A named, searchable library you _promote_ things into. Its home
+  is a dedicated collapsible **right-side Library panel** adjacent to the workspace (it feeds query
+  tabs, so it lives next to them, not next to the DB-object sidebar) — open/collapsed state and width
+  persist across launches. Not reconstructed by scrolling old tabs.
 
 ---
 
@@ -178,8 +180,14 @@ Design rules:
 
 ## 7. Object tree
 
-- **v1 nodes only:** Server → Databases → Tables → Columns, plus Views. Omit every other SSMS node
-  type (don't render placeholders).
+- **v1 nodes only:** Connection (root) → Databases → Tables → Columns, plus Views. Omit every other
+  SSMS node type (don't render placeholders).
+- **Multi-root sidebar.** Each saved connection is its OWN collapsible root node with its object tree
+  beneath it (the flat connection list + a single lower "Objects" pane merged into one multi-root
+  tree — there is no separate Server node or Objects heading). Expanding a root lazily loads that
+  connection's databases; a collapsed root never touches the DB. Each root carries an **honest
+  passive status dot** (loaded / locked / error / neutral) reflecting only what that connection has
+  done this session — no background probing.
 - **Columns show:** name, type, nullable, and a PK/FK marker. One extra join, high value.
 - **Lazy-load children on expand.** server × dbs × tables × columns is far too much to walk eagerly.
   Cache in `schema.rs`; provide an explicit **Refresh** (I do DDL on DEV and want to see new objects

@@ -112,9 +112,10 @@
     /* Reset the global button base's justify-content:center (app.css) — without
        this the chevron+icon+label cluster centers in the full-width row. */
     justify-content: flex-start;
-    gap: 0.3rem;
+    gap: var(--sp-1);
     width: 100%;
-    padding: 0.1rem 0.3rem 0.1rem 0.7rem;
+    /* depth-2 indent (1.2rem), uniform 0.2rem vertical rhythm (billz-a5y.8). */
+    padding: 0.2rem 0.3rem 0.2rem 1.2rem;
     background: none;
     border: none;
     border-radius: var(--r-sm);
@@ -141,7 +142,7 @@
   .row :global(svg) { color: var(--muted); flex: none; }
   .label { color: var(--text); }
   ul { list-style: none; margin: 0; padding: 0; }
-  .note { padding: 0.1rem 0 0.1rem 1.4rem; font-size: 0.8rem; color: var(--muted); }
+  .note { padding: 0.1rem 0 0.1rem 2.1rem; font-size: 0.8rem; color: var(--muted); }
   .err { color: var(--danger); white-space: normal; }
   .menu-backdrop {
     position: fixed;
