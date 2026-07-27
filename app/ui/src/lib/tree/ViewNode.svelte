@@ -15,7 +15,7 @@
 <li>
   <button class="view" class:selected={selection.key === key} onclick={() => selectNode(key)}>
     <Eye size={13} />
-    <span class="label">{view.schema}.{view.name}</span>
+    <span class="label" title="{view.schema}.{view.name}">{view.schema}.{view.name}</span>
   </button>
 </li>
 
@@ -47,5 +47,11 @@
   .view.selected,
   .view.selected:hover { background: var(--tree-selected-bg); }
   .view.selected .label { color: var(--tree-selected-fg); }
-  .label { color: var(--text); }
+  /* billz-6s0 — see TableNode.svelte's .label for why min-width:0 is required. */
+  .label {
+    color: var(--text);
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
 </style>
