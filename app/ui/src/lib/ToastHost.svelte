@@ -7,7 +7,7 @@
   import { tick } from "svelte";
   import { AlertCircle, Check, Info, X } from "./icons";
   import { announcer, dismiss, dismissAll, toasts } from "./toasts.svelte";
-  import { isAssertive, partitionToasts, type ToastKind } from "./toastLogic";
+  import { partitionToasts, type ToastKind } from "./toastLogic";
 
   // Annotated (not inferred) so adding a ToastKind fails HERE, on the missing
   // entry, rather than as an index error down in the markup.
@@ -127,9 +127,13 @@
     pointer-events: none;
   }
   /* Expanded can be arbitrarily tall (errors accumulate unbounded), so it becomes
-     its own scroll container. Needs pointer-events to take the wheel. */
+     its own scroll container — but stays pointer-events:none. Wheel events target
+     the toast under the cursor (pointer-events:auto) and scroll the nearest
+     scrollable ancestor via the scroll chain, which doesn't require the ancestor
+     to be hit-testable. Setting `auto` here would make the full-height 24rem
+     column swallow clicks in the GAPS between toasts, over the results grid and
+     the Library panel underneath. */
   .host.expanded {
-    pointer-events: auto;
     max-height: calc(100vh - 2 * var(--sp-4));
     overflow-y: auto;
   }
