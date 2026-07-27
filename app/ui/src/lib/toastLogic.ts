@@ -53,6 +53,12 @@ export function addToast(
   const evicted: Toast[] = [];
   while (next.filter((x) => !isSticky(x.kind)).length > maxTransient) {
     const oldest = next.findIndex((x) => !isSticky(x.kind));
+    // Structural guard, not defensive noise: `splice(-1, 1)` would delete the
+    // NEWEST entry (a sticky error) and leave the transient count unchanged, so
+    // the loop would drain every error and then spin forever on an empty array.
+    // No caller passes a cap that reaches this, but the failure mode is silent
+    // data loss plus a hang, which is not a thing to leave one typo away.
+    if (oldest === -1) break;
     evicted.push(...next.splice(oldest, 1));
   }
   return { list: next, evicted };

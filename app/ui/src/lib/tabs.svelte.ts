@@ -168,6 +168,25 @@ export function setActiveDatabase(database: string | null): void {
   flushSave();
 }
 
+// Link tab `tabId` to saved query `savedQueryId` (billz-he0). Until now
+// `savedQueryId` was write-once at tab CREATION (newQueryTab / newTabWithContent),
+// so promoting a scratch tab left it a scratch tab: "Update saved query" never
+// appeared, the dirty dot never lit, and a second save minted a DUPLICATE library
+// entry instead of updating the first. Structural → flushSave, like setActive*.
+//
+// Takes an EXPLICIT tabId rather than acting on the active tab (the shape the
+// other setActive* ops use): the only caller saves asynchronously, and the active
+// tab can change mid-await (the name dialog's backdrop hides the TabBar but its
+// tabs are still keyboard-reachable). Linking "whichever tab is active when the
+// backend replies" is how the wrong tab ends up owning a saved query — and then
+// its "Update saved query" overwrites that query with unrelated SQL.
+export function setTabSavedQuery(tabId: string, savedQueryId: string): void {
+  const tab = tabsState.tabs.find((t) => t.id === tabId);
+  if (!tab) return;
+  tab.savedQueryId = savedQueryId;
+  flushSave();
+}
+
 // Point the active tab at connection `id` and mirror it to `conns.activeId`
 // (billz-a5y.1). billz-a5y.3: a ConnectionNode's NAME click routes here (the explicit
 // "use this connection for the current tab" RETARGET gesture) — distinct from the
