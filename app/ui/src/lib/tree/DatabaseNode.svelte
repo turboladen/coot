@@ -6,6 +6,7 @@
   import ViewNode from "./ViewNode.svelte";
   import { selection, selectNode } from "./selection.svelte";
   import { childKey } from "./treeKey";
+  import { elidedTitle } from "./elidedTitle";
 
   let { id, database }: { id: string; database: DatabaseInfo } = $props();
 
@@ -52,7 +53,7 @@
       {/if}
     </span>
     <Database size={13} />
-    <span class="label" title={database.name}>{database.name}</span>
+    <span class="label" use:elidedTitle={database.name}>{database.name}</span>
     {#if !isOnline}<span class="state">({database.stateDesc})</span>{/if}
   </button>
   {#if expanded}

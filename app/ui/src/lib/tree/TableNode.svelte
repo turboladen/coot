@@ -10,6 +10,7 @@
   import { selectTop1000 } from "./selectTopQuery";
   import { selection, selectNode } from "./selection.svelte";
   import { childKey } from "./treeKey";
+  import { elidedTitle } from "./elidedTitle";
 
   let { id, db, table, parentKey }: { id: string; db: string; table: TableInfo; parentKey: string } = $props();
 
@@ -71,7 +72,7 @@
   <button class="row" class:selected={selection.key === key} onclick={toggle} ondblclick={openSelect} oncontextmenu={openMenu} aria-expanded={expanded}>
     <span class="twisty">{#if expanded}<ChevronDown size={12} />{:else}<ChevronRight size={12} />{/if}</span>
     <Table2 size={13} />
-    <span class="label" title="{table.schema}.{table.name}">{table.schema}.{table.name}</span>
+    <span class="label" use:elidedTitle={`${table.schema}.${table.name}`}>{table.schema}.{table.name}</span>
   </button>
   {#if expanded}
     {#if status === "loading"}
