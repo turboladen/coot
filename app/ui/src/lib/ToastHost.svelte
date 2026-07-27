@@ -83,6 +83,14 @@
     <div class="toast {toast.kind}">
       <Icon size={15} />
       <span class="text">{toast.text}</span>
+      <!-- The visible badge is aria-hidden with an sr-only twin beside it: "×3" is
+           read as "multiplication sign three" or dropped outright depending on the
+           AT's punctuation level, and aria-label on a bare span isn't reliably
+           exposed. The count also rides the announcement (see announcementText). -->
+      {#if toast.repeat > 1}
+        <span class="repeat" aria-hidden="true">×{toast.repeat}</span>
+        <span class="sr-only">repeated {toast.repeat} times</span>
+      {/if}
       <button
         class="close"
         aria-label="Dismiss notification"
@@ -227,6 +235,24 @@
        makes a long message permanently undismissable. ~6 lines, then scroll. */
     max-height: 8.4em;
     overflow-y: auto;
+  }
+  /* Repeat badge. `flex: none` because the text beside it wraps and would
+     otherwise squeeze the count. Tinted with the same color-mix idiom as
+     .close:hover rather than a new token, so it holds up in both themes.
+     Full-strength --text, not --muted: a screen reader gets the count from the
+     .sr-only twin, so this badge is the ONLY carrier of the recurrence signal
+     for a low-vision sighted user — the last element in the toast that should
+     be the faintest. --muted at --fs-xs made it exactly that. */
+  .repeat {
+    flex: none;
+    padding: 0 var(--sp-1);
+    border-radius: var(--r-pill);
+    background: color-mix(in srgb, var(--text) 10%, transparent);
+    color: var(--text);
+    font-size: var(--fs-xs);
+    /* Aligns the badge with the FIRST line of a wrapped message: the row is
+       align-items:flex-start, and the badge is shorter than a line of body text. */
+    margin-top: 1px;
   }
   .close {
     flex: none;

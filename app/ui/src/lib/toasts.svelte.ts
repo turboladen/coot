@@ -8,6 +8,7 @@
 // the parts that can't be pure.
 import {
   addToast,
+  announcementText,
   autoDismissMs,
   dismissAllToasts,
   dismissToast,
@@ -29,9 +30,16 @@ export const toasts = $state<{ list: Toast[] }>({ list: [] });
  * stay in the a11y tree — `aria-hidden` around focusable controls would be its
  * own violation) while the announcement politeness stays correct.
  *
- * Known gap: pushing the identical string twice in a row is not a DOM change, so
- * the second one doesn't re-announce. billz-667 (coalescing repeats) makes that
- * case render as a repeat count instead, which is the better answer anyway.
+ * Known gap (billz-b8f), narrowed but NOT closed by coalescing: each region is a
+ * single string, and writing a string equal to what the region already holds is
+ * not a DOM change, so it doesn't re-announce. Coalescing fixes only the case
+ * where the previous instance is still the newest toast — the repeat count makes
+ * the string differ (see `announcementText`). Silent repeats remain when the
+ * previous instance has already LEFT the stack (auto-dismissed, or dismissed via
+ * ✕ — `dismiss` deliberately doesn't touch the announcer, only `dismissAll`
+ * does), and when two identical messages are separated only by a message of the
+ * other politeness, since the two regions are independent fields. A real fix
+ * needs a nonce or a clear-then-set on the region; that's billz-b8f, not here.
  */
 export const announcer = $state<{ polite: string; assertive: string }>({
   polite: "",
@@ -51,24 +59,39 @@ function clearTimer(id: string): void {
 }
 
 /**
- * Show a toast. Returns its id so a caller can dismiss it early.
+ * Show a toast. Returns the id of the toast now on screen, so a caller can
+ * dismiss it early.
  *
  * Errors stay until dismissed and are never evicted; success/info expire.
+ *
+ * A message identical to the newest one COALESCES into it (billz-667), which
+ * makes the returned id worth reading carefully: on a repeat it is the id of the
+ * pre-existing toast, not of this call, and dismissing it clears the whole
+ * coalesced run rather than one occurrence. Returning the freshly minted id
+ * instead would type-check and do nothing, since no such toast is in the stack.
  */
 export function pushToast(kind: ToastKind, text: string): string {
   const id = crypto.randomUUID();
-  const { list, evicted } = addToast(toasts.list, { id, kind, text });
+  const { list, evicted, active } = addToast(toasts.list, { id, kind, text, repeat: 1 });
   // Clear timers for anything pushed off the stack, so a dead toast's pending
   // timeout can't fire later and dismiss whatever is on screen by then.
   for (const t of evicted) clearTimer(t.id);
   toasts.list = list;
 
-  if (isAssertive(kind)) announcer.assertive = text;
-  else announcer.polite = text;
+  const announcement = announcementText(active.text, active.repeat);
+  if (isAssertive(kind)) announcer.assertive = announcement;
+  else announcer.polite = announcement;
 
+  // Re-arm from zero. On a coalesced repeat `active.id` is the EXISTING toast,
+  // whose timeout is still pending: clearing first is what makes a repeat reset
+  // the countdown instead of leaving the original deadline standing — and what
+  // stops `timers.set` overwriting a live handle, orphaning it to fire later
+  // against whatever occupies the stack by then. On the append path the id is
+  // brand new, so this is a no-op.
+  clearTimer(active.id);
   const ms = autoDismissMs(kind);
-  if (ms !== null) timers.set(id, setTimeout(() => dismiss(id), ms));
-  return id;
+  if (ms !== null) timers.set(active.id, setTimeout(() => dismiss(active.id), ms));
+  return active.id;
 }
 
 export function dismiss(id: string): void {
