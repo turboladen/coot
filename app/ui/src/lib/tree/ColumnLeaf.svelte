@@ -13,7 +13,7 @@
 
 <li>
   <button class="col" class:selected={selection.key === key} onclick={() => selectNode(key)}>
-    <span class="name">{label.name}</span>
+    <span class="name" title={label.name}>{label.name}</span>
     <span class="type">: {label.dataType}</span>
     <span class="null">{label.nullText}</span>
     {#if label.isPrimaryKey}<span class="badge pk">PK</span>{/if}
@@ -46,10 +46,20 @@
   .col.selected,
   .col.selected:hover { background: var(--tree-selected-bg); }
   .col.selected .name { color: var(--tree-selected-fg); }
-  .name { color: var(--text); }
-  .type { color: var(--type-tag); font-size: 0.8rem; }
-  .null { color: var(--faint); font-size: 0.7rem; }
+  /* billz-6s0 — see TableNode.svelte's .label for why min-width:0 is required.
+     Only the NAME yields: the type, nullability and PK/FK badges are short and
+     carry the information you'd scan a column list for, so they hold their size
+     and a long name ellipses in front of them rather than shoving them off. */
+  .name {
+    color: var(--text);
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .type { color: var(--type-tag); font-size: 0.8rem; flex: none; }
+  .null { color: var(--faint); font-size: 0.7rem; flex: none; }
   .badge {
+    flex: none;
     font-size: 0.65rem;
     padding: 0 0.25rem;
     border-radius: var(--r-sm);
