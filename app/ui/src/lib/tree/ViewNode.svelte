@@ -3,6 +3,7 @@
   import { Eye } from "../icons";
   import { selection, selectNode } from "./selection.svelte";
   import { childKey } from "./treeKey";
+  import { elidedTitle } from "./elidedTitle";
 
   // v1: a view is a leaf. The AC requires table->columns, not view->columns.
   // (`list_columns` already works on views since it queries sys.columns/sys.objects
@@ -15,7 +16,7 @@
 <li>
   <button class="view" class:selected={selection.key === key} onclick={() => selectNode(key)}>
     <Eye size={13} />
-    <span class="label">{view.schema}.{view.name}</span>
+    <span class="label" use:elidedTitle={`${view.schema}.${view.name}`}>{view.schema}.{view.name}</span>
   </button>
 </li>
 
@@ -47,5 +48,11 @@
   .view.selected,
   .view.selected:hover { background: var(--tree-selected-bg); }
   .view.selected .label { color: var(--tree-selected-fg); }
-  .label { color: var(--text); }
+  /* billz-6s0 — see TableNode.svelte's .label for why min-width:0 is required. */
+  .label {
+    color: var(--text);
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
 </style>

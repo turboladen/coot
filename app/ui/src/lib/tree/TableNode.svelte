@@ -10,6 +10,7 @@
   import { selectTop1000 } from "./selectTopQuery";
   import { selection, selectNode } from "./selection.svelte";
   import { childKey } from "./treeKey";
+  import { elidedTitle } from "./elidedTitle";
 
   let { id, db, table, parentKey }: { id: string; db: string; table: TableInfo; parentKey: string } = $props();
 
@@ -71,7 +72,7 @@
   <button class="row" class:selected={selection.key === key} onclick={toggle} ondblclick={openSelect} oncontextmenu={openMenu} aria-expanded={expanded}>
     <span class="twisty">{#if expanded}<ChevronDown size={12} />{:else}<ChevronRight size={12} />{/if}</span>
     <Table2 size={13} />
-    <span class="label">{table.schema}.{table.name}</span>
+    <span class="label" use:elidedTitle={`${table.schema}.${table.name}`}>{table.schema}.{table.name}</span>
   </button>
   {#if expanded}
     {#if status === "loading"}
@@ -140,7 +141,18 @@
     flex: none;
   }
   .row :global(svg) { color: var(--muted); flex: none; }
-  .label { color: var(--text); }
+  /* billz-6s0: truncate instead of bleeding out of the sidebar. `min-width: 0` is
+     the load-bearing part — a flex item defaults to `min-width: auto`, so a
+     nowrap label refuses to shrink below its content and pushes the row wider
+     than .conn-tree (which then grew a phantom horizontal scrollbar, with the
+     overflow hard-clipped mid-glyph at the aside's edge). The `title` keeps the
+     full name reachable on hover once it's elided. */
+  .label {
+    color: var(--text);
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
   ul { list-style: none; margin: 0; padding: 0; }
   .note { padding: 0.1rem 0 0.1rem 2.1rem; font-size: 0.8rem; color: var(--muted); }
   .err { color: var(--danger); white-space: normal; }

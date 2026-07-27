@@ -825,7 +825,11 @@
   .conn-tree {
     flex: 1;
     min-height: 0;
-    overflow: auto;
+    /* Vertical only (billz-6s0). `overflow: auto` let an over-wide row grow a
+       horizontal scrollbar — 444px of scrollWidth in a 319px track — which is
+       never the right answer for a tree whose rows now ellipse instead. */
+    overflow-y: auto;
+    overflow-x: hidden;
   }
   /* min-height:0 lets the section's children shrink so they scroll internally;
      min-width:0 lets the workspace track shrink under a wide Library panel

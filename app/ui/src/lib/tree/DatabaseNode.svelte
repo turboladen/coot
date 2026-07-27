@@ -6,6 +6,7 @@
   import ViewNode from "./ViewNode.svelte";
   import { selection, selectNode } from "./selection.svelte";
   import { childKey } from "./treeKey";
+  import { elidedTitle } from "./elidedTitle";
 
   let { id, database }: { id: string; database: DatabaseInfo } = $props();
 
@@ -52,7 +53,7 @@
       {/if}
     </span>
     <Database size={13} />
-    <span class="label">{database.name}</span>
+    <span class="label" use:elidedTitle={database.name}>{database.name}</span>
     {#if !isOnline}<span class="state">({database.stateDesc})</span>{/if}
   </button>
   {#if expanded}
@@ -116,10 +117,19 @@
     flex: none;
   }
   .row :global(svg) { color: var(--muted); flex: none; }
-  .label { color: var(--text); font-weight: 500; }
+  /* billz-6s0 — see TableNode.svelte's .label for why min-width:0 is required. The
+     "(OFFLINE)" state tag keeps its size, so a long name yields to it. */
+  .label {
+    color: var(--text);
+    font-weight: 500;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
   /* B1: greys the NAME too — the .label rule above otherwise wins on the muted row. */
   .row.muted .label { color: var(--faint); }
-  .state { color: var(--faint); font-size: 0.75rem; }
+  /* flex:none so the state tag survives a long name shrinking beside it (billz-6s0). */
+  .state { color: var(--faint); font-size: 0.75rem; flex: none; }
   ul { list-style: none; margin: 0; padding: 0; }
   /* Static grouping labels — aligned with the depth-2 table/view rows' left edge
      (1.2rem), with a little top rhythm so Tables/Views read as separate blocks. */
