@@ -4,6 +4,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   addToast,
+  announcementText,
   autoDismissMs,
   dismissAllToasts,
   dismissToast,
@@ -16,8 +17,11 @@ import {
   TOAST_MS,
 } from "./toastLogic";
 
-function t(id: string, kind: ToastKind = "info"): Toast {
-  return { id, kind, text: `toast ${id}` };
+// `text` defaults to something derived from `id`, so distinct ids give distinct
+// messages and nothing coalesces by accident. Pass it explicitly to force the
+// collision the coalescing tests are about.
+function t(id: string, kind: ToastKind = "info", text = `toast ${id}`): Toast {
+  return { id, kind, text, repeat: 1 };
 }
 
 const ids = (list: Toast[]) => list.map((x) => x.id);
@@ -89,6 +93,160 @@ describe("addToast", () => {
       expect(list.filter((x) => x.kind === "error")).toHaveLength(6);
       expect(list.filter((x) => x.kind !== "error")).toHaveLength(MAX_VISIBLE);
     });
+  });
+});
+
+// billz-667. A failure that recurs on a timer used to push one never-expiring
+// error per tick; the user then had to click ✕ once per copy.
+describe("addToast coalescing", () => {
+  /** Same text every time, so pushes collide. Ids stay distinct to prove which survives. */
+  const same = (id: string, kind: ToastKind = "info") => t(id, kind, "same message");
+
+  test("an identical message bumps the newest toast instead of appending", () => {
+    const { list, active } = addToast([same("a")], same("b"));
+    expect(list).toHaveLength(1);
+    expect(list[0].repeat).toBe(2);
+    expect(active.repeat).toBe(2);
+  });
+
+  test("N identical pushes occupy one slot carrying repeat N", () => {
+    let list: Toast[] = [];
+    for (let i = 0; i < 5; i++) list = addToast(list, same(`i${i}`)).list;
+    expect(list).toHaveLength(1);
+    expect(list[0].repeat).toBe(5);
+  });
+
+  // The literal bug: errors never expire and are never evicted, so ten ticks of
+  // one failing background refresh meant ten undismissable copies of one message.
+  test("ten identical errors occupy one slot, not ten", () => {
+    let list: Toast[] = [];
+    for (let i = 0; i < 10; i++) list = addToast(list, same(`e${i}`, "error")).list;
+    expect(list).toHaveLength(1);
+    expect(list[0].repeat).toBe(10);
+  });
+
+  // Load-bearing twice over: the store keys its pending timer by id, and the
+  // each-block in ToastHost is keyed by id (a new one would remount and replay
+  // the entrance animation on every tick of a recurring failure).
+  test("keeps the EXISTING toast's id", () => {
+    const { list, active } = addToast([same("first")], same("second"));
+    expect(list[0].id).toBe("first");
+    expect(active.id).toBe("first");
+  });
+
+  test("does not mutate the existing toast object", () => {
+    const original = same("a");
+    const input = [original];
+    const { list } = addToast(input, same("b"));
+    // The bump landed on a NEW object; the one the caller still holds — and the
+    // array it sits in, which is the store's $state list — are untouched.
+    expect(original.repeat).toBe(1);
+    expect(list[0]).not.toBe(original);
+    expect(input).toHaveLength(1);
+    expect(input[0]).toBe(original);
+  });
+
+  test("coalescing evicts nothing, even with the transient budget full", () => {
+    let list = Array.from({ length: MAX_VISIBLE - 1 }, (_, i) => t(String(i)));
+    list = addToast(list, same("newest")).list;
+    expect(list).toHaveLength(MAX_VISIBLE);
+
+    // Nothing is appended, so the transient count can't rise past the cap.
+    const { list: after, evicted } = addToast(list, same("again"));
+    expect(evicted).toEqual([]);
+    expect(after).toHaveLength(MAX_VISIBLE);
+    expect(after[MAX_VISIBLE - 1].repeat).toBe(2);
+  });
+
+  // The seam between the two branches: a coalesce leaves the stack AT the budget
+  // (a repeat count doesn't make one slot count as several), so the next distinct
+  // transient must evict exactly one — no more, and not zero.
+  test("a distinct transient after a coalesce evicts exactly one", () => {
+    let list = Array.from({ length: MAX_VISIBLE - 1 }, (_, i) => t(String(i)));
+    list = addToast(list, same("newest")).list;
+    list = addToast(list, same("again")).list;
+
+    const { list: after, evicted } = addToast(list, t("z"));
+    expect(ids(evicted)).toEqual(["0"]);
+    expect(after).toHaveLength(MAX_VISIBLE);
+    expect(ids(after)).toEqual(["1", "2", "newest", "z"]);
+    // The bumped slot rode out the eviction with its count intact.
+    expect(after[2].repeat).toBe(2);
+  });
+
+  test("a different message still stacks normally", () => {
+    const { list } = addToast([same("a")], t("b"));
+    expect(list).toHaveLength(2);
+    expect(list.every((x) => x.repeat === 1)).toBe(true);
+  });
+
+  test("the same text under a different kind is a different event", () => {
+    const { list } = addToast([same("a", "error")], same("b", "success"));
+    expect(ids(list)).toEqual(["a", "b"]);
+  });
+
+  test("matches the NEWEST only, not any toast in the stack", () => {
+    const { list } = addToast([same("a"), t("b")], same("c"));
+    expect(list).toHaveLength(3);
+    expect(list.map((x) => x.repeat)).toEqual([1, 1, 1]);
+  });
+
+  // A A B A is three slots: the trailing A recurred AFTER B, and folding it into
+  // the earlier run would claim the two runs were contiguous.
+  test("a repeat separated by another message starts a new run", () => {
+    let list = addToast([], same("a1")).list;
+    list = addToast(list, same("a2")).list;
+    list = addToast(list, t("b")).list;
+    list = addToast(list, same("a3")).list;
+    expect(ids(list)).toEqual(["a1", "b", "a3"]);
+    expect(list.map((x) => x.repeat)).toEqual([2, 1, 1]);
+  });
+
+  // Matching the newest is what keeps partitionToasts' promise that a just-raised
+  // toast is on screen — a match deeper in the stack could bump a toast already
+  // collapsed behind the overflow counter, so nothing visible would happen at all.
+  test("the bumped toast holds its position and stays visible", () => {
+    const older = Array.from({ length: MAX_VISIBLE }, (_, i) => t(`e${i}`, "error"));
+    const seeded = addToast(older, same("newest", "error")).list;
+    const { list } = addToast(seeded, same("again", "error"));
+    expect(list[list.length - 1].id).toBe("newest");
+    expect(ids(partitionToasts(list).visible)).toContain("newest");
+  });
+
+  // `active` is the store's timer key, so both branches get an explicit assertion.
+  test("active is the bumped toast on coalesce", () => {
+    const { list, active } = addToast([same("a")], same("b"));
+    expect(active).toBe(list[list.length - 1]);
+  });
+
+  test("active is the new toast on append", () => {
+    const fresh = t("b");
+    expect(addToast([t("a")], fresh).active).toBe(fresh);
+  });
+
+  test("the first push into an empty stack appends, with repeat 1", () => {
+    const fresh = same("a");
+    const { list, evicted, active } = addToast([], fresh);
+    expect(list).toEqual([fresh]);
+    expect(evicted).toEqual([]);
+    expect(active).toBe(fresh);
+    expect(active.repeat).toBe(1);
+  });
+
+  test("a coalesced error is still sticky — coalescing doesn't touch dismissal policy", () => {
+    const { active } = addToast([same("e", "error")], same("e2", "error"));
+    expect(active.repeat).toBe(2);
+    expect(isSticky(active.kind)).toBe(true);
+    expect(autoDismissMs(active.kind)).toBeNull();
+  });
+
+  // The user-visible point of the whole bead.
+  test("one dismiss clears the entire coalesced run", () => {
+    let list = addToast([], same("a")).list;
+    list = addToast(list, same("b")).list;
+    list = addToast(list, same("c")).list;
+    expect(list[0].repeat).toBe(3);
+    expect(dismissToast(list, "a")).toEqual([]);
   });
 });
 
@@ -185,5 +343,18 @@ describe("isAssertive", () => {
     expect(isAssertive("error")).toBe(true);
     expect(isAssertive("success")).toBe(false);
     expect(isAssertive("info")).toBe(false);
+  });
+});
+
+describe("announcementText", () => {
+  test("a single occurrence announces the bare message", () => {
+    expect(announcementText("Saved to the library.", 1)).toBe("Saved to the library.");
+  });
+
+  // Each repeat must produce a string DIFFERENT from the one before it: a live
+  // region handed the text it already holds is not a DOM change and says nothing.
+  test("repeats carry the count, so consecutive announcements differ", () => {
+    expect(announcementText("boom", 2)).toBe("boom (2 times)");
+    expect(announcementText("boom", 3)).toBe("boom (3 times)");
   });
 });
