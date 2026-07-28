@@ -176,6 +176,39 @@ mod tests {
         cleanup(&path);
     }
 
+    /// Replacement happens IN PLACE — a re-upserted row keeps its position rather
+    /// than moving to the end.
+    ///
+    /// `upsert_replaces_by_id` above can't see this: with one row in the store,
+    /// replace-in-place and remove-then-push are indistinguishable. Rewriting
+    /// `upsert` as `retain(id != q.id); push(q)` would pass every other test here
+    /// while silently reordering the user's library on every save.
+    ///
+    /// It is also the contract the frontend mirrors: `savedQueriesLogic.ts`'s
+    /// `upsertQuery` replaces at the found index so `library.list` after a write
+    /// equals what `list` would return, which is what lets the UI treat its
+    /// read-back as optional (billz-sjn). Drift starts here, so the assertion is
+    /// here too.
+    #[test]
+    fn upsert_replaces_in_place_preserving_order() {
+        let path = temp_store_path();
+        let store = QueryStore::new(&path);
+        store.upsert(&sample_query("a", "Alpha")).unwrap();
+        store.upsert(&sample_query("b", "Bravo")).unwrap();
+        store.upsert(&sample_query("c", "Charlie")).unwrap();
+        // Re-upsert the MIDDLE row: appending would land it last, and swapping with
+        // the tail would land it third — both distinguishable from staying put.
+        let renamed = sample_query("b", "Renamed");
+        store.upsert(&renamed).unwrap();
+        let all = store.list().unwrap();
+        assert_eq!(
+            all.iter().map(|q| q.id.0.as_str()).collect::<Vec<_>>(),
+            ["a", "b", "c"]
+        );
+        assert_eq!(all[1], renamed);
+        cleanup(&path);
+    }
+
     #[test]
     fn get_returns_none_for_absent_id() {
         let path = temp_store_path();
