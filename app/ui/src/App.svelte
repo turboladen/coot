@@ -108,8 +108,24 @@
   const isExplicit = $derived(targetLocked && promptConn?.id === unlockTarget);
   const showPrompt = $derived(targetLocked || (!!lockedConn && !dismissed.has(lockedConn.id)));
 
-  async function unlock(id: string, password: string) {
-    await setSessionPassword(id, password); // await BEFORE marking unlocked (no desync)
+  // billz-rvg: PasswordPrompt's `onsubmit` is `(password: string) => void`, so a
+  // rejection here used to be an unhandled promise rejection. The prompt correctly
+  // STAYS OPEN on failure (unlocked.add never runs, so showPrompt holds) — but with
+  // nothing said, so you retype the password and nothing happens, forever.
+  //
+  // Narrower than it sounds, and worth knowing before reading this catch as a
+  // wrong-password path: `set_session_password` (app/src/lib.rs) stashes the string
+  // and returns Ok(()) unconditionally — it CANNOT fail on a bad password. A wrong
+  // password surfaces later, on the first run, as a login error in the Messages pane
+  // (correctly — that one is query output). So the only reachable failure here is
+  // IPC-level, i.e. "the app is broken", which is exactly what must not be silent.
+  async function unlock(id: string, name: string, password: string) {
+    try {
+      await setSessionPassword(id, password); // await BEFORE marking unlocked (no desync)
+    } catch (e) {
+      pushToast("error", `Couldn't unlock "${name}": ${String(e)}`);
+      return; // leave the prompt up — it's the retry path
+    }
     dismissed.delete(id);
     unlockTarget = null; // this connection is no longer locked; clear any explicit request
     unlocked.add(id); // re-derives lockedConn → null → the load effect fires
@@ -300,19 +316,41 @@
 
   // Persist a scope change immediately (a rare, deliberate config choice — avoids
   // a separate scope state map). Declares a newly-derived param in the process.
+  //
+  // billz-be4: these two had NO try/catch, so a write failure was an unhandled
+  // rejection with the param's scope/type silently unpersisted. Toast, then RETHROW
+  // — ParamBar awaits and reverts its own <select> on the rejection, because the
+  // store never changed and no reactive update can therefore correct the element
+  // the user already moved (the full mechanism is documented at that handler).
+  // The rethrow is observed, not stray: ParamBar's catch is what receives it.
+  // Order matters — toast BEFORE throwing, or the failure is silent again.
+  //
+  // No success toast on either: these fire on every dropdown change, and a toast
+  // per config tweak is noise, not information.
   async function onScopeChange(name: string, scope: ParamScope) {
     if (!curSavedQuery) return;
     const params = curParams.map((p) => (p.name === name ? { ...p, scope } : p));
-    await saveQuery({ ...curSavedQuery, params });
+    try {
+      await saveQuery({ ...curSavedQuery, params });
+    } catch (e) {
+      pushToast("error", `Couldn't save the scope for ${name}: ${String(e)}`);
+      throw e;
+    }
   }
 
-  // Persist a type change immediately (mirrors onScopeChange). A typed param
-  // routes through d28.2's sp_executesql bind path on the next Run; raw-text
-  // (null) splices. Declares a newly-derived param in the process.
+  // Persist a type change immediately (mirrors onScopeChange, including the
+  // toast-then-rethrow contract above). A typed param routes through d28.2's
+  // sp_executesql bind path on the next Run; raw-text (null) splices. Declares a
+  // newly-derived param in the process.
   async function onTypeChange(name: string, sqlType: SqlType | null) {
     if (!curSavedQuery) return;
     const params = curParams.map((p) => (p.name === name ? { ...p, sqlType } : p));
-    await saveQuery({ ...curSavedQuery, params });
+    try {
+      await saveQuery({ ...curSavedQuery, params });
+    } catch (e) {
+      pushToast("error", `Couldn't save the type for ${name}: ${String(e)}`);
+      throw e;
+    }
   }
 
   // d28.9: clear the SURFACED tier value for a param (the one the inherited badge
@@ -505,17 +543,39 @@
     // billz-a5y.3: AWAIT the connection list, THEN auto-expand the active connection's
     // root so launch shows its object tree immediately (matching the pre-multi-root
     // single-tree behavior). Fire-and-forget would run expandRoot against an empty
-    // list → the presence guard skips → a collapsed tree on launch (regression). Falls
-    // back silently outside a Tauri webview (plain `vite`).
+    // list → the presence guard skips → a collapsed tree on launch (regression).
+    //
+    // billz-rvg: a failure here used to return silently, documented as degrading
+    // gracefully outside a Tauri webview. It also hid the real thing: no connection
+    // list means an empty sidebar, a dead DB picker, and every Run answering "Select
+    // a connection first" — with no stated cause. Toast, then skip the expand (there
+    // is nothing to expand). In plain `vite` dev, where invoke() always rejects, this
+    // does surface at launch; that is the honest reading of "the backend is
+    // unreachable", and the visual-verify workflow mocks invoke anyway.
     (async () => {
       try {
         await refresh();
-      } catch {
-        return; // no list (outside Tauri) — nothing to expand
+      } catch (e) {
+        pushToast("error", `Couldn't load connections: ${String(e)}`);
+        return; // no list — nothing to expand
       }
       if (conns.activeId) expandRoot(conns.activeId); // guard: null → noop
     })();
-    refreshLibrary().catch(() => {});
+    // billz-rvg: the library load's error was swallowed whole. This is the app's only
+    // deliberate library load, and on failure `library.list` stays [] — so the panel
+    // renders "No saved queries yet.", an affirmative lie about the user's data.
+    //
+    // And there is no self-repair to wait for. save()/remove() call refresh()
+    // internally, so a later write looks like an incidental recovery path — but
+    // `QueryStore::upsert` opens with `self.list()?` (core/src/query_store.rs), so
+    // whatever breaks this read breaks the write FIRST. A steady-state failure here
+    // means the library stays empty until the cause is fixed and the app relaunched.
+    // That makes the toast the ONLY signal the user gets, not a nicety alongside a
+    // recovery. billz-pn5 tracks the real fix: a load status on the store (so the
+    // panel can say "couldn't load" instead of "none") plus a Refresh affordance.
+    refreshLibrary().catch((e) => {
+      pushToast("error", `Couldn't load the saved-query library: ${String(e)}`);
+    });
     // Flush any pending debounced save on app quit (Cmd-Q). Tauri's WKWebView
     // doesn't reliably deliver `beforeunload` at termination, so hook the window
     // close event instead; the localStorage write is synchronous. try/catch so
@@ -594,7 +654,7 @@
     {#if showPrompt && promptConn}
       <PasswordPrompt
         name={promptConn.name}
-        onsubmit={(pw) => unlock(promptConn.id, pw)}
+        onsubmit={(pw) => unlock(promptConn.id, promptConn.name, pw)}
         oncancel={() => { if (isExplicit) unlockTarget = null; else dismissed.add(promptConn.id); }}
       />
     {:else if lockedConn}

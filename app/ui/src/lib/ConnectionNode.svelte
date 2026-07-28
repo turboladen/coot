@@ -3,10 +3,12 @@
   import { slide } from "svelte/transition";
   import { prefersReducedMotion } from "svelte/motion";
   import type { ConnectionConfig } from "./api";
+  import ConfirmDialog from "./ConfirmDialog.svelte";
   import { conns, remove } from "./connections.svelte";
   import { clampMenuPosition } from "./contextMenuLogic";
   import { databasesFor } from "./databases.svelte";
   import { ChevronRight, MoreHorizontal, Pencil, Trash2 } from "./icons";
+  import { pushToast } from "./toasts.svelte";
   import { sidebar, toggleRoot, expandRoot } from "./sidebar.svelte";
   import { connectionStatus, type ConnStatus } from "./sidebarLogic";
   import { setActiveConnection } from "./tabs.svelte";
@@ -50,10 +52,61 @@
   const EXPAND_MS = 120;
   const slideDur = $derived(prefersReducedMotion.current ? 0 : EXPAND_MS);
 
-  async function onDelete() {
-    if (confirm(`Delete connection "${conn.name}"?`)) {
+  // billz-rvg/billz-9ug: delete behind an inline ConfirmDialog rather than
+  // window.confirm — see that component's header for why the native dialog went.
+  //
+  // Reached from TWO places (the hover Delete icon and the ⋯ context menu), which is
+  // why the trigger to return focus to is captured rather than assumed: the menu path
+  // calls closeMenu(false), which deliberately does NOT restore focus, so its natural
+  // return target is the ⋯ button (`triggerEl`). window.confirm restored focus for
+  // free; an inline dialog has to be told.
+  let deleting = $state<{ trigger: HTMLElement | null } | null>(null);
+
+  function openDelete(trigger: HTMLElement | null) {
+    deleting = { trigger };
+  }
+
+  function cancelDelete() {
+    const trigger = deleting?.trigger ?? null;
+    deleting = null;
+    trigger?.focus();
+  }
+
+  async function confirmDelete() {
+    const trigger = deleting?.trigger ?? null;
+    deleting = null;
+    try {
       await remove(conn.id);
+      // No success toast — this whole <li> unmounts, which is unmissable.
+    } catch (e) {
+      // THIS TOAST CAN BE WRONG, in one narrow case. A throw from
+      // connections.svelte.ts's remove() means either:
+      //   (a) delete_connection failed — nothing was deleted, the row is genuinely
+      //       still there, and the message is accurate; or
+      //   (b) the delete COMMITTED and the `await refresh()` re-read afterwards
+      //       failed (connections.svelte.ts:34 is bare — no try/catch). Then the
+      //       connection is gone, dropDatabases/pruneRoot have already run, and
+      //       this says "Couldn't delete" over a stale row that conns.list still
+      //       holds only because the re-read never landed.
+      //
+      // Deliberately NOT worked around here: (b) is a store-level bug, and the fix
+      // is the one billz-sjn already made on the library side — guard the re-read
+      // so a failed reconciliation isn't reported as a failed write. That's why the
+      // parallel comment in SavedQueryLibrary's delete CAN state flatly that a throw
+      // means the write failed (savedQueries.svelte.ts:62-66 wraps its refresh) and
+      // this one can't: connections.svelte.ts never got that guard. Tracked as
+      // billz-jo7; once it lands, case (b) disappears and this comment can shrink.
+      pushToast("error", `Couldn't delete "${conn.name}": ${String(e)}`);
     }
+    // The two outcomes want different focus, and `isConnected` distinguishes them
+    // without branching on the catch: a successful delete unmounts this whole <li>
+    // (trigger gone → focus falls to <body>, exactly as it did under window.confirm),
+    // while a FAILED delete leaves the row up, so focus belongs back on the button
+    // that opened the dialog. `await tick()` first — the unmount lands a microtask
+    // after remove() resolves, so testing any earlier reads a node about to vanish
+    // (the same ordering trap documented in SavedQueryLibrary's restoreFocus).
+    await tick();
+    if (trigger?.isConnected) trigger.focus();
   }
 
   // billz-a5y.4: compact row controls. Hover/focus-within reveals the Edit/Delete/⋯
@@ -187,7 +240,11 @@
       <button title="Edit connection" aria-label="Edit connection" onclick={() => onedit(conn)}>
         <Pencil size={14} />
       </button>
-      <button title="Delete connection" aria-label="Delete connection" onclick={onDelete}>
+      <button
+        title="Delete connection"
+        aria-label="Delete connection"
+        onclick={(e) => openDelete(e.currentTarget)}
+      >
         <Trash2 size={14} />
       </button>
       <button
@@ -232,10 +289,23 @@
     >
       <Pencil size={14} /> Edit
     </button>
-    <button class="ctx-item" role="menuitem" onclick={() => { closeMenu(false); onDelete(); }}>
+    <!-- closeMenu(false) doesn't restore focus, so hand the dialog the ⋯ button as
+         the cancel-return target (see openDelete). -->
+    <button class="ctx-item" role="menuitem" onclick={() => { closeMenu(false); openDelete(triggerEl ?? null); }}>
       <Trash2 size={14} /> Delete
     </button>
   </div>
+{/if}
+
+<!-- billz-rvg/billz-9ug delete confirmation, replacing window.confirm. -->
+{#if deleting}
+  <ConfirmDialog
+    title="Delete connection"
+    message={`Delete "${conn.name}"? This can't be undone. Its stored password is removed too.`}
+    confirmLabel="Delete"
+    onconfirm={confirmDelete}
+    oncancel={cancelDelete}
+  />
 {/if}
 
 <style>
