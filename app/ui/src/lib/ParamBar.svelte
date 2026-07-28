@@ -7,6 +7,13 @@
   // persists). `sources` drives the inherited-value badge. No Run button — the
   // toolbar Run is param-aware (App.svelte). `sources`/`onScopeChange` default so
   // the component stands alone; App always supplies both.
+  //
+  // billz-be4: the two persisting handlers return `Promise<void> | void` so this
+  // component can AWAIT them and revert its own <select> when the write fails.
+  // They were typed `=> void` while App passed `async` functions — TS accepts that
+  // (a returned value is assignable to a void return), which is precisely how App's
+  // rejection escaped unobserved. The `() => {}` defaults still satisfy the wider
+  // type. See the onchange handlers for why reverting has to touch the DOM.
   let {
     params,
     values,
@@ -18,8 +25,8 @@
     params: Param[];
     values: Record<string, string>;
     sources?: Record<string, "local" | "session" | "global" | null>;
-    onScopeChange?: (name: string, scope: ParamScope) => void;
-    onTypeChange?: (name: string, sqlType: SqlType | null) => void;
+    onScopeChange?: (name: string, scope: ParamScope) => Promise<void> | void;
+    onTypeChange?: (name: string, sqlType: SqlType | null) => Promise<void> | void;
     onClearTier?: (name: string, tier: "session" | "global") => void;
   } = $props();
 </script>
@@ -32,11 +39,36 @@
         value={values[p.name] ?? ""}
         oninput={(e) => (values[p.name] = e.currentTarget.value)}
       />
+      <!-- billz-be4 — WHY THIS REVERTS THE DOM BY HAND.
+           A failed write leaves the select showing a value the store never took.
+           App's save() rejects BEFORE it updates library.list, so `p` is unchanged,
+           so `curParams` doesn't recompute — and even forcing a recompute wouldn't
+           help, because Svelte 5 skips the attribute write when the value is
+           unchanged from the last render. Meanwhile the user's interaction already
+           moved the real <select>. There is no reactive fix; the element is the
+           only thing that knows it's wrong, so the element is what we correct.
+           (Remounting the bar via {#key} would also work and was rejected: it
+           destroys the focused <select>, dropping focus to <body> at the exact
+           moment a sticky error toast appears.)
+
+           `const el = e.currentTarget` IS LOAD-BEARING: currentTarget is only
+           valid during dispatch and reads null after the first await, so reading
+           it in the catch would throw and silently skip the revert — on the error
+           path only, where nobody would see it. Don't inline it back.
+
+           App pushes the toast and rethrows; catching here is what keeps that
+           rethrow from becoming an unhandled rejection. -->
       <select
         class="type"
         value={p.sqlType ?? ""}
-        onchange={(e) =>
-          onTypeChange(p.name, e.currentTarget.value === "" ? null : (e.currentTarget.value as SqlType))}
+        onchange={async (e) => {
+          const el = e.currentTarget;
+          try {
+            await onTypeChange(p.name, el.value === "" ? null : (el.value as SqlType));
+          } catch {
+            el.value = p.sqlType ?? "";
+          }
+        }}
         title="Bind type — raw-text is spliced literally (injectable); a typed value binds via sp_executesql"
       >
         <option value="">raw-text</option>
@@ -53,10 +85,19 @@
       {#if !p.sqlType}
         <span class="chip raw" title="raw-text — spliced literally into the SQL (injectable)">raw!</span>
       {/if}
+      <!-- Same failed-write revert as the type select above — see that comment for
+           why this touches the DOM and why `el` is captured before the await. -->
       <select
         class="scope"
         value={p.scope}
-        onchange={(e) => onScopeChange(p.name, e.currentTarget.value as ParamScope)}
+        onchange={async (e) => {
+          const el = e.currentTarget;
+          try {
+            await onScopeChange(p.name, el.value as ParamScope);
+          } catch {
+            el.value = p.scope;
+          }
+        }}
         title="Where this query remembers {p.name}'s value"
       >
         <option value="local">Local</option>

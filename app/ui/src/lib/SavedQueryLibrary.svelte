@@ -1,6 +1,7 @@
 <script lang="ts">
   import { tick } from "svelte";
   import type { SavedQuery } from "./api";
+  import ConfirmDialog from "./ConfirmDialog.svelte";
   import { Pencil, Search, Trash2 } from "./icons";
   import NameDialog from "./NameDialog.svelte";
   import { library, remove, save } from "./savedQueries.svelte";
@@ -20,10 +21,42 @@
     newTabWithContent(q.sql, q.targetDatabase, q.id);
   }
 
-  async function onDelete(q: SavedQuery) {
-    if (confirm(`Delete saved query "${q.name}"?`)) {
-      await remove(q.id);
+  // billz-rvg/billz-9ug: delete behind an inline ConfirmDialog rather than
+  // window.confirm — see that component's header for why the native dialog went.
+  // Only the id + name are captured when the dialog opens (mirroring openRename):
+  // the name is needed for the failure toast, and re-reading `q` at confirm time
+  // would race a list that can change while the dialog is up. `trigger` is the row's
+  // Delete button — the dialog steals focus and must hand it back on cancel.
+  type DeleteTarget = { id: string; name: string; trigger: HTMLElement | null };
+  let deleting = $state<DeleteTarget | null>(null);
+
+  function openDelete(q: SavedQuery, e: MouseEvent) {
+    deleting = { id: q.id, name: q.name, trigger: e.currentTarget as HTMLElement };
+  }
+
+  async function cancelDelete() {
+    const trigger = deleting?.trigger ?? null;
+    deleting = null;
+    await restoreFocus(trigger);
+  }
+
+  async function confirmDelete() {
+    const target = deleting;
+    deleting = null; // unmount now; focus is restored once the write settles
+    if (!target) return;
+    try {
+      await remove(target.id);
+      // No success toast: the row disappearing IS the feedback, and there's no undo
+      // for one to offer. billz-he0 toasts a save because the dirty dot going out is
+      // easy to miss — a row leaving a short list is not.
+    } catch (e) {
+      // Same contract as rename: since billz-sjn a throw from the store means the
+      // WRITE failed, so the row is still there and "nothing was deleted" is accurate.
+      pushToast("error", `Couldn't delete "${target.name}": ${String(e)}`);
     }
+    // On success the row (and its trigger) is gone, so this falls through to the
+    // search box rather than dropping focus on <body> — see restoreFocus.
+    await restoreFocus(target.trigger);
   }
 
   // billz-1kn: rename. Reuses NameDialog (built generic in billz-he0 for exactly
@@ -136,7 +169,7 @@
               <button
                 title="Delete saved query"
                 aria-label="Delete saved query"
-                onclick={() => onDelete(q)}
+                onclick={(e) => openDelete(q, e)}
               >
                 <Trash2 size={14} />
               </button>
@@ -164,6 +197,19 @@
     submitLabel="Rename"
     onsubmit={submitRename}
     oncancel={cancelRename}
+  />
+{/if}
+
+<!-- billz-rvg/billz-9ug delete confirmation, replacing window.confirm. The name is
+     quoted from the captured target; a pre-billz-he0 entry's "name" can be a whole
+     pasted statement (see renameSeed), which is why the dialog wraps it. -->
+{#if deleting}
+  <ConfirmDialog
+    title="Delete saved query"
+    message={`Delete "${deleting.name}"? This can't be undone.`}
+    confirmLabel="Delete"
+    onconfirm={confirmDelete}
+    oncancel={cancelDelete}
   />
 {/if}
 
