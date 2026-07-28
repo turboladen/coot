@@ -74,9 +74,9 @@
         await save(plan.query);
         pushToast("success", `Renamed to "${plan.query.name}".`);
       } catch (e) {
-        // TODO(billz-sjn): when save() gains a distinguishable write-ok/refresh-failed
-        // signal, this needs a second branch — a throw will no longer imply "nothing
-        // was written". No de-duplication here; billz-667 coalesces repeats.
+        // One branch is right: since billz-sjn a throw from save() means the write
+        // itself failed, so "nothing was renamed" is accurate. No de-duplication
+        // here; billz-667 coalesces repeats.
         pushToast("error", `Couldn't rename to "${plan.query.name}": ${String(e)}`);
       }
     }

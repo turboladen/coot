@@ -7,8 +7,10 @@ import {
   filterQueries,
   planRename,
   promoteToSavedQuery,
+  removeQueryById,
   renameSavedQuery,
   renameSeed,
+  upsertQuery,
 } from "./savedQueriesLogic";
 
 function sq(id: string, name: string, sql: string): SavedQuery {
@@ -284,5 +286,79 @@ describe("planRename", () => {
     expect(expectWrite(planRename(fresh, "a", "Recent orders")).sql).toBe(
       "SELECT 2 -- edited while the dialog was open",
     );
+  });
+});
+
+// billz-sjn. These pin the frontend mirror of core's QueryStore::upsert/delete.
+// The store's whole error contract rests on "the list after a write equals what
+// list_queries would return", so a drift here is a silent correctness bug, not a
+// cosmetic one.
+describe("upsertQuery", () => {
+  const list = [sq("a", "First", "SELECT 1"), sq("b", "Second", "SELECT 2")];
+
+  test("replaces a known id IN PLACE (order is stable, like the backend's)", () => {
+    const next = upsertQuery(list, sq("a", "Renamed", "SELECT 1"));
+    expect(next.map((q) => q.id)).toEqual(["a", "b"]);
+    expect(next[0].name).toBe("Renamed");
+  });
+
+  test("appends an unknown id at the end (mirrors the backend's push)", () => {
+    const next = upsertQuery(list, sq("c", "Third", "SELECT 3"));
+    expect(next.map((q) => q.id)).toEqual(["a", "b", "c"]);
+  });
+
+  test("stores the row verbatim — every field, not just name/sql", () => {
+    const q: SavedQuery = {
+      id: "a",
+      name: "First",
+      sql: "SELECT @x",
+      targetDatabase: "Sales",
+      params: [{ name: "@x", sqlType: "int", scope: "session", lastValue: "7" }],
+    };
+    expect(upsertQuery(list, q)[0]).toEqual(q);
+  });
+
+  test("returns a NEW array so the $state assignment invalidates", () => {
+    expect(upsertQuery(list, sq("a", "Renamed", "SELECT 1"))).not.toBe(list);
+    expect(upsertQuery(list, sq("c", "Third", "SELECT 3"))).not.toBe(list);
+  });
+
+  test("does not mutate the input list", () => {
+    upsertQuery(list, sq("a", "Renamed", "SELECT 1"));
+    upsertQuery(list, sq("c", "Third", "SELECT 3"));
+    expect(list.map((q) => q.name)).toEqual(["First", "Second"]);
+    expect(list).toHaveLength(2);
+  });
+
+  test("leaves the untouched rows referentially intact", () => {
+    expect(upsertQuery(list, sq("a", "Renamed", "SELECT 1"))[1]).toBe(list[1]);
+  });
+
+  test("empty list → a one-entry list", () => {
+    expect(upsertQuery([], sq("a", "First", "SELECT 1")).map((q) => q.id)).toEqual(["a"]);
+  });
+});
+
+describe("removeQueryById", () => {
+  const list = [sq("a", "First", "SELECT 1"), sq("b", "Second", "SELECT 2")];
+
+  test("drops the matching id, preserving order", () => {
+    expect(removeQueryById(list, "a").map((q) => q.id)).toEqual(["b"]);
+  });
+
+  test("does not mutate the input list", () => {
+    removeQueryById(list, "a");
+    expect(list).toHaveLength(2);
+  });
+
+  // A true no-op: handing the same array back leaves the $state field untouched,
+  // so nothing re-renders for a removal that removed nothing.
+  test("unknown id → the SAME array reference", () => {
+    expect(removeQueryById(list, "gone")).toBe(list);
+  });
+
+  test("empty list → the same empty array", () => {
+    const empty: SavedQuery[] = [];
+    expect(removeQueryById(empty, "a")).toBe(empty);
   });
 });

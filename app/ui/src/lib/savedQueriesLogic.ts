@@ -35,6 +35,36 @@ export function promoteToSavedQuery(
   return { id, name: name.trim(), sql, targetDatabase, params: deriveParams(sql, []) };
 }
 
+// Apply a persisted write to the in-memory list, mirroring what the backend just
+// did to the file (billz-sjn). `core`'s QueryStore::upsert replaces by id IN PLACE
+// and otherwise pushes (core/src/query_store.rs), storing the row verbatim — so
+// this returns exactly what a subsequent `list_queries` would.
+//
+// That equivalence is the whole point: it lets `save()` treat its read-back as
+// optional rather than authoritative, which is what stops a failed re-read from
+// being reported as a failed WRITE. Keep the two in step — if the Rust side ever
+// sorts or normalizes, this drifts silently and the tests below are the tripwire.
+//
+// Takes ownership of `q` (it is stored by reference, not copied): every call site
+// passes a freshly-built or spread object, so a later mutation of a caller's local
+// can't reach into the store.
+export function upsertQuery(list: SavedQuery[], q: SavedQuery): SavedQuery[] {
+  const at = list.findIndex((existing) => existing.id === q.id);
+  if (at === -1) return [...list, q];
+  const next = [...list];
+  next[at] = q;
+  return next;
+}
+
+// The delete counterpart. Hands the input list straight back when nothing matched,
+// so the store's `library.list = removeQueryById(...)` doesn't invalidate the
+// `$state` field for a removal that did nothing (same no-op discipline as
+// toastLogic's dismissToast).
+export function removeQueryById(list: SavedQuery[], id: string): SavedQuery[] {
+  const next = list.filter((q) => q.id !== id);
+  return next.length === list.length ? list : next;
+}
+
 // A rename is a field-preserving rewrite: only `name` changes, and `id` / `sql` /
 // `targetDatabase` / `params` ride through by spread (billz-1kn). Written this way
 // on purpose — "renaming can't lose the SQL or break a tab's savedQueryId linkage"
