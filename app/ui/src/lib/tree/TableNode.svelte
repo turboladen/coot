@@ -5,6 +5,7 @@
   import { queriesReferencingTable } from "../paramBarLogic";
   import { library } from "../savedQueries.svelte";
   import { newTabWithContent } from "../tabs.svelte";
+  import { pushToast } from "../toasts.svelte";
   import ColumnLeaf from "./ColumnLeaf.svelte";
   import LoadingNote from "./LoadingNote.svelte";
   import { selectTop1000 } from "./selectTopQuery";
@@ -61,7 +62,15 @@
   function runScoped(q: SavedQuery) {
     menu = null;
     openScopedQuery(id, db, table.schema, table.name, q).catch((e) => {
-      console.error("scoped-open failed", e);
+      // billz-rvg: was console.error only, so a failure did nothing visible at all —
+      // no tab opened, no message, a gesture that just didn't happen. App-level, not
+      // query output: nothing RAN here (the failing calls are list_columns and
+      // save_query), so there's no Messages pane to own it.
+      //
+      // Deliberately unlike this node's own column-expansion error a few lines up,
+      // which renders inline on the row that failed — there the location IS the
+      // information. A scoped open has no row of its own to fail on.
+      pushToast("error", `Couldn't open "${q.name}" scoped to ${table.schema}.${table.name}: ${String(e)}`);
     });
   }
 </script>
