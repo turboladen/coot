@@ -16,6 +16,7 @@ pub mod context;
 pub mod error;
 pub mod executor;
 pub mod param_bind;
+pub mod plan;
 pub mod query;
 pub mod query_store;
 pub mod result;
@@ -35,6 +36,10 @@ pub use context::ExecutionContext;
 pub use error::{CoreError, Result};
 pub use executor::{run, run_fanout, run_with_params};
 pub use param_bind::{BindValue, ResolvedParam};
+pub use plan::{
+    DbPlanOutcome, Finding, FindingKind, MissingIndex, PlanCapture, PlanNode, PlanStatement,
+    PlanVerdict, PlanWarning, QueryPlan, Severity, capture_xml as capture_plan_xml,
+};
 pub use query::{Param, ParamScope, SavedQuery, SavedQueryId, SqlType};
 pub use query_store::QueryStore;
 pub use result::{CellValue, ColumnMeta, DbRunOutcome, QueryResult};
