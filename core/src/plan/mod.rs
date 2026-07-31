@@ -4,7 +4,7 @@
 //! so they are tested offline against the checked-in `.sqlplan` fixtures in
 //! `core/tests/fixtures/plans/`, with no server, no VPN, and no driver. Those
 //! fixtures are real, captured by `just dump-plans`; assertions come from the
-//! files. (`verdict`/`fingerprint` still to follow.)
+//! files.
 //! [`capture`] is the one that touches a server, and it opens its
 //! OWN connection and closes it rather than using
 //! [`SessionCache`](crate::session::SessionCache) — see
@@ -12,12 +12,16 @@
 //! module's doc for why a leaked `SET SHOWPLAN_XML ON` would be so damaging.
 
 pub mod capture;
+pub mod fingerprint;
 pub mod model;
 pub mod parse;
+pub mod verdict;
 
 pub use capture::capture_xml;
+pub use fingerprint::shape;
 pub use model::{
     DbPlanOutcome, Finding, FindingKind, MissingIndex, PlanCapture, PlanNode, PlanStatement,
     PlanVerdict, PlanWarning, QueryPlan, Severity,
 };
 pub use parse::parse_plan;
+pub use verdict::judge;
