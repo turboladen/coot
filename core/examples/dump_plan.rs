@@ -46,6 +46,11 @@
 //!   set -x MSSQL_DATABASE …
 //!   just dump-plans
 //!
+//! `just dump-plans` pretty-prints the results via `just fmt-plans` afterwards.
+//! The server sends each document as a single line — `scan.sqlplan` is 147KB of
+//! it — which is unreviewable, and these files must be *read* before they are
+//! committed. The secret scan below is a net, not a substitute for looking.
+//!
 //! Or capture one ad-hoc query instead of the built-in set (still forced to
 //! `master`, still secret-scanned):
 //!   cargo run -p coot-core --example dump_plan -- my-name "SELECT 1"
@@ -156,7 +161,9 @@ async fn main() {
     }
 
     println!(
-        "\nAll {} captured and secret-scanned. Safe to commit and push.",
+        "\nAll {} captured and secret-scanned.\n\
+         Run `just fmt-plans` to pretty-print them, then READ them before committing — \n\
+         the secret scan is a net, not a substitute for looking.",
         captured.len()
     );
 }

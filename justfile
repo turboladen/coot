@@ -81,6 +81,21 @@ probe-dynamic:
 # The parser is developed against these — hand-authored plan XML is a trap.
 dump-plans:
     cargo run -p coot-core --example dump_plan
+    @just fmt-plans
+
+# Pretty-print the captured plan fixtures so a human can actually review them.
+# The server sends each document as ONE line (scan.sqlplan is 147KB of it), which
+# is unreviewable — and these files must be eyeballed before they are committed to
+# confirm no proprietary schema slipped in. Indentation is whitespace between
+# elements only: the parser filters `is_element()` throughout and every asserted
+# value is an attribute, so this cannot change what the tests see.
+fmt-plans:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    for f in core/tests/fixtures/plans/*.sqlplan; do
+      xmllint --format "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+    done
+    echo "formatted $(ls core/tests/fixtures/plans/*.sqlplan | wc -l | tr -d ' ') plan fixtures"
 
 # ---- macOS code signing (one-time; see SIGNING.md) ----
 
