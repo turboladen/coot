@@ -1,5 +1,10 @@
-//! The executor — one of two modules (with `session`) where `mssql-client` is
-//! used in non-test code.
+//! The executor — one of three modules (with `session` and `plan::capture`)
+//! where `mssql-client` is used in non-test code. ADR-0002 set the bar at "a
+//! third should require justification"; `plan::capture`'s is the design spec
+//! `docs/superpowers/specs/2026-07-27-plan-verdict-design.md` §4.2 — it must own
+//! and close its own connection so a `SET SHOWPLAN_XML` cannot leak, which it
+//! does through the `pub(crate)` helpers here rather than by touching the driver
+//! itself.
 //!
 //! [`run`] connects (per call), applies the [`ExecutionContext`]'s `USE`, runs a
 //! SQL batch, and maps the driver's `SqlValue`→[`CellValue`] and
@@ -166,10 +171,23 @@ fn restore_order(mut pairs: Vec<(usize, DbRunOutcome)>) -> Vec<DbRunOutcome> {
 
 /// Apply `ctx`'s `USE` and run `sql` on an ALREADY-connected client, returning
 /// every result set. Neither connects nor closes — shared by [`run`]
-/// (connect → run_batch → close) and [`crate::session::SessionCache`] (reuse a
-/// live client → run_batch, no close). `pub(crate)`: the driver stays inside
-/// `core`. A reused session carries state, so applying the context's `USE` here
-/// (every call) is mandatory, not optional.
+/// (connect → run_batch → close), [`crate::session::SessionCache`] (reuse a live
+/// client → run_batch, no close), and [`crate::plan::capture`] (connect →
+/// run_batch → … → close). `pub(crate)`: the driver stays inside `core`. A
+/// reused session carries state, so applying the context's `USE` here (every
+/// call) is mandatory, not optional.
+///
+/// `plan::capture` runs `SET SHOWPLAN_XML ON` through THIS fn specifically so
+/// the `USE`-before-SHOWPLAN ordering its correctness depends on is structural —
+/// one call that cannot be reordered — rather than two adjacent statements a
+/// later edit could transpose. See [`run_batch_no_use`] for its other two steps.
+///
+/// It depends on a SECOND property here: [`apply_use_statement`] sends the `USE`
+/// as its own TDS request, so `sql` is transmitted as a batch of exactly what
+/// the caller passed. Folding the `USE` into `sql` (prepending `USE [db];\n` to
+/// save a round trip — a plausible optimization) would break capture, because
+/// `SET SHOWPLAN_XML ON` must be the ONLY statement in its batch. It would also
+/// shift server error line numbers off the user's SQL. Keep them separate.
 pub(crate) async fn run_batch(
     client: &mut Client<Ready>,
     ctx: &ExecutionContext,
@@ -177,6 +195,30 @@ pub(crate) async fn run_batch(
 ) -> Result<Vec<QueryResult>> {
     apply_use_statement(client, ctx).await?;
     collect_multi(client, sql).await
+}
+
+/// Run `sql` on an already-connected client and deliberately issue **no** `USE`.
+///
+/// For [`crate::plan::capture`], skipping the `USE` is not an optimization — it
+/// is mandatory. Once `SET SHOWPLAN_XML ON` is in effect the server COMPILES but
+/// does not EXECUTE every following statement, so a `USE` issued there would not
+/// change database *and* would emit a plan document of its own, desyncing the
+/// caller's reading of the result sets. Capture therefore establishes its
+/// context once via [`run_batch`] (before SHOWPLAN is on) and runs everything
+/// after that through here.
+pub(crate) async fn run_batch_no_use(
+    client: &mut Client<Ready>,
+    sql: &str,
+) -> Result<Vec<QueryResult>> {
+    collect_multi(client, sql).await
+}
+
+/// Close a client owned by another `core` module without that module naming the
+/// driver type. [`crate::plan::capture`] owns its connection and must always
+/// close it. Errors are dropped for the same reason they are in [`run`]: the
+/// client is being discarded either way.
+pub(crate) async fn close_client(client: Client<Ready>) {
+    let _ = client.close().await;
 }
 
 /// Run a multi-result batch on a connected client and drain every result set
