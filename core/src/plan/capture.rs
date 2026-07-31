@@ -31,7 +31,11 @@ const SHOWPLAN_OFF: &str = "SET SHOWPLAN_XML OFF";
 /// on-demand call rather than a field on
 /// [`PlanCapture`](crate::plan::model::PlanCapture).
 ///
-/// The query is COMPILED, not run: nothing in `sql` executes, whatever it says.
+/// The query is COMPILED, not run — but state that dependency honestly rather
+/// than as a promise: `sql` never executes *provided* SHOWPLAN actually engaged,
+/// and what guarantees that is `run_batch(…, SHOWPLAN_ON)` returning `Err`
+/// whenever it does not. A login lacking SHOWPLAN permission is the case worth
+/// proving; bead `billz-bkm` verifies it against a restricted login.
 pub async fn capture_xml(
     cfg: &ConnectionConfig,
     store: &dyn SecretStore,
@@ -70,10 +74,16 @@ pub async fn capture_xml(
 }
 
 /// The plan arrives as a single-column result set holding the XML document.
-/// Scans for the first non-empty string cell rather than indexing `[0][0]`: the
-/// `SET` batches contribute empty result sets, and the plan column is `xml` on
-/// the wire but is accepted as `Text` too, so a driver that decodes it as a
-/// string still works.
+///
+/// Scans for the first non-empty string cell rather than indexing `[0][0]`.
+/// Note this only ever sees the results of the EXPLAINED batch — the `SET`
+/// batches' results are discarded by the caller — so the scan is not about
+/// stepping over those. It buys two other things: `[0][0]` would PANIC on an
+/// empty result set where we want [`CoreError::Query`], and the exact
+/// result-set shape of an explained batch is not yet pinned against a real
+/// server (the DEV box is unreachable; bead `billz-bkm`). Accepting `Text` as
+/// well as `Xml` is the same defence — the column is `xml` on the wire, but we
+/// do not bet the feature on the driver decoding it to `SqlValue::Xml`.
 ///
 /// Returns only the FIRST document. Harmless for one batch — SHOWPLAN emits a
 /// single document covering every statement in it — but silently lossy if
@@ -112,8 +122,8 @@ mod tests {
 
     #[test]
     fn first_xml_cell_skips_a_leading_empty_result_set() {
-        // The SET batches produce result sets with no rows; the plan document is
-        // not necessarily in the first one.
+        // A row-less result set must neither stop the search nor panic — `[0][0]`
+        // indexing would do the latter.
         let results = vec![
             result_of(Vec::new()),
             result_of(vec![vec![CellValue::Xml("<ShowPlanXML/>".into())]]),
@@ -143,13 +153,29 @@ mod tests {
     }
 
     #[test]
-    fn first_xml_cell_ignores_non_string_cells() {
+    fn first_xml_cell_ignores_other_string_carrying_cells() {
+        // The variants that MATTER here are the ones that also carry a String —
+        // they are what a careless widening of the match arm would sweep in.
+        // `Null`/`Int` cannot match by construction, so they would prove nothing.
         let results = vec![result_of(vec![vec![
-            CellValue::Null,
-            CellValue::Int(1),
+            CellValue::BigInt("9007199254740993".into()),
+            CellValue::Decimal("1234.5678".into()),
+            CellValue::Binary("0xdeadbeef".into()),
+            CellValue::Uuid("6f9619ff-8b86-d011-b42d-00c04fc964ff".into()),
             CellValue::Xml("<ShowPlanXML/>".into()),
         ]])];
         assert_eq!(first_xml_cell(results).unwrap(), "<ShowPlanXML/>");
+    }
+
+    #[test]
+    fn first_xml_cell_returns_only_the_first_document() {
+        // Pins the documented first-document-only contract, which is silently
+        // lossy the day `GO`-split SQL reaches this path.
+        let results = vec![
+            result_of(vec![vec![CellValue::Xml("<first/>".into())]]),
+            result_of(vec![vec![CellValue::Xml("<second/>".into())]]),
+        ];
+        assert_eq!(first_xml_cell(results).unwrap(), "<first/>");
     }
 
     #[test]
@@ -217,10 +243,13 @@ mod tests {
         let results = crate::executor::run(&cfg, &store, &ctx, "SELECT 1")
             .await
             .unwrap();
+        // Assert the VALUE, not the shape: a leaked SHOWPLAN also yields exactly
+        // one result set of exactly one row — the row holding the plan document —
+        // so a `rows.len() == 1` check would pass under the very leak it names.
         assert_eq!(results.len(), 1);
         assert_eq!(
-            results[0].rows.len(),
-            1,
+            results[0].rows[0][0],
+            CellValue::Int(1),
             "SHOWPLAN leaked — got plan XML, not a row"
         );
     }
@@ -247,6 +276,10 @@ mod tests {
     /// names its own database. A single-context assertion would be vacuous when
     /// `MSSQL_DATABASE` happens to be the login default. The SQL must touch a real
     /// object: `Database=` appears on `<Object>` elements, never on `StmtSimple`.
+    ///
+    /// The second database is chosen dynamically so `MSSQL_DATABASE=master` does
+    /// not silently collapse this back into the vacuous single-context form.
+    /// `master` and `tempdb` both always exist and both have `sys.objects`.
     #[tokio::test]
     async fn capture_xml_applies_the_use_before_showplan() {
         let Some((cfg, store, database)) = env_connection() else {
@@ -254,9 +287,14 @@ mod tests {
             return;
         };
         const SQL: &str = "SELECT TOP 1 * FROM sys.objects";
+        let other = if database.eq_ignore_ascii_case("master") {
+            "tempdb"
+        } else {
+            "master"
+        };
 
         let base = ExecutionContext::new(cfg.id.clone());
-        for db in [database.as_str(), "master"] {
+        for db in [database.as_str(), other] {
             let ctx = base.clone().with_database(db);
             let xml = capture_xml(&cfg, &store, &ctx, SQL).await.unwrap();
             assert!(

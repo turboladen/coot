@@ -181,6 +181,13 @@ fn restore_order(mut pairs: Vec<(usize, DbRunOutcome)>) -> Vec<DbRunOutcome> {
 /// the `USE`-before-SHOWPLAN ordering its correctness depends on is structural —
 /// one call that cannot be reordered — rather than two adjacent statements a
 /// later edit could transpose. See [`run_batch_no_use`] for its other two steps.
+///
+/// It depends on a SECOND property here: [`apply_use_statement`] sends the `USE`
+/// as its own TDS request, so `sql` is transmitted as a batch of exactly what
+/// the caller passed. Folding the `USE` into `sql` (prepending `USE [db];\n` to
+/// save a round trip — a plausible optimization) would break capture, because
+/// `SET SHOWPLAN_XML ON` must be the ONLY statement in its batch. It would also
+/// shift server error line numbers off the user's SQL. Keep them separate.
 pub(crate) async fn run_batch(
     client: &mut Client<Ready>,
     ctx: &ExecutionContext,

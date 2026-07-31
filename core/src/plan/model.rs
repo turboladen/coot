@@ -50,7 +50,15 @@ pub struct MissingIndex {
 /// A warning the PLAN reports — a fact read out of the XML, not a judgement.
 /// Contrast [`Finding`], which is our conclusion and is expected to change.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "camelCase")]
+// `rename_all` renames VARIANTS only; `rename_all_fields` is what camelCases a
+// struct variant's FIELDS. Today's fields are single words, so the wire shape is
+// right either way — but the day a variant gains e.g. `spill_level`, serde would
+// silently emit `spill_level` while the TS mirror expects `spillLevel`.
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
 pub enum PlanWarning {
     /// A type conversion that can prevent index usage — the classic LLM-SQL
     /// smell.
@@ -162,6 +170,107 @@ mod tests {
         let s = serde_json::to_string(&o).unwrap();
         assert!(s.contains(r#""elapsedMs":12"#), "got {s}");
         assert!(s.contains("ShipDate"), "got {s}");
+        assert_eq!(serde_json::from_str::<DbPlanOutcome>(&s).unwrap(), o);
+    }
+
+    #[test]
+    fn a_populated_capture_round_trips_with_every_field_camel_cased() {
+        // One pass over EVERY multi-word field name in the module. These names are
+        // the contract the TS mirror is typed against, so a `rename_all` dropped
+        // from any struct here must fail loudly rather than reach the UI.
+        let capture = PlanCapture {
+            plan: QueryPlan {
+                statements: vec![PlanStatement {
+                    text: "SELECT * FROM Orders WHERE ShipCity = 'X'".into(),
+                    subtree_cost: 412.3,
+                    est_rows: 4_200_000.0,
+                    root: Some(PlanNode {
+                        physical_op: "Clustered Index Scan".into(),
+                        logical_op: "Clustered Index Scan".into(),
+                        object: Some("[dbo].[Orders].[PK_Orders]".into()),
+                        est_rows: 4_200_000.0,
+                        est_cost: 400.0,
+                        subtree_cost: 412.3,
+                        warnings: vec![PlanWarning::SpillToTempDb],
+                        children: vec![PlanNode {
+                            physical_op: "Table Scan".into(),
+                            logical_op: "Table Scan".into(),
+                            object: None,
+                            est_rows: 1.0,
+                            est_cost: 12.3,
+                            subtree_cost: 12.3,
+                            warnings: vec![],
+                            children: vec![],
+                        }],
+                    }),
+                    missing_indexes: vec![MissingIndex {
+                        impact: 99.5061,
+                        table: "[dbo].[Orders]".into(),
+                        columns: vec!["[ShipCity]".into()],
+                    }],
+                }],
+            },
+            verdict: PlanVerdict {
+                severity: Severity::Problem,
+                total_cost: 412.3,
+                findings: vec![Finding {
+                    kind: FindingKind::LargeScan,
+                    severity: Severity::Problem,
+                    message: "table scan on Orders".into(),
+                    evidence: Some("[dbo].[Orders]".into()),
+                }],
+            },
+        };
+        let s = serde_json::to_string(&capture).unwrap();
+        for (camel, snake) in [
+            ("subtreeCost", "subtree_cost"),
+            ("estRows", "est_rows"),
+            ("missingIndexes", "missing_indexes"),
+            ("physicalOp", "physical_op"),
+            ("logicalOp", "logical_op"),
+            ("estCost", "est_cost"),
+            ("totalCost", "total_cost"),
+        ] {
+            assert!(
+                s.contains(&format!(r#""{camel}":"#)),
+                "missing {camel}: {s}"
+            );
+            // Scoped to KEY position — object names in the data legitimately carry
+            // underscores (`[PK_Orders]`), so a blanket underscore ban is wrong.
+            assert!(
+                !s.contains(&format!(r#""{snake}":"#)),
+                "snake_case key {snake} survived: {s}"
+            );
+        }
+        assert_eq!(serde_json::from_str::<PlanCapture>(&s).unwrap(), capture);
+    }
+
+    #[test]
+    fn severity_orders_ok_below_caution_below_problem() {
+        // `verdict::judge` takes the MAX severity of its findings, so reordering
+        // these variants (e.g. to sort a UI list) would silently invert every
+        // verdict the tool produces.
+        assert!(Severity::Problem > Severity::Caution);
+        assert!(Severity::Caution > Severity::Ok);
+        assert_eq!(
+            [Severity::Caution, Severity::Problem, Severity::Ok]
+                .into_iter()
+                .max(),
+            Some(Severity::Problem)
+        );
+    }
+
+    #[test]
+    fn severity_serializes_to_the_strings_the_ui_switches_on() {
+        for (variant, expected) in [
+            (Severity::Ok, r#""ok""#),
+            (Severity::Caution, r#""caution""#),
+            (Severity::Problem, r#""problem""#),
+        ] {
+            let s = serde_json::to_string(&variant).unwrap();
+            assert_eq!(s, expected, "got {s}");
+            assert_eq!(serde_json::from_str::<Severity>(&s).unwrap(), variant);
+        }
     }
 
     #[test]
