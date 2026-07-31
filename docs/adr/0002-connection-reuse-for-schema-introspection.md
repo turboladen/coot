@@ -37,10 +37,18 @@ not.**
   optimization.
 - **`executor::run` / `run_with_params` keep connecting fresh, on purpose**, to avoid session-state
   bleed between user queries. This is a deliberate asymmetry, not an oversight.
-- `session.rs` becomes a **second** module permitted to touch `mssql_client`; `executor`'s
-  `connect`, `apply_use_statement`, and `query_stream_to_result` are promoted to `pub(crate)` rather
-  than duplicated. The boundary invariant is unchanged: no `mssql_client` type appears in any public
-  API or in the `app` crate.
+- `session.rs` becomes a **second** module permitted to touch `mssql_client`; rather than duplicate
+  driver logic, it calls `executor`'s `connect` and `run_batch`, which are `pub(crate)` for that
+  purpose. The boundary invariant is unchanged: no `mssql_client` type appears in any public API or
+  in the `app` crate.
+
+  > **Correction, 2026-07-31 (`billz-68o`).** This bullet originally claimed `connect`,
+  > `apply_use_statement`, and `query_stream_to_result` were promoted. Only `connect` was;
+  > `run_batch` was promoted instead, and `apply_use_statement` / `query_stream_to_result` are
+  > private. Ground truth is `session.rs`'s import list. The error came from distilling this ADR
+  > from `billz-lpb`'s *design spec* — what was planned — rather than from the code that shipped,
+  > which chose a higher-level seam. It misled an implementer before being caught; see the
+  > Consequences note below.
 - **Error policy — evict and retry once.** On any error from the first attempt, drop the possibly
   dirty client and run the attempt again, which reconnects. A second failure surfaces as
   `CoreError`. A stale socket (laptop sleep, server restart, idle timeout) heals transparently; a
@@ -59,6 +67,18 @@ not.**
 - **Negative:** the driver-boundary rule had to relax from "the one module that touches
   `mssql-client`" to "confined to `executor` and `session`." Two modules is still auditable; a third
   should require justification.
+
+  > **Third module admitted, 2026-07-31 (`billz-xi6.1`).** `plan::capture` is that third module. The
+  > justification demanded above: estimated-plan capture must issue `SET SHOWPLAN_XML ON`, which is
+  > *session state*, so it cannot run on a `SessionCache` client without poisoning every later query
+  > on it. It therefore opens its own connection and closes it — the hazard this ADR identifies,
+  > handled by the mitigation this ADR prescribes. Recorded in `executor.rs`'s module doc.
+
+- **Negative / process:** this record was written from a design spec rather than from the shipped
+  code, and one of its factual claims was wrong for months (see the correction above). An ADR is
+  trusted *more* than a design doc precisely because it claims durability, so a factual error here
+  costs more than the same error in a retired spec. Claims about what the code does should be
+  verified against the code before an ADR is marked `Accepted`.
 - **Negative / the important one:** session state is now a real hazard class. Anything that mutates
   connection state — `SET` options in particular — can bleed into later queries on a reused client.
   The runner's connect-fresh rule is the general mitigation, and any future feature that issues
