@@ -77,6 +77,11 @@ probe-typed:
 probe-dynamic:
     cargo run -p coot-core --example dynamic_dump
 
+# Capture real ShowPlanXML fixtures into core/tests/fixtures/plans/ (needs the DEV box).
+# The parser is developed against these — hand-authored plan XML is a trap.
+dump-plans:
+    cargo run -p coot-core --example dump_plan
+
 # ---- macOS code signing (one-time; see SIGNING.md) ----
 
 # Create the self-signed code-signing identity so signed builds stop re-prompting.
