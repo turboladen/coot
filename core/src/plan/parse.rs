@@ -1,6 +1,10 @@
-//! ShowPlanXML → [`QueryPlan`]. Pure: no I/O, no driver, no server. Every test
-//! in this file runs offline against the real `.sqlplan` fixtures in
-//! `core/tests/fixtures/plans/`, captured from a live SQL Server.
+//! ShowPlanXML → [`QueryPlan`]. Pure: no I/O, no driver, no server.
+//!
+//! Every test here runs offline. Most are backed by the real `.sqlplan` files in
+//! `core/tests/fixtures/plans/`, captured from a live SQL Server; three are not,
+//! and say so at their definitions — the missing-index test uses a hand-authored
+//! schema-derived document, and two feed deliberately malformed or non-plan
+//! input. No path in this module is fixture-backed unless it says it is.
 //!
 //! Element names are matched on their LOCAL name throughout, so the showplan
 //! namespace declaration is irrelevant and a future namespace bump cannot break
@@ -28,14 +32,24 @@ const ROWS_READ: &str = "EstimatedRowsRead";
 /// A document covers every statement in the explained batch, so the result is a
 /// list (`two-statements.sqlplan` proves the multi-statement case). A well-formed
 /// document that is not a plan yields zero statements rather than an error.
+///
+/// The [`CoreError::Query`] on a parse failure is a deliberate reuse, not a
+/// sloppy one. `error.rs` documents that variant as a failure "on the server or
+/// in the driver", and this is neither — it is local. A new variant is not worth
+/// churning a module that is otherwise strict about what each variant means, and
+/// nothing user-facing is misleading: the message says the plan XML could not be
+/// parsed.
 pub fn parse_plan(xml: &str) -> Result<QueryPlan> {
     let doc = Document::parse(xml)
         .map_err(|e| CoreError::Query(format!("could not parse execution plan XML: {e}")))?;
 
-    // A flat `descendants()` sweep would also pick up a `StmtSimple` nested
-    // inside a `<StoredProc>`/`<UDF>` block and flatten it into the top-level
-    // list. Unreachable from the ad-hoc SQL this app explains, absent from every
-    // fixture, and not verifiable offline — so it is noted, not coded around.
+    // Two known omissions, both fine for the ad-hoc SELECTs this app explains,
+    // neither verifiable offline:
+    //
+    // - Only `StmtSimple` is collected. A batch wrapping statements in `StmtCond`
+    //   (`IF`), `StmtCursor`, or `StmtUseDb` yields fewer statements than it had.
+    // - A flat `descendants()` sweep also picks up a `StmtSimple` nested inside a
+    //   `<StoredProc>`/`<UDF>` block and flattens it into the top-level list.
     let statements = doc
         .descendants()
         .filter(|n| has_local_name(n, "StmtSimple"))
@@ -182,9 +196,13 @@ fn scan_owned<'a, 'i>(n: Node<'a, 'i>) -> (Vec<Node<'a, 'i>>, Vec<Node<'a, 'i>>)
 
 /// One operator, and its children recursively.
 ///
-/// Recursion depth here is OPERATOR depth (20 levels in `scan.sqlplan`, the
-/// deepest plan we have), not XML depth — the tree being built is itself
-/// recursive, so an explicit stack would buy nothing but obscurity.
+/// The asymmetry with [`scan_owned`]'s explicit stack is deliberate, not an
+/// oversight. That function walks ELEMENT depth, which a `<ScalarOperator>`
+/// predicate tree can run away with — a deeply parenthesised `WHERE` clause
+/// nests without bound and is user-controlled. This one walks OPERATOR depth,
+/// which the optimizer keeps small (20 in `scan.sqlplan`, the deepest plan we
+/// have). Recursion is the natural shape for building a recursive tree, so it is
+/// used where the depth is bounded and avoided where it is not.
 fn rel_op(n: Node) -> PlanNode {
     let subtree_cost = attr_f64(&n, "EstimatedTotalSubtreeCost");
     let (owned, child_ops) = scan_owned(n);
@@ -228,11 +246,27 @@ fn rel_op(n: Node) -> PlanNode {
 /// One `<Warnings>` element's contents. Unknown children are ignored — the
 /// element gains new kinds across server versions and an unrecognised one is not
 /// a reason to fail a parse.
+///
+/// **Only `PlanAffectingConvert` has ever been seen in a captured document.**
+/// `NoJoinPredicate`, `SpillToTempDb`, and `UnmatchedIndexes` are written from
+/// the ShowPlanXML schema with no specimen to check them against — the same
+/// standing as [`missing_index`], and the same warning applies: these branches
+/// prove only that the parser does what we BELIEVE the schema says. `billz-e75`
+/// covers capturing one of each (a `CROSS JOIN` with no predicate, a big
+/// `ORDER BY` under a low memory grant).
 fn warnings_from(w: Node) -> Vec<PlanWarning> {
     let mut out = Vec::new();
 
-    // An ATTRIBUTE on `<Warnings>`, not a child element like the rest.
-    if w.attribute("NoJoinPredicate") == Some("true") {
+    // An ATTRIBUTE on `<Warnings>`, not a child element like the rest — and BOTH
+    // `xs:boolean` lexical forms are accepted, deliberately. This server emits
+    // both in one document, on adjacent elements: `SecurityPolicyApplied="false"`
+    // and `RetrievedFromCache="false"` sit on `<StmtSimple>` while `ForceSeek="0"`
+    // and `Ordered="1"` sit on the `<IndexScan>` below it. With no captured
+    // specimen there is no way to know which form this attribute uses, and
+    // guessing `"true"` alone buys a permanent silent false negative on an
+    // accidental cartesian product — one of the loudest things this feature
+    // exists to catch.
+    if matches!(w.attribute("NoJoinPredicate"), Some("true" | "1")) {
         out.push(PlanWarning::NoJoinPredicate);
     }
 
@@ -473,22 +507,20 @@ mod tests {
     }
 
     #[test]
-    fn no_own_cost_in_the_deep_tree_is_negative() {
-        // A sanity sweep, NOT clamp coverage: every raw own cost in
-        // `scan.sqlplan` is already positive, so this passes with the `.max(0.0)`
-        // deleted. `own_cost_of_a_nested_loops_join_is_clamped_at_zero` is the
-        // only test that covers the clamp.
+    fn no_raw_own_cost_in_the_deep_tree_is_negative() {
+        // A sanity sweep, NOT clamp coverage — and it asserts the RAW arithmetic,
+        // re-derived from subtree costs, because `est_cost >= 0.0` is a tautology
+        // the clamp guarantees and so could not fail in either configuration.
+        // What this pins is the real claim: `scan.sqlplan` needs no clamping,
+        // which is why `own_cost_of_a_nested_loops_join_is_clamped_at_zero` and
+        // its single `join.sqlplan` node are the only clamp coverage there is.
         let plan = parse_plan(&fixture("scan.sqlplan")).unwrap();
         let root = plan.statements[0].root.as_ref().unwrap();
 
         let mut stack = vec![root];
         while let Some(n) = stack.pop() {
-            assert!(
-                n.est_cost >= 0.0,
-                "{} had est_cost {}",
-                n.physical_op,
-                n.est_cost
-            );
+            let raw = n.subtree_cost - n.children.iter().map(|c| c.subtree_cost).sum::<f64>();
+            assert!(raw >= 0.0, "{} had a raw own cost of {raw}", n.physical_op);
             assert!(
                 n.subtree_cost > 0.0,
                 "{} had no subtree cost",
@@ -538,7 +570,13 @@ mod tests {
         // seek; `Seek Plan` is the index-blocking one. Dropping the attribute
         // would make our only warning fixture look like the headline problem.
         let plan = parse_plan(&fixture("scan.sqlplan")).unwrap();
-        for w in plan.statements[0].all_warnings() {
+        let s = &plan.statements[0];
+
+        // Count first: a `for` over an empty iterator asserts nothing, so without
+        // this the whole test passes vacuously the day warnings stop being found.
+        assert_eq!(s.all_warnings().count(), 3);
+
+        for w in s.all_warnings() {
             let PlanWarning::ImplicitConversion { convert_issue, .. } = w else {
                 panic!("expected only converts, got {w:?}");
             };
@@ -589,6 +627,53 @@ mod tests {
         // No `Index` attribute on a `MissingIndex`, so three parts, not four.
         assert_eq!(mi.table, "[master].[dbo].[Orders]");
         assert_eq!(mi.columns, vec!["[ShipCity]", "[OrderDate]"]);
+    }
+
+    /// A statement-level `<Warnings NoJoinPredicate=…>` with `attr` as the
+    /// attribute's literal text. Schema-derived, like
+    /// `SCHEMA_DERIVED_MISSING_INDEX` — no captured plan contains this warning.
+    fn schema_derived_no_join_predicate(attr: &str) -> String {
+        format!(
+            r#"<?xml version="1.0"?>
+<ShowPlanXML xmlns="http://schemas.microsoft.com/sqlserver/2004/07/showplan">
+ <BatchSequence><Batch><Statements>
+  <StmtSimple StatementText="SELECT * FROM a, b" StatementSubTreeCost="9.0" StatementEstRows="1000">
+   <QueryPlan>
+    <Warnings NoJoinPredicate="{attr}"/>
+    <RelOp NodeId="0" PhysicalOp="Nested Loops" LogicalOp="Inner Join" EstimateRows="1000" EstimatedTotalSubtreeCost="9.0"/>
+   </QueryPlan>
+  </StmtSimple>
+ </Statements></Batch></BatchSequence>
+</ShowPlanXML>"#
+        )
+    }
+
+    #[test]
+    fn no_join_predicate_is_read_in_either_boolean_encoding() {
+        // NOT fixture coverage — see `warnings_from`. This server writes
+        // `xs:boolean` BOTH ways in a single document (`SecurityPolicyApplied=
+        // "false"` on `<StmtSimple>`, `ForceSeek="0"` on the `<IndexScan>` under
+        // it), and we have no specimen of this attribute, so matching only
+        // `"true"` would be a coin flip whose losing side is a permanent silent
+        // false negative on an accidental cartesian product.
+        for attr in ["true", "1"] {
+            let plan = parse_plan(&schema_derived_no_join_predicate(attr)).unwrap();
+            assert_eq!(
+                plan.statements[0].warnings,
+                vec![PlanWarning::NoJoinPredicate],
+                "NoJoinPredicate=\"{attr}\" was not recognised"
+            );
+        }
+
+        // The negative forms must stay silent, or the warning fires on every
+        // plan that explicitly says the join HAS a predicate.
+        for attr in ["false", "0"] {
+            let plan = parse_plan(&schema_derived_no_join_predicate(attr)).unwrap();
+            assert!(
+                plan.statements[0].warnings.is_empty(),
+                "NoJoinPredicate=\"{attr}\" wrongly produced a warning"
+            );
+        }
     }
 
     #[test]
