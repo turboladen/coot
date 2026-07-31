@@ -8,3 +8,6 @@
 
 # superpowers brainstorm visual-companion scratch
 .superpowers/
+
+# superpowers specs/plans are transient working artifacts (see docs/adr/README.md)
+docs/superpowers/
