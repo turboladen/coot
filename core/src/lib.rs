@@ -38,7 +38,7 @@ pub use executor::{run, run_fanout, run_with_params};
 pub use param_bind::{BindValue, ResolvedParam};
 pub use plan::{
     DbPlanOutcome, Finding, FindingKind, MissingIndex, PlanCapture, PlanNode, PlanStatement,
-    PlanVerdict, PlanWarning, QueryPlan, Severity, capture_xml as capture_plan_xml,
+    PlanVerdict, PlanWarning, QueryPlan, Severity, capture_xml as capture_plan_xml, parse_plan,
 };
 pub use query::{Param, ParamScope, SavedQuery, SavedQueryId, SqlType};
 pub use query_store::QueryStore;
