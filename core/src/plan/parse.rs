@@ -257,15 +257,28 @@ fn rel_op(n: Node) -> PlanNode {
 fn warnings_from(w: Node) -> Vec<PlanWarning> {
     let mut out = Vec::new();
 
-    // An ATTRIBUTE on `<Warnings>`, not a child element like the rest — and BOTH
-    // `xs:boolean` lexical forms are accepted, deliberately. This server emits
-    // both in one document, on adjacent elements: `SecurityPolicyApplied="false"`
-    // and `RetrievedFromCache="false"` sit on `<StmtSimple>` while `ForceSeek="0"`
-    // and `Ordered="1"` sit on the `<IndexScan>` below it. With no captured
-    // specimen there is no way to know which form this attribute uses, and
-    // guessing `"true"` alone buys a permanent silent false negative on an
-    // accidental cartesian product — one of the loudest things this feature
-    // exists to catch.
+    // An ATTRIBUTE on `<Warnings>`, not a child element like the rest.
+    //
+    // DO NOT NARROW THIS TO ONE FORM. Accepting both is the only defensible
+    // parse, not belt-and-braces. `xs:boolean` has two lexical forms and this
+    // server emits BOTH — not in different documents or from different versions,
+    // but on adjacent elements written by the same serializer in one document.
+    // Verified across the fixtures:
+    //
+    //   0/1:         Parallel, Ordered, ForceSeek, ForcedIndex, NoExpandHint,
+    //                StartupExpression, Optimized  (plan-structure attributes)
+    //   true/false:  RetrievedFromCache, SecurityPolicyApplied  (on `<StmtSimple>`
+    //                itself, directly above the `<IndexScan>` carrying the others)
+    //
+    // No fixture contains a `NoJoinPredicate` specimen, so there is no basis to
+    // predict which form IT uses — and this is not a case where guessing wrong is
+    // cheap. The losing side of that coin flip is a permanent silent false
+    // negative on an accidental cartesian product, which Unit 3 grades at Problem
+    // severity and which is among the loudest things this feature exists to
+    // catch. `billz-e75` covers capturing a real one, which is what will
+    // eventually settle the question; until then, both.
+    //
+    // `no_join_predicate_is_read_in_either_boolean_encoding` pins all four forms.
     if matches!(w.attribute("NoJoinPredicate"), Some("true" | "1")) {
         out.push(PlanWarning::NoJoinPredicate);
     }
