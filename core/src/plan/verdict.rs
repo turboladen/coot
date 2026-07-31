@@ -13,11 +13,20 @@
 //! configurable rule engine before there is evidence — that is the failure mode
 //! the spec names.
 //!
-//! Every threshold sits ABOVE everything the fixtures contain (the largest read
-//! in any captured plan is 25,871 rows; the costliest statement is 0.754). That
-//! is deliberate — `no_real_fixture_produces_a_volume_or_cost_finding` is the
-//! false-positive guard, and it is the strongest evidence these numbers have.
-//! Their `true` branches are reached only by hand-built plans.
+//! TWO of the four are constrained by real data. [`LARGE_SCAN_ROWS_READ`] and
+//! [`EXPENSIVE_COST`] sit above everything the fixtures contain (the largest
+//! read in any captured plan is 25,871 rows; the costliest statement is 0.754),
+//! so `no_real_fixture_produces_a_volume_or_cost_finding` — the false-positive
+//! sweep — fails if either is lowered. That sweep is the strongest evidence
+//! those two numbers have.
+//!
+//! The other two it does NOT constrain, and the difference is worth being exact
+//! about. [`WASTEFUL_READ_RATIO`] is EXCEEDED by real fixture data (`join`
+//! node 5 is 115×, `scan` node 11 is 218×); those stay silent only because the
+//! volume gate runs first, so lowering the ratio to 10 breaks nothing.
+//! [`MISSING_INDEX_IMPACT`] has no fixture to constrain it at all — no captured
+//! plan contains a missing index — so lowering it to 0 breaks nothing either.
+//! Both are held up by hand-built tests alone.
 //!
 //! # What is NOT backed by a captured plan
 //!

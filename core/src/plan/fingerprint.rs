@@ -54,8 +54,9 @@ use crate::plan::model::{PlanNode, QueryPlan};
 /// Readable rather than hashed, deliberately: this is the grouping key the
 /// variance view shows, two classes diff against each other line by line, and a
 /// test asserting an exact key proves WHAT the shape is where comparing two
-/// hashes proves only that they match. The longest fixture key is about 1.5 kB
-/// (32 operators), which is nothing as a `HashMap` key for 27 tenants.
+/// hashes proves only that they match. The longest fixture key is 965 bytes
+/// (`scan.sqlplan`, 32 operators), which is nothing as a `HashMap` key for 27
+/// tenants.
 ///
 /// Object names are not escaped, so an identifier containing `(`, `)`, `,`, `;`
 /// or `:` could in principle alias two shapes. Accepted: these are ordinary
@@ -225,13 +226,21 @@ mod tests {
         // THE cross-tenant test. `scan.sqlplan` has 11 objects spanning two
         // databases, so it exercises the strip on every arity the fixtures have.
         //
-        // Three shapes must agree — not two. Comparing one rewrite against the
-        // original passes for a strip that merely maps every database to the
-        // same thing; three distinct tenant names pin that the component is gone
-        // rather than normalised. And the `contains` sweep at the end is what
-        // fails if `strip_database` silently no-ops: shapes would still be
-        // pairwise unequal, but the assertion above would already have caught
-        // that, whereas a strip that dropped the wrong component would pass it.
+        // What this proves, precisely: the key does not VARY with the database
+        // name — three different tenant names, one key.
+        //
+        // What it does NOT prove: that the component is GONE rather than
+        // normalised. A strip that rewrote every database to a constant `[X]`
+        // passes every assertion here. The exact-key tests below are what rule
+        // that out, because they spell the whole string; this test cannot, and
+        // saying otherwise would be claiming coverage it does not have.
+        //
+        // The `leaked` sweep runs over all three keys rather than just
+        // `original`, but be clear about what that is worth: the equality
+        // assertions above already force the three identical, so a `contains`
+        // check on one implies it on all three. It is presentation, not extra
+        // coverage — it stops the `TenantA`/`TenantB` entries from reading as
+        // though they test something `original` could ever have contained.
         let original = shape(&parsed("scan.sqlplan"));
 
         let mut a = parsed("scan.sqlplan");
@@ -239,21 +248,21 @@ mod tests {
         let mut b = parsed("scan.sqlplan");
         rewrite_database(b.statements[0].root.as_mut().unwrap(), "TenantB_DEV");
 
-        assert_eq!(original, shape(&a));
-        assert_eq!(original, shape(&b));
+        let (a, b) = (shape(&a), shape(&b));
+        assert_eq!(original, a);
+        assert_eq!(original, b);
 
-        for leaked in ["master", "mssqlsystemresource", "TenantA", "TenantB"] {
-            assert!(
-                !original.contains(leaked),
-                "database name {leaked} survived into the shape key: {original}"
-            );
+        for key in [&original, &a, &b] {
+            for leaked in ["master", "mssqlsystemresource", "TenantA", "TenantB"] {
+                assert!(
+                    !key.contains(leaked),
+                    "database name {leaked} survived into the shape key: {key}"
+                );
+            }
+            // …and the rest of the object is still there, so the strip did not
+            // simply drop the object.
+            assert!(key.contains("[sys].[syscolpars].[clst]"), "got {key}");
         }
-        // …and the rest of the object is still there, so the strip did not simply
-        // drop the object.
-        assert!(
-            original.contains("[sys].[syscolpars].[clst]"),
-            "got {original}"
-        );
     }
 
     #[test]
@@ -300,6 +309,33 @@ mod tests {
             shape(&parsed("two-statements.sqlplan")),
             "Compute Scalar(Stream Aggregate/Aggregate(Filter(Clustered Index Scan:\
              [sys].[sysschobjs].[clst])));Top(Clustered Index Seek:[sys].[sysclsobjs].[clst])"
+        );
+    }
+
+    #[test]
+    fn the_shape_of_a_branching_plan_is_the_exact_string_we_expect() {
+        // THE test for the sibling separator, and the only one that pins it: the
+        // other two exact keys are single-child chains (`seek.sqlplan` is one
+        // `Filter(…)`, `two-statements.sqlplan` is two linear chains), and
+        // `child_order_is_significant` compares two hand-built shapes for
+        // INEQUALITY, which still holds if siblings are run together with no
+        // separator at all. So `node ("," node)*` — the one production in the
+        // grammar with real branching — had no coverage.
+        //
+        // The failure that leaves open is the worst available: a separator that
+        // aliases two structurally different plans (`,` → `;` collides with the
+        // STATEMENT separator) merges two tenant classes into one, and the
+        // variance view then reports "all tenants agree" — indistinguishable
+        // from a genuine clean result and the exact inversion of this unit's job.
+        //
+        // `aggregate.sqlplan` is the right fixture for it: node 2's two children
+        // are a seek and a filter, and their objects live in DIFFERENT databases
+        // (`[mssqlsystemresource]` and `[master]`), so one assertion pins the
+        // comma, the branching, and the strip on a captured tree at once.
+        assert_eq!(
+            shape(&parsed("aggregate.sqlplan")),
+            "Compute Scalar(Hash Match/Aggregate(Hash Match/Right Outer Join(Clustered Index Seek:\
+             [sys].[syspalnames].[cl],Filter(Clustered Index Scan:[sys].[sysschobjs].[clst]))))"
         );
     }
 
