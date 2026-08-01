@@ -131,6 +131,14 @@ pub enum Severity {
     Problem,
 }
 
+/// What a [`Finding`] is ABOUT. One variant per distinguishable conclusion:
+/// consumers group and filter by this, so two conclusions that a reader would
+/// act on differently must not share a variant. `SpillToTempDb` and
+/// `UnmatchedIndex` exist for exactly that reason — folding them into
+/// `ExpensivePlan`/`MissingIndex` (the design spec §4.3's illustrative list,
+/// which ends in a `…`) would put two unrelated meanings behind one key: a card
+/// would show two `ExpensivePlan` findings, one the batch's total cost and one a
+/// tempdb spill, with nothing to tell them apart.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum FindingKind {
@@ -138,6 +146,8 @@ pub enum FindingKind {
     MissingIndex,
     ImplicitConversion,
     NoJoinPredicate,
+    SpillToTempDb,
+    UnmatchedIndex,
     ExpensivePlan,
 }
 
@@ -322,6 +332,24 @@ mod tests {
             let s = serde_json::to_string(&variant).unwrap();
             assert_eq!(s, expected, "got {s}");
             assert_eq!(serde_json::from_str::<Severity>(&s).unwrap(), variant);
+        }
+    }
+
+    #[test]
+    fn finding_kind_serializes_to_the_strings_the_ui_switches_on() {
+        // Every variant, because these are the keys the verdict card groups by.
+        for (variant, expected) in [
+            (FindingKind::LargeScan, r#""largeScan""#),
+            (FindingKind::MissingIndex, r#""missingIndex""#),
+            (FindingKind::ImplicitConversion, r#""implicitConversion""#),
+            (FindingKind::NoJoinPredicate, r#""noJoinPredicate""#),
+            (FindingKind::SpillToTempDb, r#""spillToTempDb""#),
+            (FindingKind::UnmatchedIndex, r#""unmatchedIndex""#),
+            (FindingKind::ExpensivePlan, r#""expensivePlan""#),
+        ] {
+            let s = serde_json::to_string(&variant).unwrap();
+            assert_eq!(s, expected, "got {s}");
+            assert_eq!(serde_json::from_str::<FindingKind>(&s).unwrap(), variant);
         }
     }
 
