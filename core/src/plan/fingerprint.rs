@@ -54,9 +54,8 @@ use crate::plan::model::{PlanNode, QueryPlan};
 /// Readable rather than hashed, deliberately: this is the grouping key the
 /// variance view shows, two classes diff against each other line by line, and a
 /// test asserting an exact key proves WHAT the shape is where comparing two
-/// hashes proves only that they match. The longest fixture key is 965 bytes
-/// (`scan.sqlplan`, 32 operators), which is nothing as a `HashMap` key for 27
-/// tenants.
+/// hashes proves only that they match. Even the longest fixture key — the
+/// 32-operator `scan.sqlplan` — is trivial as a `HashMap` key for 27 tenants.
 ///
 /// Object names are not escaped, so an identifier containing `(`, `)`, `,`, `;`
 /// or `:` could in principle alias two shapes. Accepted: these are ordinary

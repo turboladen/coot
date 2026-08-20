@@ -18,8 +18,8 @@ use crate::plan::model::{
 ///
 /// Rows read is the work done; rows returned is what survived. See
 /// [`rows_read`] for why this is the better of the two signals.
-// Fixture-constrained: above every captured plan (largest read is 25,871 rows),
-// so `no_real_fixture_produces_a_volume_or_cost_finding` fails if it is lowered.
+// Fixture-constrained: above every captured plan, so
+// `no_real_fixture_produces_a_volume_or_cost_finding` fails if it is lowered.
 // That sweep is the strongest evidence this number has. Revisit after real use
 // against generated SQL — billz-7u0. Do not make it configurable: a rule engine
 // is harder to change than a constant while still having guessed.
@@ -29,18 +29,17 @@ pub const LARGE_SCAN_ROWS_READ: f64 = 100_000.0;
 /// which promotes it from `Caution` to `Problem`.
 ///
 /// This ratio does not trigger a finding on its own; the volume gate runs first.
-// NOT fixture-constrained. Real data exceeds it — `join.sqlplan` node 5 reads
-// 1,153 to return 10.0021 (115×), `scan.sqlplan` node 11 reads 218 to return 1
-// (218×) — and both stay silent only because the volume gate runs first, so
-// lowering this to 10 breaks no test. Both are ordinary row-goal and
-// selective-filter shapes with nothing wrong with them, which is exactly why
-// the ratio cannot be the trigger. Hand-built tests alone hold it up: billz-7u0.
+// NOT fixture-constrained. Two captured scans exceed this ratio and stay silent
+// only because the volume gate runs first, so lowering it breaks no test. Both
+// are ordinary row-goal and selective-filter shapes with nothing wrong with
+// them, which is exactly why the ratio cannot be the trigger. Hand-built tests
+// alone hold it up: billz-7u0.
 pub const WASTEFUL_READ_RATIO: f64 = 100.0;
 
 /// Total estimated subtree cost across the batch at or above which the plan is
 /// worth reporting. SQL Server's cost unit is a legacy seconds-ish figure whose
 /// default parallelism threshold is 5; 10 is decisively past "trivial".
-// Fixture-constrained: the costliest captured statement is 0.754, so the
+// Fixture-constrained: every captured statement costs far less, so the
 // false-positive sweep fails if this is lowered. Revisit after real use —
 // billz-7u0.
 pub const EXPENSIVE_COST: f64 = 10.0;
@@ -281,10 +280,9 @@ fn is_scan(physical_op: &str) -> bool {
 /// Rows this operator READS.
 ///
 /// `est_rows_read` is the better wasteful-scan signal and a raw returned-row
-/// count cannot see it: `join.sqlplan` returns 10 while reading 1,153, and
-/// `scan.sqlplan` node 11 returns 1 while reading 218. The inverse matters too —
-/// a returned-row threshold fires on `SELECT * FROM BigTable`, where nothing is
-/// wrong that an index could fix.
+/// count cannot see it: captured scans read orders of magnitude more rows than
+/// they return. The inverse matters too — a returned-row threshold fires on
+/// `SELECT * FROM BigTable`, where nothing is wrong that an index could fix.
 ///
 /// `None` means "this operator accesses no data", never "read nothing", so the
 /// fallback applies only to something already identified as a scan whose
@@ -422,7 +420,7 @@ mod tests {
 
     #[test]
     fn total_cost_sums_every_statement() {
-        // 0.0495128 + 0.0032832, both read off `two-statements.sqlplan`.
+        // The sum of both statements' costs, read off `two-statements.sqlplan`.
         let v = judge_fixture("two-statements.sqlplan");
         assert!(close(v.total_cost, 0.052796), "got {}", v.total_cost);
     }
@@ -431,9 +429,8 @@ mod tests {
     fn no_real_fixture_produces_a_volume_or_cost_finding() {
         // The false-positive sweep, and the strongest evidence the three volume
         // and cost thresholds have. Across every operator in all five captured
-        // plans — including the `TOP 1` seek that reads 13 rows to return 1, the
-        // index scan that reads 1,153 to return 10, and the clustered scan that
-        // reads 25,871 to return 410 — nothing but the converts fires.
+        // plans — including the seeks and scans that read far more than they
+        // return — nothing but the converts fires.
         for name in ["seek.sqlplan", "aggregate.sqlplan", "join.sqlplan"] {
             let v = judge_fixture(name);
             assert_eq!(v.findings, vec![], "{name}");
