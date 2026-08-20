@@ -1,12 +1,14 @@
-//! Connection reuse for schema introspection (bead billz-lpb). Owns one live
-//! `Client` per connection-id, lazily connected and reused across the tree's
-//! `sys.*` queries so an expand pays one amortized login, not one per call.
+//! Connection reuse for schema introspection. Owns one live `Client` per
+//! connection-id, lazily connected and reused across the tree's `sys.*` queries
+//! so an expand pays one amortized login, not one per call.
 //!
 //! One of the three modules (with `executor` and `plan::capture`) where
-//! `mssql-client` is used — no
-//! driver type appears in this module's public API (`PLAN.md` §3, `CLAUDE.md`).
-//! Ops on a single connection serialize behind a `tokio::Mutex` (TDS is strictly
-//! one-request-at-a-time; no MARS), which is correct, not a limitation.
+//! `mssql-client` is used — no driver type appears in this module's public API
+//! (`PLAN.md` §3, `CLAUDE.md`). Ops on a single connection serialize behind a
+//! `tokio::Mutex` (TDS is strictly one-request-at-a-time; no MARS), which is
+//! correct, not a limitation.
+
+// Connection reuse is bead billz-lpb.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex as StdMutex};
@@ -79,21 +81,25 @@ impl SessionCache {
 
     /// Reuse (or lazily open) the connection for `cfg.id`, apply `ctx`'s `USE`,
     /// run `sql`, and return every result set — WITHOUT closing (that is the
-    /// reuse). Retry policy (billz-lpb.1): retry once, on a fresh connection,
-    /// ONLY when a REUSED client hit a TRANSPORT error (dropped/closed socket,
-    /// TLS/TDS desync — a stale socket idle-dropped since the last use is
-    /// plausible), surfacing the retry's result. A server/query error is
-    /// deterministic — re-running just repeats it — and a freshly-connected
-    /// client's failure is likewise not transient, so both are surfaced as-is
-    /// with no wasted second login. A dirty client left after a failed retry
-    /// self-heals on the next call (its transport error there triggers a reconnect).
+    /// reuse). Retries once, on a fresh connection, ONLY when a REUSED client hit
+    /// a TRANSPORT error, and returns the RETRY's result — so a retry that
+    /// succeeds yields its rows, not the original error. Every other failure is
+    /// surfaced as-is.
     ///
     /// REUSE HAZARD: the retry re-executes the WHOLE `sql` batch. That is safe
     /// for the idempotent, read-only `sys.*` introspection this serves today, but
-    /// a future caller wiring this to non-idempotent statements (INSERT/UPDATE —
-    /// the `billz-0gh.1` fan-out TODO) would double-apply side effects on a
-    /// mid-batch failure. Keep this path for idempotent reads, or add idempotency
-    /// handling before reusing it for writes.
+    /// a caller wiring this to non-idempotent statements (INSERT/UPDATE) would
+    /// double-apply side effects on a mid-batch failure. Keep this path for
+    /// idempotent reads, or add idempotency handling before reusing it for writes.
+    // The retry is narrow on purpose. A stale socket idle-dropped since the last
+    // use is plausible, so a reused client's transport error (dropped/closed
+    // socket, TLS/TDS desync) is worth one fresh connection, and the retry's
+    // result is the real one. A server/query error is deterministic — re-running
+    // just repeats it — and a freshly-connected client's failure is likewise not
+    // transient, so neither buys a second login. A dirty client left after a
+    // failed retry self-heals on the next call, whose transport error triggers
+    // the reconnect. billz-lpb.1; the non-idempotent case the hazard describes is
+    // the billz-0gh.1 fan-out TODO.
     pub async fn run(
         &self,
         cfg: &ConnectionConfig,

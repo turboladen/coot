@@ -14,7 +14,7 @@
 //! name throughout — even for a query that only reads `sys.*`. Committing work
 //! database, table, or column names to this repo is not acceptable.
 //!
-//! Two independent defences, because one is not enough:
+//! Two independent defenses, because one is not enough:
 //!
 //! 1. **Everything is captured against [`FIXTURE_DB`] (`master`), never
 //!    `MSSQL_DATABASE`.** Combined with `sys.*`-only queries, every identifier
@@ -118,7 +118,7 @@ async fn main() {
         std::process::exit(1);
     };
 
-    // Forced to master — see defence 1 in the module doc.
+    // Forced to master — see defense 1 in the module doc.
     let ctx = ExecutionContext::new(cfg.id.clone()).with_database(FIXTURE_DB);
 
     let args: Vec<String> = env::args().skip(1).collect();

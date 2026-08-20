@@ -87,8 +87,8 @@ mod tests {
     use super::*;
     use std::sync::atomic::{AtomicU32, Ordering};
 
-    /// A unique temp dir per call — no `tempfile` dep needed for a single-user
-    /// tool. Cleaned up at the end of each test via `remove_dir_all`.
+    // A unique temp dir per call — no `tempfile` dep needed for a single-user
+    // tool. Cleaned up at the end of each test via `remove_dir_all`.
     fn temp_store_path() -> PathBuf {
         static COUNTER: AtomicU32 = AtomicU32::new(0);
         let n = COUNTER.fetch_add(1, Ordering::Relaxed);

@@ -5,11 +5,15 @@
 //! `core/tests/fixtures/plans/`, with no server, no VPN, and no driver. Those
 //! fixtures are real, captured by `just dump-plans`; assertions come from the
 //! files.
-//! [`capture`] is the one that touches a server, and it opens its
-//! OWN connection and closes it rather than using
-//! [`SessionCache`](crate::session::SessionCache) — see
-//! `docs/adr/0002-connection-reuse-for-schema-introspection.md` and that
-//! module's doc for why a leaked `SET SHOWPLAN_XML ON` would be so damaging.
+//!
+//! [`capture`] is the one module that touches a server. It opens and closes its
+//! OWN connection rather than using
+//! [`SessionCache`](crate::session::SessionCache): a leaked
+//! `SET SHOWPLAN_XML ON` on a reused client would make every later query return
+//! plan XML instead of running. See that module's doc.
+
+// The connection-reuse decision is ADR-0002,
+// `docs/adr/0002-connection-reuse-for-schema-introspection.md`.
 
 pub mod capture;
 pub mod fingerprint;

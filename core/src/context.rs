@@ -35,9 +35,9 @@ impl ExecutionContext {
         self.database.as_deref()
     }
 
-    /// The `USE [database];` the executor (bead ce1.6) issues before a batch,
-    /// with the identifier safely bracket-quoted (`]` → `]]`). `None` when no
-    /// database is pinned (stay on the connection default).
+    /// The `USE [database];` the executor issues before a batch, with the
+    /// identifier safely bracket-quoted (`]` → `]]`). `None` when no database is
+    /// pinned (stay on the connection default).
     ///
     /// Identifier quoting lives here, in context, because it is the cleanest
     /// headless-testable proof that "database is context, not string-spliced

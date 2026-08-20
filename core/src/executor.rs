@@ -1,10 +1,8 @@
 //! The executor — one of three modules (with `session` and `plan::capture`)
-//! where `mssql-client` is used in non-test code. ADR-0002 set the bar at "a
-//! third should require justification"; `plan::capture`'s is the design spec
-//! `docs/superpowers/specs/2026-07-27-plan-verdict-design.md` §4.2 — it must own
-//! and close its own connection so a `SET SHOWPLAN_XML` cannot leak, which it
-//! does through the `pub(crate)` helpers here rather than by touching the driver
-//! itself.
+//! where `mssql-client` is used in non-test code. A fourth requires
+//! justification. `plan::capture` earns its place by having to own and close its
+//! own connection so a `SET SHOWPLAN_XML` cannot leak, and it does that through
+//! the `pub(crate)` helpers here rather than by touching the driver itself.
 //!
 //! [`run`] connects (per call), applies the [`ExecutionContext`]'s `USE`, runs a
 //! SQL batch, and maps the driver's `SqlValue`→[`CellValue`] and
@@ -13,6 +11,11 @@
 //! confined to `run`'s private body and the two private mappers below
 //! (`PLAN.md` §3, `CLAUDE.md`). Errors are stringified into [`CoreError`];
 //! the driver's `Error` is never `#[from]`.
+
+// The three-module bar is ADR-0002,
+// `docs/adr/0002-connection-reuse-for-schema-introspection.md`. The exception
+// for `plan::capture` is §4.2 of the plan-verdict design spec (untracked, under
+// `docs/superpowers/specs/`).
 
 use futures::StreamExt;
 use mssql_client::{
@@ -56,7 +59,7 @@ pub async fn run(
 /// returning a per-database [`DbRunOutcome`] — the cross-tenant fan-out primitive
 /// (`PLAN.md` §4). Each database is an independent unit of work: connect once,
 /// apply `base.clone().with_database(db)`, run every batch on that one connection,
-/// close. One login per DB; no pooled reuse (bead billz-0gh.1.1).
+/// close. One login per DB; no pooled reuse.
 ///
 /// **Never returns `Result`.** A failing database (unreachable, a bad `USE`, a SQL
 /// error) is captured into that DB's `DbRunOutcome.error` — the other databases
@@ -224,9 +227,10 @@ pub(crate) async fn close_client(client: Client<Ready>) {
 /// Run a multi-result batch on a connected client and drain every result set
 /// into core's [`QueryResult`]s. Does NOT apply `USE` (the caller does) and does
 /// not close. Shared by [`run_batch`] and the no-bind branch of
-/// [`run_params_on_client`] so the collection logic — and any future
-/// `rows_affected` / PRINT capture (`billz-38l` / `billz-mfd`) — lives in ONE
-/// place instead of drifting between the two paths.
+/// [`run_params_on_client`] so the collection logic lives in ONE place instead
+/// of drifting between the two paths.
+// `rows_affected` capture (billz-38l) and PRINT capture (billz-mfd) both land
+// here when they land, which is the reason the two paths share this function.
 async fn collect_multi(client: &mut Client<Ready>, sql: &str) -> Result<Vec<QueryResult>> {
     let multi = client
         .query_multiple(sql, &[])
@@ -250,7 +254,7 @@ async fn collect_multi(client: &mut Client<Ready>, sql: &str) -> Result<Vec<Quer
 ///
 /// Two mechanisms, decided by each param's `sql_type` (`PLAN.md` §5):
 ///   - `None` → a **raw-text** fragment, spliced literally into the SQL before
-///     send (injectable BY DESIGN; d28.6 flags it loud).
+///     send (injectable BY DESIGN; the library UI flags it loud).
 ///   - `Some(_)` → a **bind** param: its value is parsed to a typed value and sent
 ///     via `sp_executesql` (safe, typed) — the driver derives the type declaration
 ///     from the value at runtime.
@@ -370,9 +374,10 @@ async fn preflight_reachable(host: &str, port: u16) -> Result<()> {
 /// failures (dropped/closed socket, TLS, TDS protocol/codec desync — retryable
 /// on a fresh connection) from deterministic server/query errors. This is the
 /// ONE place `mssql_client::Error`'s variants are inspected; the driver type
-/// never escapes. Drives the session's retry-only-on-transport decision
-/// (`billz-lpb.1`). `Error` is `#[non_exhaustive]`, so the wildcard arm is
-/// mandatory — an unknown future variant is treated as deterministic (no retry).
+/// never escapes. Drives the session's retry-only-on-transport decision.
+/// `Error` is `#[non_exhaustive]`, so the wildcard arm is mandatory — an unknown
+/// future variant is treated as deterministic (no retry).
+// The retry policy this classification feeds is billz-lpb.1, in `session::run`.
 fn map_driver_error(e: DriverError) -> CoreError {
     match &e {
         DriverError::Io(_)
@@ -453,8 +458,9 @@ fn sql_value_from_bind(v: BindValue) -> SqlValue {
 /// Map a driver `Column` to core's `ColumnMeta`. Private — the driver type never
 /// crosses `core`'s boundary. `type_name` is the Debug name of a TDS `TypeId`
 /// (`"Int4"`, `"DecimalN"`, `"NVarChar"`, …); [`friendly_type_name`] turns it
-/// into the friendly name. `max_length`/`collation` are dropped (no field for
-/// them; width-aware disambiguation is deferred — see `types.rs` / bead billz-9qg).
+/// into the friendly name. `max_length`/`collation` are dropped — there is no
+/// field for them, and width-aware disambiguation is deferred (see `types.rs`).
+// Width-aware disambiguation is bead billz-9qg.
 fn column_meta(col: &Column) -> ColumnMeta {
     ColumnMeta {
         name: col.name.clone(),
