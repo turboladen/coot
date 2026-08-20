@@ -1,50 +1,13 @@
 //! Plan → verdict. Pure: no I/O, no driver, no server.
 //!
-//! [`PlanWarning`] is what the plan REPORTS; [`Finding`] is what we CONCLUDE.
-//! Keeping them apart means revising our judgement — which we expect to do,
-//! repeatedly, once this has been pointed at real generated SQL — never churns
-//! the parser's output type.
+//! [`PlanWarning`] is what the plan reports; [`Finding`] is what we conclude.
+//! Keeping them apart means a change of judgement never churns the parser's
+//! output type.
 //!
-//! # The thresholds are a hypothesis
-//!
-//! Four named constants, in one place, deliberately. The design spec §6 lists
-//! the verdict rules as provisional and expects them to change after first real
-//! use; `billz-7u0` tracks revisiting the numbers. Do **not** grow this into a
-//! configurable rule engine before there is evidence — that is the failure mode
-//! the spec names.
-//!
-//! TWO of the four are constrained by real data. [`LARGE_SCAN_ROWS_READ`] and
-//! [`EXPENSIVE_COST`] sit above everything the fixtures contain (the largest
-//! read in any captured plan is 25,871 rows; the costliest statement is 0.754),
-//! so `no_real_fixture_produces_a_volume_or_cost_finding` — the false-positive
-//! sweep — fails if either is lowered. That sweep is the strongest evidence
-//! those two numbers have.
-//!
-//! The other two it does NOT constrain, and the difference is worth being exact
-//! about. [`WASTEFUL_READ_RATIO`] is EXCEEDED by real fixture data (`join`
-//! node 5 is 115×, `scan` node 11 is 218×); those stay silent only because the
-//! volume gate runs first, so lowering the ratio to 10 breaks nothing.
-//! [`MISSING_INDEX_IMPACT`] has no fixture to constrain it at all — no captured
-//! plan contains a missing index — so lowering it to 0 breaks nothing either.
-//! Both are held up by hand-built tests alone.
-//!
-//! # What is NOT backed by a captured plan
-//!
-//! Held to the same standard as [`parse`](crate::plan::parse), which says at
-//! each definition whether a path has ever been seen on the wire:
-//!
-//! - Of the four [`PlanWarning`] variants, only `ImplicitConversion` has a
-//!   specimen (`scan.sqlplan`, three of them). `NoJoinPredicate`,
-//!   `SpillToTempDb`, and `UnmatchedIndex` have **never been captured**
-//!   (`billz-e75`), so their gradings below are a belief about warnings that may
-//!   not arrive at all in the shape we imagine.
-//! - The tests for those three hand-CONSTRUCT a [`PlanWarning`]. That is one
-//!   step further from reality than `parse.rs`'s schema-derived XML, which at
-//!   least encodes a belief about the wire format: these prove only that the
-//!   MAPPING from warning to finding is what we wrote, never that such a warning
-//!   exists.
-//! - No fixture contains `<MissingIndexes>` at all, so [`MISSING_INDEX_IMPACT`]
-//!   is likewise exercised only by hand-built values.
+//! A verdict is a triage signal, not a measurement. The four thresholds are
+//! provisional, and three of the four [`PlanWarning`] variants have never been
+//! observed on the wire — see each constant and [`warning_finding`] for what
+//! rests on evidence and what on belief.
 
 use crate::plan::model::{
     Finding, FindingKind, MissingIndex, PlanNode, PlanStatement, PlanVerdict, PlanWarning,
@@ -55,27 +18,41 @@ use crate::plan::model::{
 ///
 /// Rows read is the work done; rows returned is what survived. See
 /// [`rows_read`] for why this is the better of the two signals.
+// Fixture-constrained: above every captured plan (largest read is 25,871 rows),
+// so `no_real_fixture_produces_a_volume_or_cost_finding` fails if it is lowered.
+// That sweep is the strongest evidence this number has. Revisit after real use
+// against generated SQL — billz-7u0. Do not make it configurable: a rule engine
+// is harder to change than a constant while still having guessed.
 pub const LARGE_SCAN_ROWS_READ: f64 = 100_000.0;
 
 /// Rows read per row returned at or above which a large scan is mostly waste,
 /// which promotes it from `Caution` to `Problem`.
 ///
-/// This ratio deliberately does NOT trigger a finding on its own. At real
-/// fixture sizes it is not discriminating: `join.sqlplan` node 5 reads 1,153 to
-/// return 10.0021 (115×) and `scan.sqlplan` node 11 reads 218 to return 1
-/// (218×), and both are ordinary row-goal / selective-filter shapes with nothing
-/// wrong with them. Gating on volume FIRST is what makes the ratio usable.
+/// This ratio does not trigger a finding on its own; the volume gate runs first.
+// NOT fixture-constrained. Real data exceeds it — `join.sqlplan` node 5 reads
+// 1,153 to return 10.0021 (115×), `scan.sqlplan` node 11 reads 218 to return 1
+// (218×) — and both stay silent only because the volume gate runs first, so
+// lowering this to 10 breaks no test. Both are ordinary row-goal and
+// selective-filter shapes with nothing wrong with them, which is exactly why
+// the ratio cannot be the trigger. Hand-built tests alone hold it up: billz-7u0.
 pub const WASTEFUL_READ_RATIO: f64 = 100.0;
 
 /// Total estimated subtree cost across the batch at or above which the plan is
 /// worth reporting. SQL Server's cost unit is a legacy seconds-ish figure whose
 /// default parallelism threshold is 5; 10 is decisively past "trivial".
+// Fixture-constrained: the costliest captured statement is 0.754, so the
+// false-positive sweep fails if this is lowered. Revisit after real use —
+// billz-7u0.
 pub const EXPENSIVE_COST: f64 = 10.0;
 
 /// The server's own 0–100 estimate of how much a missing index would cut the
 /// statement's cost, at or above which we report it. Real impacts cluster at
 /// 90+; this exists to drop the low-impact suggestions that ride along beside a
 /// genuine one.
+// NOT fixture-constrained: no captured plan contains a `<MissingIndexes>` at
+// all, so lowering this to 0 breaks no test. Expect it to move first — the
+// server only emits a group when it already thinks the index matters, so 50 may
+// be filtering nothing. billz-e75 captures a specimen; billz-7u0 revisits.
 pub const MISSING_INDEX_IMPACT: f64 = 50.0;
 
 /// The ONE `@ConvertIssue` value we have a captured specimen for
@@ -226,9 +203,15 @@ fn visit_scans(node: &PlanNode, out: &mut Vec<Finding>) {
 /// operator tree to recover an object name would go blind on every
 /// statement-level warning, which is all of the ones we have ever captured.
 ///
-/// TODO(billz-e75): three of these four arms have no captured specimen. Capture
-/// a `CROSS JOIN` with no predicate and a big `ORDER BY` under a low memory
-/// grant, then revisit both the gradings and the `evidence: None` above.
+// Only `ImplicitConversion` has ever been captured (`scan.sqlplan`, three of
+// them). `NoJoinPredicate`, `SpillToTempDb` and `UnmatchedIndex` have not, so
+// the gradings below are a belief about warnings that may never arrive in the
+// shape assumed here. Their tests hand-construct a `PlanWarning`, which is a
+// step further from reality than parse.rs's schema-derived XML: they prove the
+// mapping, never that such a warning exists.
+//
+// TODO(billz-e75): capture a `CROSS JOIN` with no predicate and a big `ORDER BY`
+// under a low memory grant, then revisit both the gradings and `evidence: None`.
 fn warning_finding(warning: &PlanWarning) -> Finding {
     match warning {
         PlanWarning::ImplicitConversion {

@@ -223,24 +223,12 @@ mod tests {
 
     #[test]
     fn the_tenant_database_name_is_not_part_of_the_shape() {
-        // THE cross-tenant test. `scan.sqlplan` has 11 objects spanning two
-        // databases, so it exercises the strip on every arity the fixtures have.
-        //
-        // What this proves, precisely: the key does not VARY with the database
-        // name — three different tenant names, one key.
-        //
-        // What it does NOT prove: that the component is GONE rather than
-        // normalised. A strip that rewrote every database to a constant `[X]`
-        // passes every assertion here. The exact-key tests below are what rule
-        // that out, because they spell the whole string; this test cannot, and
-        // saying otherwise would be claiming coverage it does not have.
-        //
-        // The `leaked` sweep runs over all three keys rather than just
-        // `original`, but be clear about what that is worth: the equality
-        // assertions above already force the three identical, so a `contains`
-        // check on one implies it on all three. It is presentation, not extra
-        // coverage — it stops the `TenantA`/`TenantB` entries from reading as
-        // though they test something `original` could ever have contained.
+        // Three tenant names, one key: the key does not vary with the database.
+        // It does NOT prove the component is gone rather than normalised — a
+        // strip rewriting every database to a constant passes here too, and the
+        // exact-key tests below are what rule that out. The `leaked` sweep over
+        // all three keys is presentation, not coverage: the equality assertions
+        // already force them identical, so checking one implies all three.
         let original = shape(&parsed("scan.sqlplan"));
 
         let mut a = parsed("scan.sqlplan");
@@ -314,24 +302,14 @@ mod tests {
 
     #[test]
     fn the_shape_of_a_branching_plan_is_the_exact_string_we_expect() {
-        // THE test for the sibling separator, and the only one that pins it: the
-        // other two exact keys are single-child chains (`seek.sqlplan` is one
-        // `Filter(…)`, `two-statements.sqlplan` is two linear chains), and
-        // `child_order_is_significant` compares two hand-built shapes for
-        // INEQUALITY, which still holds if siblings are run together with no
-        // separator at all. So `node ("," node)*` — the one production in the
-        // grammar with real branching — had no coverage.
-        //
-        // The failure that leaves open is the worst available: a separator that
-        // aliases two structurally different plans (`,` → `;` collides with the
-        // STATEMENT separator) merges two tenant classes into one, and the
-        // variance view then reports "all tenants agree" — indistinguishable
-        // from a genuine clean result and the exact inversion of this unit's job.
-        //
-        // `aggregate.sqlplan` is the right fixture for it: node 2's two children
-        // are a seek and a filter, and their objects live in DIFFERENT databases
-        // (`[mssqlsystemresource]` and `[master]`), so one assertion pins the
-        // comma, the branching, and the strip on a captured tree at once.
+        // The only test pinning the sibling separator: the other exact keys are
+        // single-child chains, and `child_order_is_significant` asserts
+        // INEQUALITY, which holds even with siblings run together. A separator
+        // colliding with `;` or `:` aliases two structurally different plans
+        // into one class, so the variance view reports "all tenants agree" —
+        // indistinguishable from a genuine result. `aggregate.sqlplan` node 2's
+        // two children live in different databases, so this pins the comma, the
+        // branching and the strip at once.
         assert_eq!(
             shape(&parsed("aggregate.sqlplan")),
             "Compute Scalar(Hash Match/Aggregate(Hash Match/Right Outer Join(Clustered Index Seek:\
