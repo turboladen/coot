@@ -11,7 +11,7 @@ import type { SavedQuery } from "./api";
 
 // `database`: the tab's target DB for the runner (billz-cwt.9). null = the
 // connection's default DB. Each tab carries its own, so one tab can sit on
-// ESP_Arnotts_Group_DEV while another targets ESP_Suntory_DEV (PLAN §4/§5).
+// Tailspin_DEV while another targets Fabrikam_DEV (PLAN §4/§5).
 export type QueryTab = {
   id: string;
   title: string;

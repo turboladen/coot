@@ -2,7 +2,7 @@
   // billz-0gh.1.3 — multi-select database checklist for a fan-out run. ONLINE
   // databases are selectable; non-ONLINE are disabled (mirrors the single-DB picker
   // in App). A glob pattern box bulk-selects matching ONLINE databases
-  // (`ESP_Nomad_*`). Presentational: App owns the selection (the active tab's
+  // (`Contoso_*`). Presentational: App owns the selection (the active tab's
   // `fanoutDatabases`) and persists via `onchange`, and (billz-a5y.2) passes the
   // active connection's database list in as a prop rather than us reading a store.
   import type { DatabaseInfo } from "./api";
@@ -49,7 +49,7 @@
     <input
       class="pattern"
       type="text"
-      placeholder="Pattern e.g. ESP_Nomad_*"
+      placeholder="Pattern e.g. Contoso_*"
       bind:value={pattern}
       onkeydown={(e) => {
         if (e.key === "Enter") selectMatching();

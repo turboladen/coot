@@ -122,7 +122,7 @@ describe("serialize / deserialize", () => {
 
   test("round-trips a tab's target database (billz-cwt.9)", () => {
     const withDb: TabsState = {
-      tabs: [tab("a", "SELECT 1", "ESP_Arnotts_Group_DEV"), tab("b", "SELECT 2", null)],
+      tabs: [tab("a", "SELECT 1", "Tailspin_DEV"), tab("b", "SELECT 2", null)],
       activeId: "a",
     };
     expect(deserialize(serialize(withDb))).toEqual(withDb);
@@ -172,7 +172,7 @@ describe("serialize / deserialize", () => {
   test("round-trips fan-out state (billz-0gh.1.3)", () => {
     const t = tab("a", "SELECT 1");
     t.fanout = true;
-    t.fanoutDatabases = ["ESP_Nomad_SE_DEV", "ESP_Nomad_US_DEV"];
+    t.fanoutDatabases = ["Contoso_SE_DEV", "Contoso_US_DEV"];
     const withFanout: TabsState = { tabs: [t], activeId: "a" };
     expect(deserialize(serialize(withFanout))).toEqual(withFanout);
   });

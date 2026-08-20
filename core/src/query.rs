@@ -131,7 +131,7 @@ mod tests {
             id: SavedQueryId("q1".into()),
             name: "Orders by customer".into(),
             sql: "SELECT * FROM orders WHERE cust = @cust ORDER BY @col".into(),
-            target_database: Some("ESP_Suntory_DEV".into()),
+            target_database: Some("Fabrikam_DEV".into()),
             params: vec![
                 Param {
                     name: "@cust".into(),
@@ -150,7 +150,7 @@ mod tests {
 
         let s = serde_json::to_string(&q).unwrap();
         // camelCase keys on the wire.
-        assert!(s.contains(r#""targetDatabase":"ESP_Suntory_DEV""#), "{s}");
+        assert!(s.contains(r#""targetDatabase":"Fabrikam_DEV""#), "{s}");
         assert!(s.contains(r#""sqlType":"int""#), "{s}");
         assert!(s.contains(r#""sqlType":null"#), "{s}");
         assert!(s.contains(r#""lastValue":"orders""#), "{s}");
