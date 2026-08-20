@@ -68,10 +68,7 @@ mod tests {
     fn with_database_sets_database_and_use_statement() {
         let c = ctx().with_database("Contoso_SE_DEV");
         assert_eq!(c.database(), Some("Contoso_SE_DEV"));
-        assert_eq!(
-            c.use_statement().as_deref(),
-            Some("USE [Contoso_SE_DEV];")
-        );
+        assert_eq!(c.use_statement().as_deref(), Some("USE [Contoso_SE_DEV];"));
     }
 
     #[test]
