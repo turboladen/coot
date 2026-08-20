@@ -127,7 +127,8 @@ fn statement(n: Node) -> PlanStatement {
 /// fixture we own contains `<MissingIndexes>` — `sys.*` views do not generate
 /// them — so the only test covering this is a hand-authored XML string, which
 /// can prove the parser matches what we BELIEVE the schema says and cannot prove
-/// the belief is right. See `billz-e75` for capturing a real one.
+/// the belief is right.
+// billz-e75 captures a real specimen, which is what would settle it.
 fn missing_index(group: Node) -> Option<MissingIndex> {
     let idx = child(group, "MissingIndex")?;
     let columns = idx
@@ -233,18 +234,14 @@ fn rel_op(n: Node) -> PlanNode {
         est_rows_read: n.attribute(ROWS_READ).and_then(|v| v.parse().ok()),
         // CLAMPED, and not as defensive programming — delete the `.max` and
         // `join.sqlplan` node 1 (`Nested Loops` / `Left Outer Join`) parses to
-        // −0.01: its two children's subtree costs sum to 0.06 against its own
-        // 0.05.
-        //
-        // The −0.01 is synthetic, but the inversion is not. The captured plan
-        // really did read this way, and by a margin no rounding explains: the
-        // server put the parent 0.65% of the subtree below the sum of its
-        // children, ~300× too large to be display rounding. It is the `Top`
-        // row-goal rescaling the inner side. The measured costs themselves are
-        // gone — the fixture is sanitized, see `fixture` — but the inversion was
-        // preserved, because it is the fact the clamp exists for. Real plans do
-        // this, so a negative own cost is something to absorb here rather than a
-        // bug to hunt.
+        // −0.01: its children's subtree costs sum to 0.06 against its own 0.05.
+
+        // The −0.01 is synthetic but the inversion is not. The captured plan
+        // really did invert, by a margin ~300× too large for display rounding:
+        // the `Top` operator rescales the inner side. The measured costs are
+        // gone, since the fixture is sanitized, but the inversion was kept
+        // because it is the fact the clamp exists for. Real plans do this, so a
+        // negative own cost is something to absorb rather than a bug to hunt.
         est_cost: (subtree_cost - children_cost).max(0.0),
         subtree_cost,
         warnings,
@@ -260,34 +257,24 @@ fn rel_op(n: Node) -> PlanNode {
 /// `NoJoinPredicate`, `SpillToTempDb`, and `UnmatchedIndexes` are written from
 /// the ShowPlanXML schema with no specimen to check them against — the same
 /// standing as [`missing_index`], and the same warning applies: these branches
-/// prove only that the parser does what we BELIEVE the schema says. `billz-e75`
-/// covers capturing one of each (a `CROSS JOIN` with no predicate, a big
-/// `ORDER BY` under a low memory grant).
+/// prove only that the parser does what we BELIEVE the schema says.
+// billz-e75 covers capturing one of each: a `CROSS JOIN` with no predicate, and
+// a big `ORDER BY` under a low memory grant.
 fn warnings_from(w: Node) -> Vec<PlanWarning> {
     let mut out = Vec::new();
 
     // An ATTRIBUTE on `<Warnings>`, not a child element like the rest.
-    //
-    // DO NOT NARROW THIS TO ONE FORM. Accepting both is the only defensible
-    // parse, not belt-and-braces. `xs:boolean` has two lexical forms and this
-    // server emits BOTH — not in different documents or from different versions,
-    // but on adjacent elements written by the same serializer in one document.
-    // Verified across the fixtures:
-    //
-    //   0/1:         Parallel, Ordered, ForceSeek, ForcedIndex, NoExpandHint,
-    //                StartupExpression, Optimized  (plan-structure attributes)
-    //   true/false:  RetrievedFromCache, SecurityPolicyApplied  (on `<StmtSimple>`
-    //                itself, directly above the `<IndexScan>` carrying the others)
-    //
-    // No fixture contains a `NoJoinPredicate` specimen, so there is no basis to
-    // predict which form IT uses — and this is not a case where guessing wrong is
-    // cheap. The losing side of that coin flip is a permanent silent false
-    // negative on an accidental cartesian product, which Unit 3 grades at Problem
-    // severity and which is among the loudest things this feature exists to
-    // catch. `billz-e75` covers capturing a real one, which is what will
-    // eventually settle the question; until then, both.
-    //
-    // `no_join_predicate_is_read_in_either_boolean_encoding` pins all four forms.
+
+    // DO NOT NARROW THIS TO ONE FORM. `xs:boolean` has two lexical forms and this
+    // server emits BOTH on adjacent elements written by the same serializer in one
+    // document, so neither version nor serializer drift explains it away. Verified
+    // across the fixtures: `0`/`1` on Parallel, Ordered, ForceSeek, ForcedIndex,
+    // NoExpandHint, StartupExpression, Optimized; `true`/`false` on
+    // RetrievedFromCache, SecurityPolicyApplied. No fixture has a `NoJoinPredicate`
+    // specimen (billz-e75 captures one), so which form IT uses is unknown, and
+    // guessing wrong costs a permanent silent false negative on an accidental
+    // cartesian product — a Problem-severity finding. All four forms are pinned by
+    // `no_join_predicate_is_read_in_either_boolean_encoding`.
     if matches!(w.attribute("NoJoinPredicate"), Some("true" | "1")) {
         out.push(PlanWarning::NoJoinPredicate);
     }
@@ -317,28 +304,25 @@ fn warnings_from(w: Node) -> Vec<PlanWarning> {
 mod tests {
     use super::*;
 
-    /// Every fixture here is a REAL capture — produced by `just dump-plans`
-    /// against a live SQL Server, which is the point: element nesting, operator
-    /// names, wrapper elements and attribute spellings are the server's own, not
-    /// something we imagined. That is what these tests are for.
-    ///
-    /// **The numbers in them are not real.** This repo is public, and a plan
-    /// document is a measurement of the machine that produced it — patch level,
-    /// statistics timestamps, memory grant, buffer pool, DOP, and every row count
-    /// and cost off that server's `master`. All of it was replaced with obviously
-    /// synthetic round values: each operator's own cost is 0.01 (so a subtree cost
-    /// is 0.01 × the operators beneath it, inclusive) and `EstimateRows` is 100 ×
-    /// the same count. Two properties were preserved DELIBERATELY, because tests
-    /// depend on them and a later re-sanitization must keep them:
-    ///
-    /// - `join.sqlplan` node 1's own cost is negative (see [`rel_op`]).
-    /// - `join.sqlplan` node 5 and `scan.sqlplan` node 11 read 25000 rows to
-    ///   return 100.
-    ///
-    /// So: take assertion values from the files, never from a document describing
-    /// them — and never "restore" a value here to something that looks measured.
-    /// Anything freshly captured has to be sanitized the same way before it is
-    /// committed.
+    // Every fixture here is a REAL capture, produced by `just dump-plans` against
+    // a live SQL Server. Element nesting, operator names, wrapper elements and
+    // attribute spellings are the server's own rather than something we imagined,
+    // which is what these tests are for.
+
+    // The numbers in them are NOT real. This repo is public, and a plan document
+    // is a measurement of the machine that produced it — patch level, statistics
+    // timestamps, memory grant, buffer pool, DOP, and every row count and cost
+    // off that server's `master`. All of it was replaced with synthetic round
+    // values: each operator's own cost is 0.01, so a subtree cost is 0.01 × the
+    // operators beneath it inclusive, and `EstimateRows` is 100 × the same count.
+
+    // Two properties were preserved deliberately, because tests depend on them
+    // and a later re-sanitization must keep them: `join.sqlplan` node 1's own
+    // cost is negative (see `rel_op`), and `join.sqlplan` node 5 and
+    // `scan.sqlplan` node 11 read 25000 rows to return 100.
+    //
+    // Take assertion values from the files, never from a document describing
+    // them, and sanitize anything freshly captured before committing it.
     fn fixture(name: &str) -> String {
         std::fs::read_to_string(format!(
             "{}/tests/fixtures/plans/{name}",
@@ -359,10 +343,10 @@ mod tests {
         1 + n.children.iter().map(depth).max().unwrap_or(0)
     }
 
-    /// The chain from `n` down whichever child is deepest (`max_by_key` takes
-    /// the last on a tie). No tie occurs anywhere along `scan.sqlplan`'s spine —
-    /// each `Hash Match` pairs a one-level seek with a deep branch — so the
-    /// path it returns is unambiguous.
+    // The chain from `n` down whichever child is deepest (`max_by_key` takes
+    // the last on a tie). No tie occurs anywhere along `scan.sqlplan`'s spine —
+    // each `Hash Match` pairs a one-level seek with a deep branch — so the
+    // path it returns is unambiguous.
     fn deepest_path(n: &PlanNode) -> Vec<&str> {
         let mut path = vec![n.physical_op.as_str()];
         if let Some(next) = n.children.iter().max_by_key(|c| depth(c)) {
@@ -622,18 +606,16 @@ mod tests {
         }
     }
 
-    /// Hand-authored from the ShowPlanXML schema — **not captured from a
-    /// server**, and deliberately inline rather than a file in
-    /// `tests/fixtures/plans/`, which means "real capture" and would be
-    /// corrupted by a fabricated document sitting in it.
-    ///
-    /// No plan we own contains `<MissingIndexes>`: `sys.*` views do not generate
-    /// them, and capturing one needs a scratch table on a DEV box this machine
-    /// cannot reach. So the test below proves the parser does what we BELIEVE
-    /// the schema says. It cannot prove the belief is correct, and it must not
-    /// be read as coverage of the real path.
-    ///
-    /// TODO(billz-e75): replace with a captured fixture.
+    // Hand-authored from the ShowPlanXML schema — NOT captured from a server, and
+    // deliberately inline rather than a file in `tests/fixtures/plans/`, which
+    // means "real capture" and would be corrupted by a fabricated document in it.
+    // No plan we own contains `<MissingIndexes>`: `sys.*` views do not generate
+    // them, and capturing one needs a scratch table on a DEV box this machine
+    // cannot reach. The test below proves the parser does what we BELIEVE the
+    // schema says; it cannot prove the belief is correct, and it must not be read
+    // as coverage of the real path.
+    //
+    // TODO(billz-e75): replace with a captured fixture.
     const SCHEMA_DERIVED_MISSING_INDEX: &str = r#"<?xml version="1.0"?>
 <ShowPlanXML xmlns="http://schemas.microsoft.com/sqlserver/2004/07/showplan">
  <BatchSequence><Batch><Statements>
@@ -667,9 +649,9 @@ mod tests {
         assert_eq!(mi.columns, vec!["[ShipCity]", "[OrderDate]"]);
     }
 
-    /// A statement-level `<Warnings NoJoinPredicate=…>` with `attr` as the
-    /// attribute's literal text. Schema-derived, like
-    /// `SCHEMA_DERIVED_MISSING_INDEX` — no captured plan contains this warning.
+    // A statement-level `<Warnings NoJoinPredicate=…>` with `attr` as the
+    // attribute's literal text. Schema-derived, like
+    // `SCHEMA_DERIVED_MISSING_INDEX` — no captured plan contains this warning.
     fn schema_derived_no_join_predicate(attr: &str) -> String {
         format!(
             r#"<?xml version="1.0"?>
@@ -726,7 +708,7 @@ mod tests {
 
     #[test]
     fn a_well_formed_document_that_is_not_a_plan_has_no_statements() {
-        // Honest behaviour, pinned: nothing to report is not an error.
+        // Honest behavior, pinned: nothing to report is not an error.
         let plan = parse_plan("<html><body>nope</body></html>").unwrap();
         assert!(plan.statements.is_empty());
     }

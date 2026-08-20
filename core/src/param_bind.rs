@@ -1,4 +1,4 @@
-//! Param substitution model — the driver-free half of d28.2 (`PLAN.md` §5).
+//! The param substitution model's driver-free half (`PLAN.md` §5).
 //!
 //! Two mechanisms, decided by a param's `sql_type` discriminator:
 //!   - `Some(SqlType)` → a **bind** param. Its `&str` value is parsed into a
@@ -6,13 +6,16 @@
 //!     and hands it to `sp_executesql` (typed, safe). See [`parse_bind_value`].
 //!   - `None` → a **raw-text** fragment. Its value is spliced literally into the
 //!     SQL string before send — NO quoting, NO escaping (the whole point is
-//!     `ORDER BY x DESC`, a table name, `TOP @n`). Injectable BY DESIGN; d28.6
-//!     renders it loud. See [`splice_raw_text`].
+//!     `ORDER BY x DESC`, a table name, `TOP @n`). Injectable BY DESIGN; the
+//!     library UI renders it loud. See [`splice_raw_text`].
 //!
 //! This module imports **no** `mssql_client` type (the driver boundary,
 //! `CLAUDE.md`): it produces the core-owned [`BindValue`] intermediate, and
 //! `executor.rs` — the sole driver-touching module — does the trivial
 //! `BindValue → SqlValue` map. Everything here is pure and unit-tested with no DB.
+
+// This is the driver-free half of bead d28.2; d28.6 is the library UI that
+// renders a raw-text fragment loudly enough that its injectability is obvious.
 
 use std::fmt::Display;
 
@@ -45,9 +48,9 @@ pub enum BindValue {
 /// the already-resolved concrete value.
 ///
 /// `sql_type` is the discriminator — `Some` → bind, `None` → raw-text. `value` is
-/// non-optional: "unset" handling is d28.3's concern, and scope resolution is
-/// d28.4's; by execute time every param has a concrete value (`PLAN.md` §5). This
-/// deliberately drops `Param`'s `last_value`/`scope` fields (later beads).
+/// non-optional: by execute time every param has a concrete value (`PLAN.md` §5).
+// "Unset" handling is d28.3's concern and scope resolution is d28.4's, which is
+// why this deliberately drops `Param`'s `last_value` and `scope` fields.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ResolvedParam {
@@ -68,8 +71,7 @@ pub struct ResolvedParam {
 /// `sp_executesql` type declaration from the resulting `SqlValue` variant at
 /// runtime (`nvarchar` sized from the string, `decimal(38, scale)` from the parsed
 /// value), so our whole job on the bind path is producing the right variant — no
-/// precision/length metadata needed (the `query.rs` `TODO(d28.2)` is MOOT for the
-/// 0.20.2 driver).
+/// precision/length metadata needed.
 ///
 /// Empty string is valid only for `NVarChar` (an empty nvarchar); it is a parse
 /// error for every other type. A parse error is a **pre-flight user error**
@@ -80,6 +82,10 @@ pub struct ResolvedParam {
 /// only rejects it at send time, surfacing later as [`CoreError::Query`]. So this
 /// fn catches *syntax* errors pre-flight for all nine types, but Money
 /// range/scale errors are not fully validatable here.
+// That the driver derives the declaration from the value holds for
+// `mssql-client` 0.20.2; `query.rs`'s note on `SqlType` (d28.2, resolved) has the
+// detail, and is where width would re-enter if a future driver wanted an
+// explicit `sp_executesql` declaration.
 pub fn parse_bind_value(sql_type: SqlType, raw: &str) -> Result<BindValue> {
     match sql_type {
         SqlType::Int => raw
@@ -153,28 +159,30 @@ fn param_err(type_name: &str, raw: &str, detail: impl Display) -> CoreError {
 /// Splice raw-text fragments into `sql`, replacing each `@name` key from `raw` with
 /// its value **literally** — no quoting, no escaping (injectable BY DESIGN).
 ///
-/// A **single left-to-right pass** over the ORIGINAL `sql` (never `str::replace` in
-/// a loop, which would rescan already-spliced text and re-match). At each `@`:
-///   - `@@…` (system vars `@@ROWCOUNT`, `@@IDENTITY`): emitted literally.
-///   - Otherwise the full identifier after `@` is read to its boundary *before*
-///     lookup, so a `@col` key can never match a `@column` token (processing order
-///     is irrelevant — no "longest first" needed). A matching raw key emits its
-///     value; anything else (a bind `@name`, an unknown alias) is left literal.
+/// The pass is **lexer-aware**: a `@name` is only recognized in NORMAL SQL
+/// context. Inside single-quote strings (incl. `N'…'` and the `''` escape),
+/// `[..]` / `"…"` quoted identifiers (`]]` / `""` escapes), `--` line comments,
+/// and `/* */` block comments (which T-SQL NESTS), the text is copied verbatim
+/// and no `@name` is spliced. `@@…` system vars (`@@ROWCOUNT`, `@@IDENTITY`) stay
+/// literal, and a lone `@` (or `@` before a non-identifier char) emits `@`
+/// literally — no hang, no panic.
 ///
-/// Because a spliced value is emitted and never re-scanned, a raw value that itself
-/// contains `@x` stays literal. The pass is **lexer-aware** (billz-7c9): a `@name` is
-/// only recognized in NORMAL SQL context — inside single-quote strings (incl. `N'…'`
-/// and the `''` escape), `[..]` / `"…"` quoted identifiers (`]]` / `""` escapes), `--`
-/// line comments, and `/* */` block comments (which T-SQL NESTS), the text is copied
-/// verbatim and no `@name` is spliced. `@@…` system vars stay literal, and a lone `@`
-/// (or `@` before a non-identifier char) emits `@` literally — no hang, no panic. Bind
-/// `@name`s left literal here compose correctly with `query_named`. This is the shared
-/// lexical contract with the frontend `scanParamNames` (paramBarLogic.ts), kept in
-/// lockstep by a mirrored corpus (the billz-7c9 splice_* tests).
+/// A `@col` key can never match a `@column` token, so the order of `raw` does not
+/// matter. A raw value that itself contains `@x` stays literal. Bind `@name`s
+/// left literal here compose correctly with `query_named`.
 ///
-/// All delimiters (`@ ' [ ] " - / *` and `\n`) are ASCII (< 0x80), so byte-scanning is
-/// UTF-8-safe: none appears inside a multibyte sequence, and every slice boundary lands
-/// on a char boundary.
+/// This is the shared lexical contract with the frontend `scanParamNames`
+/// (`paramBarLogic.ts`); the two are kept in lockstep by a mirrored corpus.
+// Lexer-awareness and the mirrored `splice_*` corpus are bead billz-7c9.
+//
+// The single left-to-right pass over the ORIGINAL `sql` is load-bearing: a
+// `str::replace` loop would rescan already-spliced text and re-match. Reading the
+// full identifier after `@` to its boundary BEFORE lookup is what makes the
+// prefix collision impossible, so no "longest key first" ordering is needed.
+//
+// All delimiters (`@ ' [ ] " - / *` and `\n`) are ASCII (< 0x80), so byte-scanning
+// is UTF-8-safe: none appears inside a multibyte sequence, and every slice
+// boundary therefore lands on a char boundary.
 pub fn splice_raw_text(sql: &str, raw: &[(&str, &str)]) -> String {
     // n=normal, string, line/block comment, bracket, double-quote identifier.
     enum Lex {
@@ -191,9 +199,9 @@ pub fn splice_raw_text(sql: &str, raw: &[(&str, &str)]) -> String {
     let mut state = Lex::Normal;
     while i < bytes.len() {
         match state {
-            // The `@` handling below is byte-identical to the pre-billz-7c9 splicer —
-            // it is merely gated behind Normal state, so all splice_1..10 guarantees
-            // (prefix-collision boundary, replace-all, @@, single-pass, lone-@) hold.
+            // The `@` handling below is gated behind Normal state and nothing
+            // else, which is what keeps the splice_1..10 guarantees intact:
+            // prefix-collision boundary, replace-all, `@@`, single-pass, lone-`@`.
             Lex::Normal => match bytes[i] {
                 b'@' => {
                     // `@@…` system var — emit both `@`s literally.

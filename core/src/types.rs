@@ -12,7 +12,7 @@
 /// match on the `TypeId` Debug variant names.
 ///
 /// `max_length` is the driver `Column.max_length` (byte width). It disambiguates
-/// the nullable "N" families whose token alone doesn't carry the width (billz-9qg):
+/// the nullable "N" families whose token alone doesn't carry the width:
 /// `IntN` 1/2/4/8 → tinyint/smallint/int/bigint, `FloatN` 4/8 → real/float,
 /// `MoneyN` 4/8 → smallmoney/money, `DateTimeN` 4/8 → smalldatetime/datetime.
 /// Unknown/absent widths fall back to each family's default (`IntN`→int,
@@ -21,6 +21,7 @@
 ///
 /// Returns `&str` (not `String`): friendly names are `'static`; unknowns borrow
 /// the input, so this never allocates.
+// Width-aware disambiguation of the "N" families is bead billz-9qg.
 pub fn friendly_type_name(wire_token: &str, max_length: Option<u32>) -> &str {
     match wire_token {
         "Bit" | "BitN" => "bit",

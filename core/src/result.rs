@@ -3,8 +3,8 @@
 //! `mssql_client::SqlValue` / `Column` never cross this boundary. `CellValue`
 //! mirrors `SqlValue` but is OURS: everything the grid needs, nothing driver-
 //! specific, and serde-serializable straight to the Svelte side. The
-//! `SqlValue → CellValue` / `Column → ColumnMeta` mapping is the executor's job
-//! (bead ce1.6); this module only defines the target shapes.
+//! `SqlValue → CellValue` / `Column → ColumnMeta` mapping is the executor's job;
+//! this module only defines the target shapes.
 
 use serde::{Deserialize, Serialize};
 
@@ -58,11 +58,12 @@ pub enum CellValue {
     Bool(bool),
     /// Widened: TinyInt/SmallInt/Int land here (8/16/32-bit — all fit f64
     /// exactly). Crosses JSON as a number. `bigint` does NOT map here; it exceeds
-    /// f64's safe integer range, so it goes to [`CellValue::BigInt`] (billz-s7p).
+    /// f64's safe integer range, so it goes to [`CellValue::BigInt`].
     Int(i64),
     /// `bigint` (i64), string-encoded so a value beyond f64's safe integer range
     /// (`|n| > 2^53` — snowflake IDs, bigint hashes) survives JS `JSON.parse`
-    /// without precision loss, exactly as `Decimal`/`Money` do (billz-s7p).
+    /// without precision loss, exactly as `Decimal`/`Money` do.
+    // Splitting `bigint` out of `Int` and string-encoding it is billz-s7p.
     BigInt(String),
     /// Widened: f32 `REAL` + f64 `FLOAT`.
     Float(f64),
