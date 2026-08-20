@@ -119,7 +119,7 @@ mod tests {
             id: SavedQueryId(id.into()),
             name: name.into(),
             sql: "SELECT * FROM orders WHERE cust = @cust ORDER BY @col".into(),
-            target_database: Some("ESP_Suntory_DEV".into()),
+            target_database: Some("Fabrikam_DEV".into()),
             params: vec![
                 Param {
                     name: "@cust".into(),

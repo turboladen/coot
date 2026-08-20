@@ -667,9 +667,9 @@ mod tests {
     #[test]
     fn connection_string_appends_database_when_present() {
         let mut cfg = sample_config();
-        cfg.default_database = Some("ESP_Nomad_SE_DEV".into());
+        cfg.default_database = Some("Contoso_SE_DEV".into());
         let s = build_connection_string(&cfg, "pw");
-        assert!(s.contains(r#";Database="ESP_Nomad_SE_DEV""#));
+        assert!(s.contains(r#";Database="Contoso_SE_DEV""#));
     }
 
     #[test]

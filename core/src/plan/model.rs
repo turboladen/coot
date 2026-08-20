@@ -206,7 +206,7 @@ mod tests {
     #[test]
     fn db_plan_outcome_carries_error_instead_of_failing() {
         let o = DbPlanOutcome {
-            database: "ESP_Nomad_SE_DEV".into(),
+            database: "Contoso_SE_DEV".into(),
             capture: None,
             error: Some("Invalid column name 'ShipDate'.".into()),
             elapsed_ms: 12,

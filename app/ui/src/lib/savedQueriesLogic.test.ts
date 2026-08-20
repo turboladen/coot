@@ -87,9 +87,9 @@ describe("promoteToSavedQuery", () => {
   });
 
   test("passes through sql and targetDatabase", () => {
-    const q = promoteToSavedQuery("id1", "n", "SELECT 1", "ESP_DEV");
+    const q = promoteToSavedQuery("id1", "n", "SELECT 1", "Tenant_DEV");
     expect(q.sql).toBe("SELECT 1");
-    expect(q.targetDatabase).toBe("ESP_DEV");
+    expect(q.targetDatabase).toBe("Tenant_DEV");
   });
 });
 
@@ -119,13 +119,13 @@ describe("renameSavedQuery", () => {
       id: "a",
       name: "Old",
       sql: "SELECT * FROM t WHERE x = @x",
-      targetDatabase: "ESP_DEV",
+      targetDatabase: "Tenant_DEV",
       params: [{ name: "@x", sqlType: null, lastValue: "7", scope: "global" }],
     };
     const after = renameSavedQuery(before, "New");
     expect(after.id).toBe("a");
     expect(after.sql).toBe("SELECT * FROM t WHERE x = @x");
-    expect(after.targetDatabase).toBe("ESP_DEV");
+    expect(after.targetDatabase).toBe("Tenant_DEV");
     expect(after.params).toEqual(before.params);
     // Reference-equal, not merely deep-equal: the spread must carry the array
     // through, never clone or rebuild it.

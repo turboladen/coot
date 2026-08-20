@@ -35,23 +35,23 @@ function outcome(
 
 describe("matchPattern", () => {
   const dbs = [
-    db("ESP_Nomad_SE_DEV"),
-    db("ESP_Nomad_US_DEV"),
-    db("ESP_Suntory_DEV"),
-    db("ESP_Nomad_OFF_DEV", "OFFLINE"),
+    db("Contoso_SE_DEV"),
+    db("Contoso_US_DEV"),
+    db("Fabrikam_DEV"),
+    db("Contoso_OFF_DEV", "OFFLINE"),
   ];
 
   test("`*` suffix matches the prefix family, excludes others", () => {
-    expect(matchPattern("ESP_Nomad_*", dbs)).toEqual(["ESP_Nomad_SE_DEV", "ESP_Nomad_US_DEV"]);
+    expect(matchPattern("Contoso_*", dbs)).toEqual(["Contoso_SE_DEV", "Contoso_US_DEV"]);
   });
 
   test("case-insensitive (DB names)", () => {
-    expect(matchPattern("esp_nomad_se_dev", dbs)).toEqual(["ESP_Nomad_SE_DEV"]);
+    expect(matchPattern("contoso_se_dev", dbs)).toEqual(["Contoso_SE_DEV"]);
   });
 
   test("non-ONLINE excluded even when the name matches", () => {
-    // ESP_Nomad_OFF_DEV matches the glob but is OFFLINE → not selectable.
-    expect(matchPattern("ESP_Nomad_*", dbs)).not.toContain("ESP_Nomad_OFF_DEV");
+    // Contoso_OFF_DEV matches the glob but is OFFLINE → not selectable.
+    expect(matchPattern("Contoso_*", dbs)).not.toContain("Contoso_OFF_DEV");
   });
 
   test("regex metachars in the pattern are treated literally", () => {
@@ -61,7 +61,7 @@ describe("matchPattern", () => {
   });
 
   test("a bare `*` selects all ONLINE", () => {
-    expect(matchPattern("*", dbs)).toEqual(["ESP_Nomad_SE_DEV", "ESP_Nomad_US_DEV", "ESP_Suntory_DEV"]);
+    expect(matchPattern("*", dbs)).toEqual(["Contoso_SE_DEV", "Contoso_US_DEV", "Fabrikam_DEV"]);
   });
 
   test("empty pattern selects nothing", () => {

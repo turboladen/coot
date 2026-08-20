@@ -30,7 +30,7 @@ get re-opened, not so they get re-debated.
   these nodes entirely — don't render disabled placeholders.
 - Relationship / ER diagrams.
 - "Statement under caret" precision (v1 runs the selection or the batch — see §6).
-- Cross-database fan-out ("run across all `ESP_Nomad_*`"). Deferred, but the execution model is
+- Cross-database fan-out ("run across all `Contoso_*`"). Deferred, but the execution model is
   shaped so it's a later addition, not a rewrite (see §4).
 - MCP server. Ruled out on purpose — the two core jobs (see a schema, hand-run curated SQL) are
   inherently human-in-the-loop and visual.
@@ -44,7 +44,7 @@ get re-opened, not so they get re-debated.
 | SQL Server driver         | **`mssql-client`** (praxiomlabs/rust-mssql-driver), v0.20+              | Only actively-maintained option; tiberius is quiet and its native-tls path is broken against SQL Server on macOS. This crate is **rustls-native → no OpenSSL, no macOS TLS pain**. Validated end-to-end against the real box. |
 | GUI stack                 | **Tauri + Svelte**                                                      | The two hardest UI pieces are a real code editor and a virtualized results grid. Webland hands both over (CodeMirror/Monaco + TanStack Table). Reinventing either in a Rust-native GUI would be the whole project.            |
 | Secret storage            | **macOS Keychain via the `keyring` crate**                              | Never store SQL passwords in plaintext config. Connection _metadata_ in config/SQLite; the password in Keychain, keyed by connection id.                                                                                      |
-| Connection string default | `Encrypt=false;TrustServerCertificate=true`                             | Matches my environment ("encrypt optional, always trust cert"). Confirmed working against `E4-DEV-ESP-01`. Expose `strict` / `no_tls` as options later if ever needed.                                                        |
+| Connection string default | `Encrypt=false;TrustServerCertificate=true`                             | Matches my environment ("encrypt optional, always trust cert"). Confirmed working against the DEV box. Expose `strict` / `no_tls` as options later if ever needed.                                                        |
 | Type rendering            | Column metadata for headers/types; `SqlValue` (via `get_raw`) for cells | Confirmed: the driver exposes `row.columns()` + `row.get_raw(i) -> Option<SqlValue>`. See §7 for the two-type-sources subtlety.                                                                                               |
 | datetimeoffset target     | `chrono::DateTime<FixedOffset>`                                         | Both `FixedOffset` and `Utc` decode; `FixedOffset` preserves the zone.                                                                                                                                                        |
 
@@ -89,8 +89,8 @@ instead of each re-querying `sys.*`.
 
 ## 4. Database is _execution context_, not an in-SQL parameter (important)
 
-The DEV box has ~27 near-identical tenant databases (`ESP_Nomad_SE_DEV`, `ESP_Suntory_DEV`,
-`ESP_Arnotts_Group_DEV`, …). The real workflow is running the _same_ query against _different_
+The DEV box has ~27 near-identical tenant databases (`Contoso_SE_DEV`, `Fabrikam_DEV`,
+`Tailspin_DEV`, …). The real workflow is running the _same_ query against _different_
 tenant DBs. So which database you're in is a first-class **input to execution**, not a value spliced
 into SQL and not something baked permanently into the connection.
 

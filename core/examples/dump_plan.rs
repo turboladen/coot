@@ -246,9 +246,9 @@ mod tests {
 
     fn secrets() -> Secrets {
         Secrets {
-            server: "E4-DEV-ESP-01,1433".into(),
-            username: "esp_reader".into(),
-            database: "ESP_Nomad_SE_DEV".into(),
+            server: "dev-sql-01,1433".into(),
+            username: "sql_reader".into(),
+            database: "Contoso_SE_DEV".into(),
         }
     }
 
@@ -260,7 +260,7 @@ mod tests {
 
     #[test]
     fn a_tenant_database_name_is_caught_case_insensitively() {
-        let xml = r#"<Object Database="[esp_nomad_se_dev]" Schema="[dbo]" Table="[Orders]" />"#;
+        let xml = r#"<Object Database="[contoso_se_dev]" Schema="[dbo]" Table="[Orders]" />"#;
         assert!(
             scan_for_secrets(xml, &secrets()).is_some_and(|h| h.contains("database")),
             "a tenant database name must never reach a committed fixture"
@@ -269,13 +269,13 @@ mod tests {
 
     #[test]
     fn the_server_host_is_caught_without_its_port() {
-        let xml = "<!-- captured from E4-DEV-ESP-01 -->";
+        let xml = "<!-- captured from dev-sql-01 -->";
         assert!(scan_for_secrets(xml, &secrets()).is_some_and(|h| h.contains("server")));
     }
 
     #[test]
     fn the_username_is_caught() {
-        let xml = "<ShowPlanXML><!-- esp_reader --></ShowPlanXML>";
+        let xml = "<ShowPlanXML><!-- sql_reader --></ShowPlanXML>";
         assert!(scan_for_secrets(xml, &secrets()).is_some_and(|h| h.contains("username")));
     }
 
