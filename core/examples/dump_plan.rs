@@ -31,6 +31,19 @@
 //! conversions) need a scratch table. Create it in `master` or `tempdb` with
 //! generic column names — never in a tenant database.
 //!
+//! **Names are not the only exposure, and the two defences above only cover
+//! names.** A plan document is also a measurement of the machine that compiled
+//! it: `Build` is the exact patch level, `LastUpdate` timestamps the instance's
+//! statistics, and `EstimatedAvailableMemoryGrant` / `EstimatedPagesCached` /
+//! `EstimatedAvailableDegreeOfParallelism` / `MaxCompileMemory` describe its
+//! memory, buffer pool and CPU. Every row count and cost is a measurement of the
+//! catalog it ran against. On a public repo that is server fingerprinting, and
+//! [`scan_for_secrets`] cannot see any of it — it searches for configured
+//! values, and none of these are one. **Whatever this writes must have its
+//! measurements replaced with synthetic round values before it is committed**;
+//! `core::plan::parse`'s `fixture` documents the scheme the current fixtures
+//! use, and which of their properties are load-bearing for the tests.
+//!
 //! **Nothing it runs executes.** `SET SHOWPLAN_XML ON` makes the server compile
 //! each query and hand back the plan without running it.
 //!

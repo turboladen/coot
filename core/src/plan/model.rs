@@ -64,7 +64,7 @@ pub struct PlanNode {
     /// carry it — and the distinction is load-bearing: `Some(0.0)` would mean
     /// "reads nothing", which is the best plan imaginable, the exact inverse of
     /// "we have no idea". The ratio is the wasteful-scan signal a raw row count
-    /// cannot see (`join.sqlplan` reads 1153 rows to return 10).
+    /// cannot see (`join.sqlplan` reads 25000 rows to return 100).
     pub est_rows_read: Option<f64>,
     /// This node alone: its subtree cost minus its children's subtree costs.
     pub est_cost: f64,
