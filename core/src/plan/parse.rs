@@ -1,10 +1,12 @@
 //! ShowPlanXML → [`QueryPlan`]. Pure: no I/O, no driver, no server.
 //!
 //! Every test here runs offline. Most are backed by the real `.sqlplan` files in
-//! `core/tests/fixtures/plans/`, captured from a live SQL Server; three are not,
-//! and say so at their definitions — the missing-index test uses a hand-authored
-//! schema-derived document, and two feed deliberately malformed or non-plan
-//! input. No path in this module is fixture-backed unless it says it is.
+//! `core/tests/fixtures/plans/`, captured from a live SQL Server and then
+//! sanitized (see `fixture` below — the structure is genuine, the numbers are
+//! not); three are not, and say so at their definitions — the missing-index test
+//! uses a hand-authored schema-derived document, and two feed deliberately
+//! malformed or non-plan input. No path in this module is fixture-backed unless
+//! it says it is.
 //!
 //! Element names are matched on their LOCAL name throughout, so the showplan
 //! namespace declaration is irrelevant and a future namespace bump cannot break
@@ -231,11 +233,18 @@ fn rel_op(n: Node) -> PlanNode {
         est_rows_read: n.attribute(ROWS_READ).and_then(|v| v.parse().ok()),
         // CLAMPED, and not as defensive programming — delete the `.max` and
         // `join.sqlplan` node 1 (`Nested Loops` / `Left Outer Join`) parses to
-        // −0.00010769: its two children's subtree costs sum to 0.01669429
-        // against its own 0.0165866. That is 0.65% of the subtree, ~300× too
-        // large to be display rounding; it is the `Top` row-goal rescaling the
-        // inner side. Real plans do this, so a negative own cost is a fact to
-        // absorb here rather than a bug to hunt.
+        // −0.01: its two children's subtree costs sum to 0.06 against its own
+        // 0.05.
+        //
+        // The −0.01 is synthetic, but the inversion is not. The captured plan
+        // really did read this way, and by a margin no rounding explains: the
+        // server put the parent 0.65% of the subtree below the sum of its
+        // children, ~300× too large to be display rounding. It is the `Top`
+        // row-goal rescaling the inner side. The measured costs themselves are
+        // gone — the fixture is sanitized, see `fixture` — but the inversion was
+        // preserved, because it is the fact the clamp exists for. Real plans do
+        // this, so a negative own cost is something to absorb here rather than a
+        // bug to hunt.
         est_cost: (subtree_cost - children_cost).max(0.0),
         subtree_cost,
         warnings,
@@ -308,9 +317,28 @@ fn warnings_from(w: Node) -> Vec<PlanWarning> {
 mod tests {
     use super::*;
 
-    /// Every fixture here is REAL — captured from a live SQL Server by
-    /// `just dump-plans` and committed. Take assertion values from the files,
-    /// never from a document describing them.
+    /// Every fixture here is a REAL capture — produced by `just dump-plans`
+    /// against a live SQL Server, which is the point: element nesting, operator
+    /// names, wrapper elements and attribute spellings are the server's own, not
+    /// something we imagined. That is what these tests are for.
+    ///
+    /// **The numbers in them are not real.** This repo is public, and a plan
+    /// document is a measurement of the machine that produced it — patch level,
+    /// statistics timestamps, memory grant, buffer pool, DOP, and every row count
+    /// and cost off that server's `master`. All of it was replaced with obviously
+    /// synthetic round values: each operator's own cost is 0.01 (so a subtree cost
+    /// is 0.01 × the operators beneath it, inclusive) and `EstimateRows` is 100 ×
+    /// the same count. Two properties were preserved DELIBERATELY, because tests
+    /// depend on them and a later re-sanitization must keep them:
+    ///
+    /// - `join.sqlplan` node 1's own cost is negative (see [`rel_op`]).
+    /// - `join.sqlplan` node 5 and `scan.sqlplan` node 11 read 25000 rows to
+    ///   return 100.
+    ///
+    /// So: take assertion values from the files, never from a document describing
+    /// them — and never "restore" a value here to something that looks measured.
+    /// Anything freshly captured has to be sanitized the same way before it is
+    /// committed.
     fn fixture(name: &str) -> String {
         std::fs::read_to_string(format!(
             "{}/tests/fixtures/plans/{name}",
@@ -355,8 +383,8 @@ mod tests {
 
         let s = &plan.statements[0];
         assert_eq!(s.text, "SELECT name FROM sys.objects WHERE object_id = 1");
-        assert!(close(s.subtree_cost, 0.00328328), "got {}", s.subtree_cost);
-        assert!(close(s.est_rows, 1.0), "got {}", s.est_rows);
+        assert!(close(s.subtree_cost, 0.02), "got {}", s.subtree_cost);
+        assert!(close(s.est_rows, 200.0), "got {}", s.est_rows);
         assert!(s.warnings.is_empty());
         assert!(s.missing_indexes.is_empty());
 
@@ -373,11 +401,7 @@ mod tests {
             seek.object.as_deref(),
             Some("[master].[sys].[sysschobjs].[clst]")
         );
-        assert!(
-            close(seek.subtree_cost, 0.0032831),
-            "got {}",
-            seek.subtree_cost
-        );
+        assert!(close(seek.subtree_cost, 0.01), "got {}", seek.subtree_cost);
         assert!(seek.children.is_empty());
     }
 
@@ -406,7 +430,7 @@ mod tests {
 
         let first = &plan.statements[0];
         assert_eq!(first.text, "SELECT COUNT(*) FROM sys.objects");
-        assert!(close(first.subtree_cost, 0.0495128));
+        assert!(close(first.subtree_cost, 0.04));
         assert_eq!(first.root.as_ref().unwrap().physical_op, "Compute Scalar");
 
         let second = &plan.statements[1];
@@ -414,7 +438,7 @@ mod tests {
         // batch separator into the second statement's text. Asserted verbatim
         // rather than trimmed, because trimming would be inventing.
         assert_eq!(second.text, "; SELECT TOP 1 name FROM sys.schemas");
-        assert!(close(second.subtree_cost, 0.0032832));
+        assert!(close(second.subtree_cost, 0.02));
         assert_eq!(second.root.as_ref().unwrap().physical_op, "Top");
     }
 
@@ -447,7 +471,7 @@ mod tests {
         let inner = &loops.children[0];
         assert_eq!(inner.physical_op, "Nested Loops");
         assert_eq!(inner.logical_op, "Inner Join");
-        assert!(close(inner.est_cost, 3.901e-5), "got {}", inner.est_cost);
+        assert!(close(inner.est_cost, 0.01), "got {}", inner.est_cost);
     }
 
     #[test]
@@ -459,10 +483,11 @@ mod tests {
         let scan = &root.children[0].children[0].children[0].children[0];
 
         assert_eq!(scan.physical_op, "Index Scan");
-        // 1153 rows read to return 10 — the wasteful-scan signal that a raw
-        // returned-row threshold cannot see at this size.
-        assert_eq!(scan.est_rows_read, Some(1153.0));
-        assert!(close(scan.est_rows, 10.0021), "got {}", scan.est_rows);
+        // 25000 rows read to return 100 — the wasteful-scan signal that a raw
+        // returned-row threshold cannot see at this size. Preserved on purpose
+        // through sanitization; see `fixture`.
+        assert_eq!(scan.est_rows_read, Some(25000.0));
+        assert!(close(scan.est_rows, 100.0), "got {}", scan.est_rows);
 
         // Absent, not zero, on an operator that accesses no data.
         let filter = &root.children[0].children[0].children[0];
@@ -475,8 +500,8 @@ mod tests {
         let plan = parse_plan(&fixture("scan.sqlplan")).unwrap();
         let s = &plan.statements[0];
         assert_eq!(s.text, "SELECT * FROM sys.all_columns");
-        assert!(close(s.subtree_cost, 0.75402));
-        assert!(close(s.est_rows, 1563.45));
+        assert!(close(s.subtree_cost, 0.32));
+        assert!(close(s.est_rows, 3200.0));
 
         let root = s.root.as_ref().unwrap();
         assert_eq!(count(root), 32, "every operator in the document");
@@ -485,8 +510,8 @@ mod tests {
 
         // Child ORDER, via costs — both children are `Compute Scalar`, so names
         // alone would not catch a reversed traversal.
-        assert!(close(root.children[0].subtree_cost, 0.306424));
-        assert!(close(root.children[1].subtree_cost, 0.447439));
+        assert!(close(root.children[0].subtree_cost, 0.28));
+        assert!(close(root.children[1].subtree_cost, 0.03));
 
         // The deepest chain is 20 operators and runs down the SECOND child of
         // each `Hash Match` (the probe side), so it exists only if the traversal
