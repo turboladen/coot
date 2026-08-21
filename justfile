@@ -27,8 +27,13 @@ build:
     cargo build --workspace
 
 # Run the Rust tests (DEV-box integration tests run when MSSQL_* is set, else skip).
+# --all-targets is what reaches the `#[cfg(test)]` modules inside core/examples/
+# (dump_plan's secret scan and measurement sanitizer). A plain `cargo test` builds
+# examples without running their tests, so those pass by never executing. It also
+# skips doctests, hence the second line.
 test:
-    cargo test --workspace
+    cargo test --workspace --all-targets
+    cargo test --workspace --doc
 
 # Clippy with warnings-as-errors (the project's lint bar).
 lint:
