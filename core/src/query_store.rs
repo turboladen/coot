@@ -8,8 +8,8 @@
 //! `connection_store`'s no-password invariant. The "secrets never on disk"
 //! invariant (`CLAUDE.md`) is about connection *passwords* → macOS Keychain. Param
 //! values are query inputs (a customer id, a date, an `ORDER BY` clause), not
-//! credentials, and remember-last-value (`PLAN.md` §5, d28.3) *requires* them on
-//! disk. The `last_value_persists_to_disk` test asserts this on purpose.
+//! credentials, and remember-last-value (`PLAN.md` §5) *requires* them on disk.
+//! The `last_value_persists_to_disk` test asserts this on purpose.
 //!
 //! No in-memory cache, no interior mutability: single user, single process ⇒ every
 //! op reads the whole file, mutates, writes the whole file. That keeps
@@ -92,8 +92,8 @@ mod tests {
     use crate::query::{Param, ParamScope, SqlType};
     use std::sync::atomic::{AtomicU32, Ordering};
 
-    /// A unique temp dir per call — no `tempfile` dep needed for a single-user
-    /// tool. Cleaned up at the end of each test via `remove_dir_all`.
+    // A unique temp dir per call — no `tempfile` dep needed for a single-user
+    // tool. Cleaned up at the end of each test via `remove_dir_all`.
     fn temp_store_path() -> PathBuf {
         static COUNTER: AtomicU32 = AtomicU32::new(0);
         let n = COUNTER.fetch_add(1, Ordering::Relaxed);
@@ -111,9 +111,9 @@ mod tests {
         }
     }
 
-    /// Builds a saved query carrying a bind param, a raw-text param with a
-    /// remembered `last_value`, and a `target_database` — so the round-trip tests
-    /// exercise the whole AC (params + target db persist).
+    // Builds a saved query carrying a bind param, a raw-text param with a
+    // remembered `last_value`, and a `target_database` — so the round-trip tests
+    // exercise the whole AC (params + target db persist).
     fn sample_query(id: &str, name: &str) -> SavedQuery {
         SavedQuery {
             id: SavedQueryId(id.into()),
@@ -176,19 +176,16 @@ mod tests {
         cleanup(&path);
     }
 
-    /// Replacement happens IN PLACE — a re-upserted row keeps its position rather
-    /// than moving to the end.
-    ///
-    /// `upsert_replaces_by_id` above can't see this: with one row in the store,
-    /// replace-in-place and remove-then-push are indistinguishable. Rewriting
-    /// `upsert` as `retain(id != q.id); push(q)` would pass every other test here
-    /// while silently reordering the user's library on every save.
-    ///
-    /// It is also the contract the frontend mirrors: `savedQueriesLogic.ts`'s
-    /// `upsertQuery` replaces at the found index so `library.list` after a write
-    /// equals what `list` would return, which is what lets the UI treat its
-    /// read-back as optional (billz-sjn). Drift starts here, so the assertion is
-    /// here too.
+    // Replacement happens IN PLACE — a re-upserted row keeps its position.
+    // `upsert_replaces_by_id` above can't see this: with one row in the store,
+    // replace-in-place and remove-then-push are indistinguishable. Rewriting
+    // `upsert` as `retain(id != q.id); push(q)` passes every other test here while
+    // silently reordering the user's library on every save.
+    //
+    // The frontend mirrors this contract: `savedQueriesLogic.ts`'s `upsertQuery`
+    // replaces at the found index, so `library.list` after a write equals what
+    // `list` would return, which is what lets the UI treat its read-back as
+    // optional (billz-sjn). Drift starts here, so the assertion is here too.
     #[test]
     fn upsert_replaces_in_place_preserving_order() {
         let path = temp_store_path();

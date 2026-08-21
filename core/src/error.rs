@@ -38,7 +38,9 @@ pub enum CoreError {
     /// The executor classifies the driver's transport-ish `mssql_client::Error`
     /// variants here (never `#[from]`). Retryable: a reused connection that hits
     /// this may just have a stale socket, so the caller can drop it and reconnect
-    /// once (`billz-lpb.1`). See [`CoreError::is_transport`].
+    /// once. See [`CoreError::is_transport`].
+    // This variant exists to carry the retry-once decision (billz-lpb.1); it is
+    // the only one `session::run` will reconnect for.
     #[error("connection transport error: {0}")]
     Transport(String),
     /// Reading or writing the on-disk connection metadata failed. `io::Error` /
@@ -67,9 +69,9 @@ pub enum CoreError {
 
 impl CoreError {
     /// Whether this is a transport-level failure worth retrying on a fresh
-    /// connection (`billz-lpb.1`). Only [`CoreError::Transport`] qualifies — a
-    /// `Query`/server error is deterministic, so re-running it would just repeat
-    /// the failure and cost a wasted login.
+    /// connection. Only [`CoreError::Transport`] qualifies — a `Query`/server
+    /// error is deterministic, so re-running it would just repeat the failure and
+    /// cost a wasted login.
     pub fn is_transport(&self) -> bool {
         matches!(self, CoreError::Transport(_))
     }

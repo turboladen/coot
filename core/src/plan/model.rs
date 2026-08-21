@@ -83,7 +83,7 @@ pub struct MissingIndex {
     pub columns: Vec<String>,
 }
 
-/// A warning the PLAN reports — a fact read out of the XML, not a judgement.
+/// A warning the PLAN reports — a fact read out of the XML, not a judgment.
 /// Contrast [`Finding`], which is our conclusion and is expected to change.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 // `rename_all` renames VARIANTS only; `rename_all_fields` is what camelCases a
@@ -170,7 +170,7 @@ pub struct PlanVerdict {
     pub findings: Vec<Finding>,
 }
 
-/// What one `explain` returns: the parsed plan plus our judgement of it.
+/// What one `explain` returns: the parsed plan plus our judgment of it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PlanCapture {

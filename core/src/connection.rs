@@ -43,8 +43,10 @@ pub struct ConnectionConfig {
     #[serde(default = "default_true")]
     pub trust_server_certificate: bool,
     /// `false` ⇒ session-only password (prompted at connect, held in memory,
-    /// never written to the Keychain). Default `true` for back-compat with
-    /// configs written before billz-85b. Metadata only — not a secret.
+    /// never written to the Keychain). Defaults `true`, so a config file that
+    /// omits the field loads as remember-on. Metadata only — not a secret.
+    // The session-only password path is billz-85b; the `true` default is what
+    // keeps configs written before it loading unchanged.
     #[serde(default = "default_true")]
     pub remember_password: bool,
 }
@@ -120,7 +122,7 @@ fn ado_quote(value: &str) -> String {
 
 /// Build the `mssql-client` connection string, in the spike's shape. The
 /// password is passed in (fetched from the keychain at connect time) so it never
-/// lives in [`ConnectionConfig`]. Consumed by the executor (bead ce1.6) via
+/// lives in [`ConnectionConfig`]. Consumed by the executor via
 /// `Config::from_connection_string`.
 ///
 /// # Warning
@@ -279,9 +281,9 @@ impl<S: SecretStore> SecretStore for CachingSecretStore<S> {
 /// A [`SecretStore`] decorator that layers an ephemeral, in-memory **session**
 /// password map over any inner store. `get_password` prefers a session password
 /// (set via [`set_session_password`]); otherwise it falls through to the inner
-/// (durable) store. This backs the "don't remember password" path (billz-85b): a
-/// session-only password lives ONLY in this map for the process lifetime and is
-/// NEVER written to the inner store / Keychain (`CLAUDE.md` disk invariant).
+/// (durable) store. This backs the "don't remember password" path: a session-only
+/// password lives ONLY in this map for the process lifetime and is NEVER written
+/// to the inner store / Keychain (`CLAUDE.md` disk invariant).
 ///
 /// `set_password` still writes through to the inner store (the remember-on path);
 /// `delete_password` clears both layers; [`clear_durable`] clears only the inner
@@ -354,7 +356,7 @@ mod tests {
         }
     }
 
-    /// Build a config whose `server` is `s`, for `preflight_target` parse tests.
+    // Build a config whose `server` is `s`, for `preflight_target` parse tests.
     fn cfg_with_server(s: &str) -> ConnectionConfig {
         let mut c = sample_config();
         c.server = s.into();
@@ -454,8 +456,8 @@ mod tests {
         store.delete_password(&ConnectionId("nope".into())).unwrap();
     }
 
-    /// A `SecretStore` that counts `get_password` calls — stands in for the
-    /// Keychain to prove `CachingSecretStore` reads it at most once per id.
+    // A `SecretStore` that counts `get_password` calls — stands in for the
+    // Keychain to prove `CachingSecretStore` reads it at most once per id.
     #[derive(Default)]
     struct CountingStore {
         inner: InMemorySecretStore,

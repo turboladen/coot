@@ -1,7 +1,9 @@
-//! Shared test-only helpers (billz-2co). `#[cfg(test)]` in `lib.rs`, so this is
-//! compiled only for tests and never ships. Consolidates the `env_connection()`
-//! copies that were duplicated across the `executor` / `schema` / `session` test
-//! modules — one place to touch when [`ConnectionConfig`] gains a field.
+//! Shared test-only helpers. `#[cfg(test)]` in `lib.rs`, so this is compiled only
+//! for tests and never ships. One `env_connection()` for the `executor` /
+//! `schema` / `session` test modules — one place to touch when
+//! [`ConnectionConfig`] gains a field.
+
+// Consolidating the test helpers is bead billz-2co.
 
 use crate::connection::{ConnectionConfig, ConnectionId, InMemorySecretStore, SecretStore};
 

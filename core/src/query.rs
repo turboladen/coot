@@ -6,10 +6,13 @@
 //! hand-edited JSON file loads cleanly. Persistence lives in
 //! [`crate::query_store`], exactly as `connection_store` splits from `connection`.
 //!
-//! This wave (d28.1) defines the shapes only. The behaviors that hang off them
-//! land in later beads: bind vs raw-text substitution (d28.2), remember-last-value
-//! (d28.3), scope resolution (d28.4), auto-type from the catalog (d28.5), the
-//! library UI (d28.6).
+//! This module defines the shapes only. The behaviors that hang off them —
+//! bind vs raw-text substitution, remember-last-value, scope resolution,
+//! auto-type from the catalog, the library UI — live elsewhere.
+
+// The bead wave these shapes come from: d28.1 defines them here; d28.2
+// substitutes, d28.3 remembers last values, d28.4 resolves scope, d28.5
+// auto-types from the catalog, d28.6 builds the library UI.
 
 use serde::{Deserialize, Serialize};
 
@@ -25,19 +28,22 @@ pub struct SavedQueryId(pub String);
 /// "the things you filter by." A bind param carries `Some(SqlType)`; a raw-text
 /// fragment carries `None`.
 ///
-/// **Closed enum (NOT `#[non_exhaustive]`)** — this is coot's own deliberately
-/// capped set, not the driver's evolving value space (that's why [`crate::CellValue`]
-/// / the driver's `SqlValue` are non-exhaustive — a false parallel). `core` has no
-/// external consumers (`CLAUDE.md`: not built for distribution), so closing the enum
-/// makes a future variant a *compile error* at every `match` (d28.2's `sp_executesql`
-/// decl map, d28.5's catalog map) rather than a silent runtime fallthrough into a
-/// broken binding.
+/// **Closed enum (NOT `#[non_exhaustive]`)**: adding a variant is a *compile
+/// error* at every `match` on it, which is the point.
 ///
 /// Serde: `rename_all = "lowercase"` yields the exact SQL keyword strings
-/// (`"int"`, `"nvarchar"`, `"datetime2"`, `"uniqueidentifier"`…). This is deliberate
-/// — those strings equal [`crate::friendly_type_name`]'s output, so d28.5 can map a
-/// catalog type name straight to a `SqlType`.
+/// (`"int"`, `"nvarchar"`, `"datetime2"`, `"uniqueidentifier"`…), which equal
+/// [`crate::friendly_type_name`]'s output.
 ///
+// The parallel with `CellValue` / the driver's `SqlValue` — both
+// `#[non_exhaustive]` — is a false one: those mirror the driver's evolving value
+// space, this is coot's own capped set. `core` has no external consumers
+// (`CLAUDE.md`: not built for distribution), so a compile error at every `match`
+// (d28.2's `sp_executesql` decl map, d28.5's catalog map) beats a silent runtime
+// fallthrough into a broken binding. The serde strings matching
+// `friendly_type_name` lets d28.5 map a catalog type name straight to a
+// `SqlType`.
+
 // Note (d28.2, resolved): a bare tag carries no precision/length, and that turns
 // out not to matter for the bind path. The driver (`mssql-client` 0.20.2) does NOT
 // build the `sp_executesql` declaration from this tag — it derives it from the
@@ -61,13 +67,14 @@ pub enum SqlType {
 }
 
 /// Resolution tier for a param value (`PLAN.md` §5): Global defaults < Session
-/// values < per-query Local. This wave defines the enum; d28.4 implements the
-/// resolution. Unit variants — the *value* lives in [`Param::last_value`] /
-/// session/global stores (later beads); scope is only the tier discriminator.
+/// values < per-query Local. Unit variants — the *value* lives in
+/// [`Param::last_value`] / the session and global stores; scope is only the tier
+/// discriminator.
 ///
 /// Closed set (the model names exactly three tiers) → not `#[non_exhaustive]`, so
-/// d28.4's resolution `match` stays exhaustive. `Default = Local` (a saved query's
+/// every resolution `match` stays exhaustive. `Default = Local` (a saved query's
 /// own params are per-query unless promoted).
+// This enum is the shape only; d28.4 implements the resolution over it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ParamScope {
@@ -78,21 +85,23 @@ pub enum ParamScope {
 }
 
 /// A query parameter (`PLAN.md` §5). The `sql_type` discriminator decides the
-/// substitution mechanism (both implemented in d28.2, NOT here):
+/// substitution mechanism, which is implemented in `param_bind`, NOT here:
 ///   `Some(_)` → **bind** param, real `sp_executesql` (typed, safe).
 ///   `None`    → **raw-text** fragment, string-spliced (unsafe, render LOUD).
+// Every field is defined here but read and written elsewhere: `sql_type` by
+// d28.2's substitution, `last_value` by d28.3, `scope` by d28.4's resolution.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Param {
     /// The placeholder, e.g. `"@cust"`.
     pub name: String,
-    /// `Some` → bind (typed widget); `None` → raw-text fragment. (d28.2 reads this.)
+    /// `Some` → bind (typed widget); `None` → raw-text fragment.
     pub sql_type: Option<SqlType>,
-    /// Remember-last-value (d28.3 reads/writes; the FIELD is here). Persisted — a
-    /// query input, not a credential (see `query_store` module docs).
+    /// The remembered last value. Persisted — a query input, not a credential
+    /// (see `query_store` module docs).
     pub last_value: Option<String>,
-    /// Resolution tier (d28.4 resolves; the FIELD is here). `serde(default)` →
-    /// JSON omitting it loads as [`ParamScope::Local`].
+    /// Resolution tier. `serde(default)` → JSON omitting it loads as
+    /// [`ParamScope::Local`].
     #[serde(default)]
     pub scope: ParamScope,
 }

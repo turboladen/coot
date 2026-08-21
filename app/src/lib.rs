@@ -123,8 +123,9 @@ async fn delete_connection(id: ConnectionId, state: State<'_, AppState>) -> AppR
     Ok(())
 }
 
-/// Store a session-only password in memory for `id` (billz-85b). Never persisted.
-/// Called by the UI's unlock prompt for a `rememberPassword=false` connection.
+/// Store a session-only password in memory for `id`. Never persisted. Called by
+/// the UI's unlock prompt for a `rememberPassword=false` connection.
+// The session-only password path is bead billz-85b.
 #[tauri::command]
 async fn set_session_password(
     id: ConnectionId,
@@ -162,14 +163,15 @@ fn resolve_batches<'a>(sql: &'a str, selection: Option<&'a str>, line: usize) ->
 
 /// The real query path. `database = None` ⇒ connection default; `Some` ⇒ `USE [db]`.
 ///
-/// Resolves WHAT to run, then GO-splits it (billz-cwt.5). A non-empty selection
-/// wins (and still GO-splits, since a selection can span a `GO`); otherwise the
-/// batch containing the caret's `line` (1-based, from CodeMirror). The batch
-/// logic lives in `core`; this command only orchestrates: resolve text →
-/// `split_batches` → loop `core::run` → flatten every result set into one `Vec`
-/// (cwt.7 adds tabs). A failing batch aborts the rest (`?`) — SSMS-style
-/// continue-on-error is deferred. Empty input → `[]` (the UI shows "nothing to
-/// run"). Return shape (`Vec<QueryResult>`) is unchanged from the pre-cwt.5 path.
+/// Resolves WHAT to run, then GO-splits it. A non-empty selection wins (and still
+/// GO-splits, since a selection can span a `GO`); otherwise the batch containing
+/// the caret's `line` (1-based, from CodeMirror). The batch logic lives in
+/// `core`; this command only orchestrates: resolve text → `split_batches` → loop
+/// `core::run` → flatten every result set into one `Vec`. A failing batch aborts
+/// the rest (`?`) — SSMS-style continue-on-error is deferred. Empty input → `[]`
+/// (the UI shows "nothing to run").
+// GO-splitting is bead cwt.5; cwt.7 puts each result set in its own tab, which is
+// why this flattens rather than preserving per-batch grouping.
 #[tauri::command]
 async fn run_sql(
     id: ConnectionId,
@@ -204,8 +206,8 @@ async fn run_sql(
 /// hammering the server.
 const FANOUT_CONCURRENCY: usize = 8;
 
-/// Cross-tenant fan-out (billz-0gh.1.1): run the SAME resolved batch(es) against
-/// EVERY database in `databases`, in parallel, returning a per-database outcome.
+/// Cross-tenant fan-out: run the SAME resolved batch(es) against EVERY database
+/// in `databases`, in parallel, returning a per-database outcome.
 ///
 /// `sql`/`selection`/`line` are resolved to batches EXACTLY as `run_sql` (a
 /// non-empty selection wins, else the batch at the caret line — both GO-split),
@@ -215,6 +217,7 @@ const FANOUT_CONCURRENCY: usize = 8;
 /// `[]` (matches `run_sql`; the UI shows "nothing to run") — no pointless logins.
 /// Unlike `run_sql`, one DB failing does NOT abort the rest: `run_fanout` captures
 /// each failure into that DB's `DbRunOutcome.error` and never returns `Err`.
+// Cross-tenant fan-out is bead billz-0gh.1.1.
 #[tauri::command]
 async fn run_fanout(
     id: ConnectionId,
@@ -250,7 +253,7 @@ async fn run_fanout(
     .await)
 }
 
-/// The parameterized run path (d28.3). Like `run_sql` but binds/splices `params`
+/// The parameterized run path. Like `run_sql` but binds/splices `params`
 /// via `run_with_params` and sends a SINGLE batch (no `GO`-splitting — a
 /// parameterized query spanning `GO` is out of scope). `database` maps to the
 /// `ExecutionContext` exactly as `run_sql`.
@@ -273,7 +276,7 @@ async fn run_params(
     Ok(coot_core::run_with_params(&cfg, &state.secrets, &ctx, &sql, &params).await?)
 }
 
-/// Object-tree data (rqb.2). The four schema commands mirror `test_connection`'s
+/// Object-tree data. The four schema commands mirror `test_connection`'s
 /// idiom: resolve `cfg` by id (`?` → `AppError::Core`), then delegate to the
 /// managed [`SchemaCache`], which dedups + caches per key. Returns are all
 /// `core`-owned serde types — no `mssql_client` type crosses the boundary.
@@ -337,15 +340,15 @@ async fn list_columns(
         .await?)
 }
 
-/// Refresh (rqb.5): drop the active connection's cached schema so the next
-/// tree load re-queries sys.* (I do DDL on DEV and want new objects at once).
+/// Refresh: drop the active connection's cached schema so the next tree load
+/// re-queries sys.* (I do DDL on DEV and want new objects at once).
 #[tauri::command]
 async fn refresh_schema(id: ConnectionId, state: State<'_, AppState>) -> AppResult<()> {
     state.schema.invalidate_connection(&id);
     Ok(())
 }
 
-/// Saved-query library (d28.6). Three thin passthroughs over the managed
+/// Saved-query library. Three thin passthroughs over the managed
 /// [`QueryStore`], mirroring the connection commands: each bottoms out in
 /// `CoreError` via `?` (no new `AppError` variant), and returns `core`-owned
 /// serde types only. The library is connection-independent — a `SavedQuery` has
@@ -428,11 +431,11 @@ mod tests {
         assert_eq!(overlay.get_password(&id).unwrap().as_deref(), Some("pw"));
     }
 
-    /// Pins Tauri's *actual* async runtime: `block_on` uses the SAME global
-    /// runtime as a `#[tauri::command] async fn`'s `spawn`, so a green run here
-    /// proves `core::run`'s tokio driver works on it. Env-gated on `MSSQL_*` —
-    /// skips cleanly when unset (box is unreachable from CI; the user runs it
-    /// on-network). Mirrors core's `env_connection()`.
+    // Pins Tauri's *actual* async runtime: `block_on` uses the SAME global
+    // runtime as a `#[tauri::command] async fn`'s `spawn`, so a green run here
+    // proves `core::run`'s tokio driver works on it. Env-gated on `MSSQL_*` —
+    // skips cleanly when unset (box is unreachable from CI; the user runs it
+    // on-network). Mirrors core's `env_connection()`.
     fn env_connection() -> Option<(ConnectionConfig, InMemorySecretStore)> {
         let server = std::env::var("MSSQL_SERVER").ok()?;
         let username = std::env::var("MSSQL_USER").ok()?;
@@ -468,10 +471,10 @@ mod tests {
         assert_eq!(results.len(), 1);
     }
 
-    /// Exercises the `run_sql` split+loop against `coot_core` directly (not the
-    /// `#[tauri::command]` wrapper, which needs `State<AppState>`): a GO-split
-    /// script runs as two batches whose result sets flatten into one Vec. Same
-    /// env gate as above — skips cleanly when `MSSQL_*` is unset.
+    // Exercises the `run_sql` split+loop against `coot_core` directly (not the
+    // `#[tauri::command]` wrapper, which needs `State<AppState>`): a GO-split
+    // script runs as two batches whose result sets flatten into one Vec. Same
+    // env gate as above — skips cleanly when `MSSQL_*` is unset.
     #[test]
     fn split_and_loop_flattens_two_batches() {
         let Some((cfg, store)) = env_connection() else {

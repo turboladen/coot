@@ -1,4 +1,4 @@
-//! DEV-box integration tests — the Phase-0 exit gate (bead `billz-ce1.7`).
+//! DEV-box integration tests — the Phase-0 exit gate.
 //!
 //! Ports the two spike probes (`examples/dynamic_dump.rs` untyped, and
 //! `examples/typed_probe.rs` typed) into `core`'s first integration tests. As an
@@ -20,6 +20,8 @@
 //! ```
 //!
 //! Re-run that after any `mssql-client` bump (CLAUDE.md standing order).
+
+// These tests are the Phase-0 exit gate, bead billz-ce1.7.
 
 use coot_core::{
     CellValue, ConnectionConfig, ConnectionId, DbRunOutcome, ExecutionContext, InMemorySecretStore,
@@ -174,8 +176,8 @@ async fn mixed_type_row_maps_to_expected_cellvalues() {
 }
 
 /// 3.2 — `run` returns a `Vec<QueryResult>` of len 2 for a multi-statement batch.
-/// This behavior is untested anywhere else; proving it is the single most
-/// important thing ce1.7 adds. One batch, no `GO` — SQL Server emits two result
+/// This behavior is untested anywhere else, which makes it the most important
+/// thing these tests cover. One batch, no `GO` — SQL Server emits two result
 /// sets and `into_query_streams()` yields two streams.
 #[tokio::test]
 async fn multi_result_batch_returns_two_query_results() {

@@ -15,7 +15,9 @@
 //!    not close it, so a leaked `ON` would make every later query silently return
 //!    plan XML instead of running. Capture therefore uses its OWN connection and
 //!    closes it — poisoning is impossible by construction rather than by care.
-//!    See `docs/adr/0002-connection-reuse-for-schema-introspection.md`.
+
+// Hazard 2 is what ADR-0002 decided,
+// `docs/adr/0002-connection-reuse-for-schema-introspection.md`.
 
 use crate::connection::{ConnectionConfig, SecretStore};
 use crate::context::ExecutionContext;
@@ -35,7 +37,9 @@ const SHOWPLAN_OFF: &str = "SET SHOWPLAN_XML OFF";
 /// than as a promise: `sql` never executes *provided* SHOWPLAN actually engaged,
 /// and what guarantees that is `run_batch(…, SHOWPLAN_ON)` returning `Err`
 /// whenever it does not. A login lacking SHOWPLAN permission is the case worth
-/// proving; bead `billz-bkm` verifies it against a restricted login.
+/// proving, and it is not yet proven against a real server.
+// Bead billz-bkm verifies the no-SHOWPLAN-permission case against a restricted
+// login. Until it runs, the `Err` guarantee above is reasoned, not observed.
 pub async fn capture_xml(
     cfg: &ConnectionConfig,
     store: &dyn SecretStore,
@@ -80,14 +84,16 @@ pub async fn capture_xml(
 /// batches' results are discarded by the caller — so the scan is not about
 /// stepping over those. It buys two other things: `[0][0]` would PANIC on an
 /// empty result set where we want [`CoreError::Query`], and the exact
-/// result-set shape of an explained batch is not yet pinned against a real
-/// server (the DEV box is unreachable; bead `billz-bkm`). Accepting `Text` as
-/// well as `Xml` is the same defence — the column is `xml` on the wire, but we
-/// do not bet the feature on the driver decoding it to `SqlValue::Xml`.
+/// result-set shape of an explained batch is not pinned against a real server.
+/// Accepting `Text` as well as `Xml` is the same defense — the column is `xml` on
+/// the wire, but we do not bet the feature on the driver decoding it to
+/// `SqlValue::Xml`.
 ///
 /// Returns only the FIRST document. Harmless for one batch — SHOWPLAN emits a
 /// single document covering every statement in it — but silently lossy if
 /// `GO`-split SQL (multiple batches) ever reaches this path.
+// The shape is unpinned because the DEV box is unreachable from here; bead
+// billz-bkm pins it against a real server.
 fn first_xml_cell(results: Vec<QueryResult>) -> Result<String> {
     for r in results {
         for row in r.rows {
@@ -220,15 +226,15 @@ mod tests {
 
     // ---- env-gated live tests (clean runtime skip with no DEV box) ----
 
-    /// The named regression test for the session-state footgun.
-    ///
-    /// Be clear about what this does and does not prove. `capture_xml` opens and
-    /// closes its own connection, and SHOWPLAN is per-SESSION state, so a leak
-    /// cannot cross into the fresh connection `executor::run` opens — this test
-    /// cannot detect one today. It is a **construction check**: it fails if a
-    /// future refactor routes capture through a shared/reused client (a
-    /// `SessionCache`-style change) and the `OFF` stops being reached, which is
-    /// exactly the regression ADR-0002 warns about. It is not a leak detector.
+    // The named regression test for the session-state footgun.
+    //
+    // Be clear about what this does and does not prove. `capture_xml` opens and
+    // closes its own connection, and SHOWPLAN is per-SESSION state, so a leak
+    // cannot cross into the fresh connection `executor::run` opens — this test
+    // cannot detect one today. It is a construction check: it fails if a future
+    // refactor routes capture through a shared/reused client (a
+    // `SessionCache`-style change) and the `OFF` stops being reached, which is
+    // exactly the regression ADR-0002 warns about. It is not a leak detector.
     #[tokio::test]
     async fn showplan_is_off_after_a_capture() {
         let Some((cfg, store, _)) = env_connection() else {
@@ -268,18 +274,16 @@ mod tests {
         assert!(xml.contains("StmtSimple"), "got {xml}");
     }
 
-    /// The only automated check of footgun 1 — `USE` must be applied BEFORE
-    /// SHOWPLAN, or every plan compiles against the login's default database with
-    /// no error at all.
-    ///
-    /// Two captures under two DIFFERENT contexts, each asserting the document
-    /// names its own database. A single-context assertion would be vacuous when
-    /// `MSSQL_DATABASE` happens to be the login default. The SQL must touch a real
-    /// object: `Database=` appears on `<Object>` elements, never on `StmtSimple`.
-    ///
-    /// The second database is chosen dynamically so `MSSQL_DATABASE=master` does
-    /// not silently collapse this back into the vacuous single-context form.
-    /// `master` and `tempdb` both always exist and both have `sys.objects`.
+    // The only automated check of footgun 1 — `USE` must be applied BEFORE
+    // SHOWPLAN, or every plan compiles against the login's default database with
+    // no error at all.
+    //
+    // Two captures under two DIFFERENT contexts, each asserting the document names
+    // its own database; a single-context assertion would be vacuous when
+    // `MSSQL_DATABASE` is the login default. The second database is chosen
+    // dynamically so `MSSQL_DATABASE=master` cannot collapse it back to that form;
+    // `master` and `tempdb` both exist and both have `sys.objects`. The SQL must
+    // touch a real object: `Database=` is on `<Object>`, never on `StmtSimple`.
     #[tokio::test]
     async fn capture_xml_applies_the_use_before_showplan() {
         let Some((cfg, store, database)) = env_connection() else {
@@ -304,8 +308,8 @@ mod tests {
         }
     }
 
-    /// A query that will not COMPILE is an error here — the fan-out layer is what
-    /// turns it into data.
+    // A query that will not COMPILE is an error here — the fan-out layer is what
+    // turns it into data.
     #[tokio::test]
     async fn a_binding_error_surfaces_as_a_query_error() {
         let Some((cfg, store, _)) = env_connection() else {

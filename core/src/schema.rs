@@ -1,7 +1,7 @@
-//! `sys.*` schema introspection — the object tree's data layer (beads rqb.1 +
-//! rqb.3). Enumerates databases / tables / views / columns and derives each
-//! column's **canonical** type string, plus an in-memory [`SchemaCache`] with an
-//! invalidate seam for the Refresh action (rqb.5).
+//! `sys.*` schema introspection — the object tree's data layer. Enumerates
+//! databases / tables / views / columns and derives each column's **canonical**
+//! type string, plus an in-memory [`SchemaCache`] with an invalidate seam for the
+//! Refresh action.
 //!
 //! Driver stays behind `core` (`CLAUDE.md`): every query goes through
 //! [`crate::executor::run`] and every public item returns core-owned serde
@@ -19,6 +19,9 @@
 //! embedded as escaped SQL string literals via [`quote_literal`] — they are
 //! *values* compared against `sys.*.name`, injection-safe once single-quotes are
 //! doubled.
+
+// The object tree's data layer is beads rqb.1 (databases/tables/views) and rqb.3
+// (columns); the cache's invalidate seam is rqb.5, the Refresh action.
 
 use std::collections::HashMap;
 use std::future::Future;
@@ -39,7 +42,7 @@ use crate::session::SessionCache;
 // ---------------------------------------------------------------------------
 
 /// A database on the server. `state_desc` (`"ONLINE"`, `"OFFLINE"`, …) lets the
-/// tree grey non-`ONLINE` databases (rqb.4).
+/// tree grey non-`ONLINE` databases.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DatabaseInfo {
@@ -95,7 +98,7 @@ const SQL_LIST_VIEWS: &str = "SELECT s.name AS schema_name, v.name AS view_name 
      JOIN sys.schemas AS s ON s.schema_id = v.schema_id \
      ORDER BY s.name, v.name;";
 
-/// The rqb.3 column query. Schema/table are embedded as escaped `N'…'` literals
+/// The column query. Schema/table are embedded as escaped `N'…'` literals
 /// (see [`quote_literal`]) because `run` has no bind params. PK/FK come from
 /// derived tables that yield at most one row per column (PK: one PK index per
 /// table; FK: `DISTINCT` collapses a column that appears in several FKs), so the
@@ -359,28 +362,30 @@ pub async fn list_columns(
 // §6. The cache
 // ---------------------------------------------------------------------------
 
-/// In-memory schema cache with an invalidate seam (rqb.5 Refresh). Interior
-/// mutability via `std::sync::Mutex`; keyed by [`ConnectionId`] (+ the db /
-/// schema / table tuple). Fetch-or-return-cached; a first-call race may
-/// double-fetch — acceptable for a single-user tool.
 /// Cache key for a database-scoped list (tables/views): connection + database.
 type DbKey = (ConnectionId, String);
 /// Cache key for a column list: connection + database + schema + table.
 type ColumnKey = (ConnectionId, String, String, String);
 
+/// In-memory schema cache with an invalidate seam for Refresh. Interior
+/// mutability via `std::sync::Mutex`; keyed by [`ConnectionId`] (+ the db /
+/// schema / table tuple). Fetch-or-return-cached; a first-call race may
+/// double-fetch — acceptable for a single-user tool.
 #[derive(Default)]
 pub struct SchemaCache {
     databases: Mutex<HashMap<ConnectionId, Vec<DatabaseInfo>>>,
     tables: Mutex<HashMap<DbKey, Vec<TableInfo>>>,
     views: Mutex<HashMap<DbKey, Vec<ViewInfo>>>,
     columns: Mutex<HashMap<ColumnKey, Vec<ColumnInfo>>>,
-    /// Reused live connections for introspection (billz-lpb) — one login per
-    /// connection amortized across expands, instead of one per `sys.*` query.
+    /// Reused live connections for introspection — one login per connection
+    /// amortized across expands, instead of one per `sys.*` query.
+    // Connection reuse is bead billz-lpb.
     sessions: SessionCache,
     /// Bumped by every cache-clearing op; `get_or_fetch` refuses to write a
-    /// result fetched across a bump (rqb.7 — no stale re-cache after a mid-fetch
-    /// edit/Refresh). One global counter: a cross-connection false invalidation
-    /// just costs a harmless re-fetch on this single-user tool.
+    /// result fetched across a bump, so a mid-fetch edit or Refresh cannot be
+    /// followed by a stale re-cache. One global counter: a cross-connection false
+    /// invalidation just costs a harmless re-fetch on this single-user tool.
+    // The no-stale-re-cache guarantee is bead rqb.7.
     generation: AtomicU64,
 }
 
@@ -490,7 +495,7 @@ impl SchemaCache {
         .await
     }
 
-    /// Clear every cached map — the Refresh seam (rqb.5).
+    /// Clear every cached map — the Refresh seam.
     pub fn invalidate(&self) {
         self.generation.fetch_add(1, Ordering::Release); // rqb.7: bump BEFORE clearing
         self.databases.lock().unwrap().clear();
