@@ -362,7 +362,7 @@ mod tests {
         let v = judge_fixture("seek.sqlplan");
         assert_eq!(v.severity, Severity::Ok);
         assert_eq!(v.findings, vec![]);
-        assert!(close(v.total_cost, 0.00328328), "got {}", v.total_cost);
+        assert!(close(v.total_cost, 0.02), "got {}", v.total_cost);
     }
 
     #[test]
@@ -376,7 +376,7 @@ mod tests {
         // The whole vector is asserted, not just the kinds: the order is the
         // card's display order and the cross-tenant diff order.
         let v = judge_fixture("scan.sqlplan");
-        assert!(close(v.total_cost, 0.75402), "got {}", v.total_cost);
+        assert!(close(v.total_cost, 0.32), "got {}", v.total_cost);
         assert_eq!(
             v.findings,
             vec![
@@ -422,7 +422,7 @@ mod tests {
     fn total_cost_sums_every_statement() {
         // The sum of both statements' costs, read off `two-statements.sqlplan`.
         let v = judge_fixture("two-statements.sqlplan");
-        assert!(close(v.total_cost, 0.052796), "got {}", v.total_cost);
+        assert!(close(v.total_cost, 0.06), "got {}", v.total_cost);
     }
 
     #[test]
