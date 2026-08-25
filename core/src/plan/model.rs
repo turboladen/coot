@@ -99,11 +99,11 @@ pub enum PlanWarning {
     /// A type conversion that can prevent index usage — the classic LLM-SQL
     /// smell.
     ///
-    /// ONE opaque expression, deliberately: the design spec's illustrative
-    /// `{ column, from, to }` sketch (§4.3) does not match the wire. ShowPlanXML
-    /// gives a single `PlanAffectingConvert/@Expression` string
-    /// (`CONVERT_IMPLICIT(int,[Orders].[OrderNumber],0)`); splitting it would
-    /// mean parsing that string. Do not "restore" the three-field shape.
+    /// ONE opaque expression, deliberately. ShowPlanXML gives a single
+    /// `PlanAffectingConvert/@Expression` string
+    /// (`CONVERT_IMPLICIT(int,[Orders].[OrderNumber],0)`), so a tidier
+    /// `{ column, from, to }` shape would mean parsing that string apart. Do not
+    /// "restore" the three-field version.
     ImplicitConversion {
         expression: String,
         /// The server's own `@ConvertIssue`, passed through verbatim. NOT every
@@ -135,10 +135,10 @@ pub enum Severity {
 /// consumers group and filter by this, so two conclusions that a reader would
 /// act on differently must not share a variant. `SpillToTempDb` and
 /// `UnmatchedIndex` exist for exactly that reason — folding them into
-/// `ExpensivePlan`/`MissingIndex` (the design spec §4.3's illustrative list,
-/// which ends in a `…`) would put two unrelated meanings behind one key: a card
-/// would show two `ExpensivePlan` findings, one the batch's total cost and one a
-/// tempdb spill, with nothing to tell them apart.
+/// `ExpensivePlan`/`MissingIndex` would put two unrelated meanings behind one
+/// key: a consumer grouping by kind would list two `ExpensivePlan` findings, one
+/// the batch's total cost and one a tempdb spill, with nothing to tell them
+/// apart.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum FindingKind {
@@ -337,7 +337,7 @@ mod tests {
 
     #[test]
     fn finding_kind_serializes_to_the_strings_the_ui_switches_on() {
-        // Every variant, because these are the keys the verdict card groups by.
+        // Every variant, because these are the keys a consumer groups findings by.
         for (variant, expected) in [
             (FindingKind::LargeScan, r#""largeScan""#),
             (FindingKind::MissingIndex, r#""missingIndex""#),

@@ -1,6 +1,6 @@
 //! On-disk saved-query library — a JSON file of `Vec<SavedQuery>`.
 //!
-//! Pure Rust, headless-testable (`PLAN.md` §3): `app` supplies only the path
+//! Pure Rust, headless-testable: `app` supplies only the path
 //! (Tauri's app-config dir, e.g. `saved_queries.json`) and this module owns all
 //! persistence. Mirrors [`crate::connection_store`] semantics exactly.
 //!
@@ -8,7 +8,7 @@
 //! `connection_store`'s no-password invariant. The "secrets never on disk"
 //! invariant (`CLAUDE.md`) is about connection *passwords* → macOS Keychain. Param
 //! values are query inputs (a customer id, a date, an `ORDER BY` clause), not
-//! credentials, and remember-last-value (`PLAN.md` §5) *requires* them on disk.
+//! credentials, and remembering a param's last value *requires* them on disk.
 //! The `last_value_persists_to_disk` test asserts this on purpose.
 //!
 //! No in-memory cache, no interior mutability: single user, single process ⇒ every

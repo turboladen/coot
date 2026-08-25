@@ -4,7 +4,7 @@
 //! (`mssql_client::Error`, `keyring::Error`, …). Backends are stringified at
 //! their adapter — the executor for the driver, `KeychainSecretStore` for
 //! keyring — so the public error API never names a backend type. That is what
-//! keeps a bad-driver-day a `core`-only change (`PLAN.md` §3, `CLAUDE.md`).
+//! keeps a bad-driver-day a `core`-only change (`CLAUDE.md`).
 
 use thiserror::Error;
 
@@ -16,7 +16,7 @@ pub type Result<T> = std::result::Result<T, CoreError>;
 /// `#[non_exhaustive]` so later beads (e.g. the executor's `Query(String)`)
 /// can add variants without a breaking change. The executor MUST stringify
 /// `mssql_client::Error` into its own variant — never `#[from]` — or the driver
-/// type leaks into this public enum and breaks the §3 invariant.
+/// type leaks into this public enum and breaks the driver-boundary invariant.
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum CoreError {
@@ -30,7 +30,7 @@ pub enum CoreError {
     /// A query or statement failed on the server or in the driver. The driver's
     /// `mssql_client::Error` is stringified here by the executor — never
     /// `#[from]` — so the public error surface never names a driver type
-    /// (`PLAN.md` §3, `CLAUDE.md`).
+    /// (`CLAUDE.md`).
     #[error("query error: {0}")]
     Query(String),
     /// A **transport-level** failure — a dropped/closed socket, TLS, or a TDS
@@ -62,7 +62,7 @@ pub enum CoreError {
     /// **pre-flight** user error (it happens in `parse_bind_value` before any
     /// server contact), distinct from a driver/`Query` failure. Note: Money
     /// range/scale errors are NOT caught here; they surface as `Query` at send
-    /// time (`param_bind` / `PLAN.md` §5).
+    /// time (see `param_bind`).
     #[error("parameter error: {0}")]
     Param(String),
 }

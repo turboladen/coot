@@ -1,5 +1,5 @@
 //! Execution context — the database is a first-class **execution input**, not
-//! spliced SQL and not baked into the connection (`PLAN.md` §4).
+//! spliced SQL and not baked into the connection.
 //!
 //! Shaped so future cross-tenant fan-out is a loop, not a rewrite:
 //! `for db in dbs { run(ctx.clone().with_database(db), …) }`.
@@ -24,7 +24,7 @@ impl ExecutionContext {
     }
 
     /// Target a specific database. Returns `Self` by value — the fan-out seam
-    /// (`PLAN.md` §4): clone a base context and rebind the database per tenant.
+    /// clone a base context and rebind the database per tenant.
     pub fn with_database(mut self, database: impl Into<String>) -> Self {
         self.database = Some(database.into());
         self
@@ -39,9 +39,9 @@ impl ExecutionContext {
     /// identifier safely bracket-quoted (`]` → `]]`). `None` when no database is
     /// pinned (stay on the connection default).
     ///
-    /// Identifier quoting lives here, in context, because it is the cleanest
-    /// headless-testable proof that "database is context, not string-spliced
-    /// SQL." The executor must call this — never hand-splice `USE`.
+    /// Identifier quoting lives here so that the crate has exactly one
+    /// implementation of it, and therefore one place that has to get `]]` right.
+    /// The executor must call this — never hand-splice a `USE`.
     pub fn use_statement(&self) -> Option<String> {
         self.database
             .as_deref()

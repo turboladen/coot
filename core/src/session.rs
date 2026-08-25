@@ -4,7 +4,7 @@
 //!
 //! One of the three modules (with `executor` and `plan::capture`) where
 //! `mssql-client` is used — no driver type appears in this module's public API
-//! (`PLAN.md` §3, `CLAUDE.md`). Ops on a single connection serialize behind a
+//! (`CLAUDE.md`). Ops on a single connection serialize behind a
 //! `tokio::Mutex` (TDS is strictly one-request-at-a-time; no MARS), which is
 //! correct, not a limitation.
 

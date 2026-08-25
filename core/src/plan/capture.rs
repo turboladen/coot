@@ -33,11 +33,11 @@ const SHOWPLAN_OFF: &str = "SET SHOWPLAN_XML OFF";
 /// on-demand call rather than a field on
 /// [`PlanCapture`](crate::plan::model::PlanCapture).
 ///
-/// The query is COMPILED, not run — but state that dependency honestly rather
-/// than as a promise: `sql` never executes *provided* SHOWPLAN actually engaged,
-/// and what guarantees that is `run_batch(…, SHOWPLAN_ON)` returning `Err`
-/// whenever it does not. A login lacking SHOWPLAN permission is the case worth
-/// proving, and it is not yet proven against a real server.
+/// **If SHOWPLAN does not engage, `sql` runs.** The query is compiled rather
+/// than executed for exactly as long as `SET SHOWPLAN_XML ON` is in effect, and
+/// the only thing holding that up is `run_batch(…, SHOWPLAN_ON)` returning `Err`
+/// whenever the statement does not take. A login lacking SHOWPLAN permission is
+/// the case worth proving, and it has not been proven against a real server.
 // Bead billz-bkm verifies the no-SHOWPLAN-permission case against a restricted
 // login. Until it runs, the `Err` guarantee above is reasoned, not observed.
 pub async fn capture_xml(

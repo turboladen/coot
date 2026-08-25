@@ -1,4 +1,4 @@
-//! The param substitution model's driver-free half (`PLAN.md` §5).
+//! The param substitution model's driver-free half.
 //!
 //! Two mechanisms, decided by a param's `sql_type` discriminator:
 //!   - `Some(SqlType)` → a **bind** param. Its `&str` value is parsed into a
@@ -30,7 +30,7 @@ use crate::query::SqlType;
 /// `mssql_client::SqlValue` variants, but built only from `core`'s own deps
 /// (`chrono`/`rust_decimal`/`uuid`), never the driver. `executor.rs` maps this to
 /// the driver's `SqlValue` in one place (`sql_value_from_bind`), keeping the
-/// driver confined to that one module (`PLAN.md` §3, `CLAUDE.md`).
+/// driver confined to that one module (`CLAUDE.md`).
 #[derive(Debug, Clone, PartialEq)]
 pub enum BindValue {
     Int(i32),
@@ -48,7 +48,7 @@ pub enum BindValue {
 /// the already-resolved concrete value.
 ///
 /// `sql_type` is the discriminator — `Some` → bind, `None` → raw-text. `value` is
-/// non-optional: by execute time every param has a concrete value (`PLAN.md` §5).
+/// non-optional: by execute time every param has a concrete value.
 // "Unset" handling is d28.3's concern and scope resolution is d28.4's, which is
 // why this deliberately drops `Param`'s `last_value` and `scope` fields.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

@@ -28,9 +28,11 @@ pub const LARGE_SCAN_ROWS_READ: f64 = 100_000.0;
 /// Rows read per row returned at or above which a large scan is mostly waste,
 /// which promotes it from `Caution` to `Problem`.
 ///
-/// This ratio does not trigger a finding on its own; the volume gate runs first.
+/// This ratio does not trigger a finding on its own. A scan must first clear
+/// [`LARGE_SCAN_ROWS_READ`]; only then does the ratio decide its severity.
 // NOT fixture-constrained. Two captured scans exceed this ratio and stay silent
-// only because the volume gate runs first, so lowering it breaks no test. Both
+// only because `LARGE_SCAN_ROWS_READ` screens them out first, so lowering it
+// breaks no test. Both
 // are ordinary row-goal and selective-filter shapes with nothing wrong with
 // them, which is exactly why the ratio cannot be the trigger. Hand-built tests
 // alone hold it up: billz-7u0.
@@ -74,8 +76,8 @@ const BENIGN_CONVERT_ISSUE: &str = "Cardinality Estimate";
 /// Severity is the maximum severity of the findings, `Ok` when there are none —
 /// `Severity` derives `Ord` as `Ok < Caution < Problem` for exactly this.
 ///
-/// Findings come out in a DETERMINISTIC order, which is the verdict card's
-/// display order and the order two tenants' verdicts diff against each other:
+/// Findings come out in a DETERMINISTIC order, which is the order a consumer
+/// displays them in and the order two tenants' verdicts diff against each other:
 /// per statement in document order — missing indexes, then large scans in
 /// operator pre-order, then warnings in [`PlanStatement::all_warnings`] order —
 /// and finally the one batch-level cost finding. It is not a priority ranking;
@@ -374,7 +376,7 @@ mod tests {
         // here and looks perfectly healthy doing it.
         //
         // The whole vector is asserted, not just the kinds: the order is the
-        // card's display order and the cross-tenant diff order.
+        // display order and the cross-tenant diff order.
         let v = judge_fixture("scan.sqlplan");
         assert!(close(v.total_cost, 0.32), "got {}", v.total_cost);
         assert_eq!(
@@ -732,7 +734,7 @@ mod tests {
 
     #[test]
     fn finding_order_is_deterministic() {
-        // The card's display order and the cross-tenant diff order, pinned so it
+        // The display order and the cross-tenant diff order, pinned so it
         // cannot drift silently: missing indexes, then scans in tree pre-order,
         // then warnings, then the batch-level cost finding last.
         let mut root = node("Table Scan", 1.0, Some(5_000_000.0));
