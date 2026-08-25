@@ -1,11 +1,40 @@
 //! Capture real ShowPlanXML documents and write them as `.sqlplan` fixtures.
 //!
-//! **Why this exists.** `core::plan`'s parser is tested offline against
-//! checked-in fixtures. Hand-authored ShowPlanXML is a trap: the tests all pass
-//! while the parser returns empty plans against a real server, because one
-//! attribute name differs. So the fixtures must be genuine server output — and
-//! only a machine that can reach the DEV box can produce them. Run this there,
-//! commit what it writes, and the parser gets developed against reality.
+//! # Using it
+//!
+//! Capture every fixture — this is the one you want:
+//!
+//!     just dump-plans
+//!
+//! To add a fixture, put its SQL in [`FIXTURES`] below and run that again.
+//!
+//! Passing a query as arguments is refused. That form exists only to print the
+//! instructions above; see [`permit`] for why.
+//!
+//! It only works on a machine that can reach the DEV box, and needs the same
+//! `MSSQL_*` variables as the probes beside it (fish):
+//!
+//!     set -x MSSQL_SERVER   …
+//!     set -x MSSQL_USER     …
+//!     set -x MSSQL_PASSWORD (op read "op://…")
+//!     set -x MSSQL_DATABASE …
+//!
+//! **Read every file it writes before committing it.** The server sends each
+//! document as a single line — `scan.sqlplan` is 147KB of it — so
+//! `just dump-plans` pretty-prints them afterwards via `just fmt-plans`, which
+//! is what makes reading them possible at all.
+//!
+//! **Nothing it runs executes.** `SET SHOWPLAN_XML ON` makes the server compile
+//! each query and hand back the plan without running it.
+//!
+//! # Why this exists
+//!
+//! `core::plan`'s parser is tested offline against checked-in fixtures.
+//! Hand-authored ShowPlanXML is a trap: the tests all pass while the parser
+//! returns empty plans against a real server, because one attribute name
+//! differs. So the fixtures must be genuine server output — and only a machine
+//! that can reach the DEV box can produce them. Run this there, commit what it
+//! writes, and the parser gets developed against reality.
 //!
 //! # These fixtures go into git. Read this before changing the queries.
 //!
@@ -14,63 +43,50 @@
 //! name throughout — even for a query that only reads `sys.*`. Committing work
 //! database, table, or column names to this repo is not acceptable.
 //!
-//! Three independent defenses, because one is not enough:
+//! Four independent defenses, because one is not enough:
 //!
-//! 1. **Everything is captured against [`FIXTURE_DB`] (`master`), never
-//!    `MSSQL_DATABASE`.** Combined with `sys.*`-only queries, every identifier
-//!    in the output is a Microsoft-standard name (`master`, `sys`, `dbo`). The
-//!    sensitive value is never captured in the first place, which beats
-//!    scrubbing it out afterwards.
-//! 2. **Every document is rewritten by [`sanitize`] before anything else sees
-//!    it.** The first two defenses cover NAMES, and a name is all
-//!    [`scan_for_secrets`] can search for. A plan document is also a measurement
-//!    of the machine that compiled it — `Build` is the exact patch level,
-//!    `LastUpdate` timestamps the instance's statistics,
+//! 1. **No tenant database is ever connected to.** Every query runs against
+//!    [`FIXTURE_DB`] (`master`), never `MSSQL_DATABASE`. Together with
+//!    `sys.*`-only queries that makes every identifier in the output a
+//!    Microsoft-standard name (`master`, `sys`, `dbo`). The sensitive value is
+//!    never captured in the first place, which beats scrubbing it out
+//!    afterwards.
+//! 2. **No measurement of the server survives.** A plan is also a measurement of
+//!    the machine that compiled it: `Build` is the exact patch level,
+//!    `LastUpdate` timestamps its statistics, and
 //!    `EstimatedAvailableMemoryGrant` / `EstimatedPagesCached` /
 //!    `EstimatedAvailableDegreeOfParallelism` / `MaxCompileMemory` describe its
-//!    memory, buffer pool and CPU, and every row count and cost measures the
-//!    catalog it ran against. On a public repo that is server fingerprinting.
+//!    memory, buffer pool and CPU, while every row count and cost measures the
+//!    catalog it ran against. On a public repo that is server fingerprinting, so
 //!    [`sanitize`] strips those attributes and replaces every measurement with a
 //!    synthetic round value.
-//! 3. **Nothing is written until it passes [`scan_for_secrets`].** Each document
-//!    is searched for the configured server, username, and database values; a
-//!    hit aborts the whole run without touching the filesystem. This is the net
-//!    under the ad-hoc mode below, where a careless query could target a real
-//!    database.
+//! 3. **No value from a query nobody reviewed reaches a file.** A plan embeds
+//!    the literal values of the SQL it explains — `12345` in a
+//!    `WHERE CustomerId = 12345` — across the attributes in
+//!    [`LITERAL_ATTRIBUTES`], `StatementText` above all, which is the query
+//!    written out in full. The queries in [`FIXTURES`] are in this file and were
+//!    read before they were committed, so their values are ours and they are
+//!    captured as they are. A query handed in as an argument was read by nobody,
+//!    so [`permit`] refuses it — and refuses all of them, because
+//!    `StatementText` is on every statement a server returns.
+//! 4. **Nothing is written until it passes [`scan_for_secrets`].** Each document
+//!    is searched for the configured server, username and database values; a hit
+//!    aborts the whole run without touching the filesystem.
 //!
 //! Cases needing contrived shapes (missing-index suggestions, implicit
 //! conversions) need a scratch table. Create it in `master` or `tempdb` with
 //! generic column names — never in a tenant database.
 //!
-//! **None of the three reads the document for you.** [`sanitize`] removes what
-//! it is told to name, so a server version that invents a new measurement
-//! attribute passes it straight through, and literal values from the SQL being
-//! explained survive in `ConstValue` and `ScalarString` by design. Read every
-//! file before committing it.
-//!
-//! **Nothing it runs executes.** `SET SHOWPLAN_XML ON` makes the server compile
-//! each query and hand back the plan without running it.
+//! **None of the four reads the document for you.** [`sanitize`] removes only
+//! what it is told to name, so a measurement attribute a future server version
+//! invents passes straight through. [`literals`] shows you values and judges
+//! none of them — it cannot tell a customer id from a row limit. Read every file
+//! before committing it.
 //!
 //! Unlike the two spike probes beside it (`typed_probe`, `dynamic_dump`), which
 //! predate the `core` boundary and drive `mssql-client` directly, this one goes
 //! through `core`'s own `capture_plan_xml`, so it exercises the real capture
 //! path including the `USE`-before-`SHOWPLAN` ordering.
-//!
-//! Run it (fish), same env vars as the other probes:
-//!   set -x MSSQL_SERVER   …
-//!   set -x MSSQL_USER     …
-//!   set -x MSSQL_PASSWORD (op read "op://…")
-//!   set -x MSSQL_DATABASE …
-//!   just dump-plans
-//!
-//! `just dump-plans` pretty-prints the results via `just fmt-plans` afterwards.
-//! The server sends each document as a single line — `scan.sqlplan` is 147KB of
-//! it — which is unreviewable, and these files must be *read* before they are
-//! committed. The secret scan below is a net, not a substitute for looking.
-//!
-//! Or capture one ad-hoc query instead of the built-in set (still forced to
-//! `master`, still secret-scanned):
-//!   cargo run -p coot-core --example dump_plan -- my-name "SELECT 1"
 
 use std::env;
 use std::ops::Range;
@@ -95,8 +111,11 @@ const FIXTURE_DB: &str = "master";
 // alone would refuse all five.
 const ALLOWED_DATABASES: &[&str] = &[FIXTURE_DB, "mssqlsystemresource"];
 
-/// The built-in set. Each exercises a different shape the parser must handle.
-/// `sys.*` only — see the module doc before adding one.
+/// Every query `just dump-plans` captures, and the fixture filename each one
+/// writes. Add a query here to add a fixture.
+///
+/// Each exercises a different plan shape the parser must handle. Read `sys.*`
+/// only, and read the module doc before adding one.
 const FIXTURES: &[(&str, &str)] = &[
     // Single operator, no children — the simplest possible tree.
     ("seek", "SELECT name FROM sys.objects WHERE object_id = 1"),
@@ -136,16 +155,9 @@ async fn main() {
     let ctx = ExecutionContext::new(cfg.id.clone()).with_database(FIXTURE_DB);
 
     let args: Vec<String> = env::args().skip(1).collect();
-    let work: Vec<(String, String)> = match args.as_slice() {
-        [name, sql] => vec![(name.clone(), sql.clone())],
-        [] => FIXTURES
-            .iter()
-            .map(|(n, s)| ((*n).to_string(), (*s).to_string()))
-            .collect(),
-        _ => {
-            eprintln!("usage: dump_plan [<fixture-name> <sql>]");
-            std::process::exit(1);
-        }
+    let Some((work, source)) = plan_work(&args) else {
+        eprintln!("usage: dump_plan [<fixture-name> <sql>]");
+        std::process::exit(1);
     };
 
     // Capture EVERYTHING first and secret-scan it before writing a single file.
@@ -170,6 +182,20 @@ async fn main() {
                          Nothing was written. Capture against {FIXTURE_DB} with sys.* objects \
                          only — see this example's module doc."
                     );
+                    std::process::exit(1);
+                }
+                // Last gate before the write, and the only one that can refuse a
+                // document nothing is wrong with — an ad-hoc query's literals are
+                // its own SQL, which only a human can vouch for.
+                let found = match literals(&xml) {
+                    Ok(found) => found,
+                    Err(e) => {
+                        eprintln!("ABORTED: reading '{name}' failed: {e}\nNothing was written.");
+                        std::process::exit(1);
+                    }
+                };
+                if let Err(refusal) = permit(source, &found) {
+                    eprintln!("{refusal}");
                     std::process::exit(1);
                 }
                 for node in &report.inversions_dropped {
@@ -218,6 +244,145 @@ async fn main() {
     );
 }
 
+// ------------------------------------------------------------- literal values
+
+/// Every attribute that can carry a literal value out of the SQL being
+/// explained — the `12345` in a `WHERE CustomerId = 12345`.
+// A DENYLIST of ATTRIBUTES, with both weaknesses that implies: an attribute a
+// future server invents is reported by nothing, and element text and CDATA are
+// scanned by neither this nor `sanitize`. ShowPlanXML is attribute-only in
+// practice, and an ad-hoc capture is refused on `StatementText` regardless.
+//
+// `StatementText` is the load-bearing entry — the query verbatim, so a literal
+// anywhere in the SQL is in it however the optimizer treats the value. It is
+// REPORTED, never rewritten: `core::plan::parse` reads it into
+// `PlanStatement::text`, and `Expression` carries the implicit-conversion
+// evidence; tests assert both exactly.
+const LITERAL_ATTRIBUTES: &[&str] = &[
+    "StatementText",
+    "ParameterizedText",
+    "ConstValue",
+    "ScalarString",
+    "ParameterCompiledValue",
+    "ParameterRuntimeValue",
+    "Expression",
+];
+
+/// What to capture, and where its SQL came from: no arguments means every query
+/// in [`FIXTURES`], and a name-and-query pair means that one query. `None` for
+/// any other number of arguments, which is a usage error.
+// Separate from `main` so the pairing of mode to `Source` is testable. Getting
+// it backwards labels an ad-hoc capture `Source::BuiltIn` and opens the gate on
+// exactly the SQL it exists to stop, which no test of `permit` alone can see —
+// every one of those constructs its own `Source`.
+fn plan_work(args: &[String]) -> Option<(Vec<(String, String)>, Source<'_>)> {
+    match args {
+        [name, sql] => Some((
+            vec![(name.clone(), sql.clone())],
+            Source::AdHoc { name, sql },
+        )),
+        [] => Some((
+            FIXTURES
+                .iter()
+                .map(|(n, s)| ((*n).to_string(), (*s).to_string()))
+                .collect(),
+            Source::BuiltIn,
+        )),
+        _ => None,
+    }
+}
+
+/// One literal a document would commit, and the attribute carrying it.
+#[derive(Debug, PartialEq, Eq)]
+struct Literal {
+    attribute: &'static str,
+    value: String,
+}
+
+/// Where a capture's SQL came from, and so whether anyone has read it.
+#[derive(Clone, Copy)]
+enum Source<'a> {
+    /// A query from [`FIXTURES`], which lives in this file and was read before
+    /// it was committed.
+    BuiltIn,
+    /// A query handed in as a command-line argument, which nobody has read.
+    AdHoc { name: &'a str, sql: &'a str },
+}
+
+/// Every distinct literal in `xml`, in document order.
+///
+/// Distinct on the pair of attribute and value, so one value reported by two
+/// different attributes appears twice — which is the point, since it shows how
+/// many ways the same value reaches the file.
+///
+/// # Errors
+///
+/// Returns `Err` if the document is not well-formed XML.
+fn literals(xml: &str) -> Result<Vec<Literal>, String> {
+    let doc = Document::parse(xml).map_err(|e| format!("the plan XML did not parse: {e}"))?;
+    let mut found: Vec<Literal> = Vec::new();
+    for n in doc.descendants().filter(Node::is_element) {
+        for attribute in LITERAL_ATTRIBUTES {
+            let Some(value) = n.attribute(*attribute) else {
+                continue;
+            };
+            if !found
+                .iter()
+                .any(|l| l.attribute == *attribute && l.value == value)
+            {
+                found.push(Literal {
+                    attribute,
+                    value: value.to_string(),
+                });
+            }
+        }
+    }
+    Ok(found)
+}
+
+/// Decide whether a capture may be written, given the literal values it carries.
+///
+/// A capture of a query from [`FIXTURES`] is always permitted and its literals
+/// are not consulted: that SQL is in this file and was read before it was
+/// committed, so its values are ours. A capture of a query handed in as a
+/// command-line argument is refused if it carries any literal — which is all of
+/// them, since a server returns `StatementText` on every statement.
+///
+/// # Errors
+///
+/// The `Err` is the message to print: every literal found, and the line to add
+/// to [`FIXTURES`] to capture the same query from this file instead.
+// No override flag. An escape hatch does not stop someone removing this guard
+// under time pressure and leaves no diff behind when they use it; making the
+// correct path cheaper than the workaround does. Hence a refusal that is a
+// recipe rather than a complaint.
+fn permit(source: Source, found: &[Literal]) -> Result<(), String> {
+    let Source::AdHoc { name, sql } = source else {
+        return Ok(());
+    };
+    if found.is_empty() {
+        return Ok(());
+    }
+
+    let mut message = format!(
+        "ABORTED: the plan for '{name}' embeds {} literal value(s) from its SQL.\n\n",
+        found.len()
+    );
+    for l in found {
+        message.push_str(&format!("  {:<22}  {}\n", l.attribute, l.value));
+    }
+    message.push_str(
+        "\nNothing was written. scan_for_secrets cannot judge these: it searches for the\n\
+         configured server, user and database, and a literal is none of those.\n\n\
+         A fixture's SQL belongs in source, where it is reviewed before it is committed\n\
+         and re-runnable after a driver bump. Add it to FIXTURES in\n\
+         core/examples/dump_plan.rs:\n\n",
+    );
+    message.push_str(&format!("    ({name:?}, {sql:?}),\n\n"));
+    message.push_str("then run `just dump-plans` with no arguments.");
+    Err(message)
+}
+
 /// Values that must never appear in a committed fixture.
 struct Secrets {
     server: String,
@@ -232,9 +397,10 @@ struct Secrets {
 /// secret, and a very short value would false-positive on ordinary XML text.
 /// The server value is also split on `,`/`:` so a `host,1433` form is matched on
 /// the host alone.
-// Only CONFIGURED values are searched for. A literal carried in from the query
-// being explained — `ConstValue`, `ScalarString` — is a name-shaped exposure
-// that neither this nor `sanitize` covers today; billz-02d takes it up.
+// Only CONFIGURED values are searched for, so a literal carried in from the
+// query being explained is invisible here — this cannot recognize a customer id
+// it was never told about. `literals` and `permit` are what cover that, by
+// refusing the ad-hoc capture rather than by searching.
 fn scan_for_secrets(xml: &str, secrets: &Secrets) -> Option<String> {
     let haystack = xml.to_ascii_lowercase();
     let host = secrets
@@ -1630,6 +1796,309 @@ mod tests {
                 .contains("4 operators, not 5"),
             "a lost operator must not pass"
         );
+    }
+
+    // ------------------------------------------------------ literal values
+
+    // Every literal-bearing attribute on one document, so a check that drops one
+    // from the list fails here rather than in a capture.
+    const EVERY_LITERAL: &str = concat!(
+        r#"<ShowPlanXML xmlns="http://schemas.microsoft.com/sqlserver/2004/07/showplan"><BatchSequence><Batch><Statements>"#,
+        r#"<StmtSimple StatementText="SELECT 1 WHERE x = 11" ParameterizedText="(@1 int)SELECT 1 WHERE x = @1" StatementSubTreeCost="1" StatementEstRows="1"><QueryPlan>"#,
+        r#"<Warnings><PlanAffectingConvert ConvertIssue="Cardinality Estimate" Expression="CONVERT(int,[t].[c],33)"/></Warnings>"#,
+        r#"<RelOp NodeId="0" PhysicalOp="Table Scan" LogicalOp="Table Scan" EstimateRows="1" EstimatedTotalSubtreeCost="1">"#,
+        r#"<TableScan><Predicate><ScalarOperator ScalarString="[t].[c]=(44)"><Const ConstValue="(55)"/></ScalarOperator></Predicate></TableScan>"#,
+        r#"</RelOp><ParameterList><ColumnReference Column="@1" ParameterCompiledValue="(66)" ParameterRuntimeValue="(77)"/></ParameterList>"#,
+        r#"</QueryPlan></StmtSimple></Statements></Batch></BatchSequence></ShowPlanXML>"#,
+    );
+
+    fn found_in(xml: &str) -> Vec<Literal> {
+        literals(xml).expect("must parse")
+    }
+
+    fn values_from(found: &[Literal], attribute: &str) -> Vec<String> {
+        found
+            .iter()
+            .filter(|l| l.attribute == attribute)
+            .map(|l| l.value.clone())
+            .collect()
+    }
+
+    #[test]
+    fn every_literal_channel_is_reported() {
+        // The expected names are written out rather than read from
+        // LITERAL_ATTRIBUTES. Looping over the list under test would delete this
+        // test's own coverage along with any entry someone removed from it.
+        let found = found_in(EVERY_LITERAL);
+        let mut reported: Vec<&str> = found.iter().map(|l| l.attribute).collect();
+        reported.sort_unstable();
+        reported.dedup();
+        assert_eq!(
+            reported,
+            vec![
+                "ConstValue",
+                "Expression",
+                "ParameterCompiledValue",
+                "ParameterRuntimeValue",
+                "ParameterizedText",
+                "ScalarString",
+                "StatementText",
+            ]
+        );
+
+        // One value unique to each channel, so an attribute that is found but
+        // reported empty still fails.
+        for value in [
+            "x = 11",
+            "(@1 int)",
+            "(55)",
+            "[t].[c]=(44)",
+            "(66)",
+            "(77)",
+            ",33)",
+        ] {
+            assert!(
+                found.iter().any(|l| l.value.contains(value)),
+                "{value} was not reported: {found:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_literal_attribute_list_is_pinned() {
+        // Separate from the test above and asserting the constant directly: an
+        // attribute added to the list without a specimen in EVERY_LITERAL would
+        // otherwise be silently uncovered.
+        assert_eq!(
+            LITERAL_ATTRIBUTES,
+            &[
+                "StatementText",
+                "ParameterizedText",
+                "ConstValue",
+                "ScalarString",
+                "ParameterCompiledValue",
+                "ParameterRuntimeValue",
+                "Expression",
+            ]
+        );
+    }
+
+    #[test]
+    fn a_predicate_value_is_reported_from_the_statement_text() {
+        // THE regression. `StatementText` is the query verbatim, so it carries a
+        // literal whether or not the optimizer also lands one in a `Const` —
+        // which is why trimming the list back to Const/ScalarString/Parameter
+        // would leave a file that looks checked and is not.
+        let xml = EVERY_LITERAL.replace(
+            r#"StatementText="SELECT 1 WHERE x = 11""#,
+            r#"StatementText="SELECT Name FROM Payroll WHERE CustomerId = 12345""#,
+        );
+        let found = found_in(&xml);
+        assert!(
+            values_from(&found, "StatementText")
+                .iter()
+                .any(|v| v.contains("12345")),
+            "the predicate value was not reported from StatementText: {found:?}"
+        );
+    }
+
+    #[test]
+    fn literals_are_distinct_and_in_document_order() {
+        let xml = concat!(
+            r#"<ShowPlanXML xmlns="http://schemas.microsoft.com/sqlserver/2004/07/showplan">"#,
+            r#"<Const ConstValue="(1)"/><Const ConstValue="(2)"/><Const ConstValue="(1)"/>"#,
+            r#"<ScalarOperator ScalarString="(1)"/>"#,
+            r#"</ShowPlanXML>"#,
+        );
+        let found = found_in(xml);
+        assert_eq!(values_from(&found, "ConstValue"), vec!["(1)", "(2)"]);
+        // Same value, different attribute: reported again, because it shows a
+        // second way that value reaches the file.
+        assert_eq!(values_from(&found, "ScalarString"), vec!["(1)"]);
+        assert_eq!(found.len(), 3);
+    }
+
+    #[test]
+    fn a_document_with_no_literals_reports_none() {
+        let xml = concat!(
+            r#"<ShowPlanXML xmlns="http://schemas.microsoft.com/sqlserver/2004/07/showplan">"#,
+            r#"<RelOp NodeId="0" PhysicalOp="Table Scan" EstimateRows="1"/>"#,
+            r#"</ShowPlanXML>"#,
+        );
+        assert_eq!(found_in(xml), vec![]);
+    }
+
+    #[test]
+    fn literals_rejects_malformed_xml() {
+        let err = literals("<not-xml").unwrap_err();
+        assert!(err.contains("did not parse"), "got {err}");
+    }
+
+    #[test]
+    fn every_committed_fixture_carries_literals() {
+        // What makes `the_built_in_set_is_never_gated` mean something: these all
+        // WOULD be refused, so it is `Source::BuiltIn` that admits them and not
+        // an accident of their content.
+        for name in FIXTURE_FILES {
+            let found = found_in(&fixture(name));
+            assert!(!found.is_empty(), "{name} reported no literals");
+            assert!(
+                found.iter().any(|l| l.attribute == "StatementText"),
+                "{name} reported no StatementText"
+            );
+        }
+    }
+
+    #[test]
+    fn the_built_in_set_is_never_gated() {
+        // Its SQL is in this file, reviewed before it was committed, so its
+        // literals are ours. `just dump-plans` must keep working.
+        for name in FIXTURE_FILES {
+            let found = found_in(&fixture(name));
+            assert_eq!(permit(Source::BuiltIn, &found), Ok(()), "{name} was gated");
+        }
+    }
+
+    #[test]
+    fn an_ad_hoc_capture_carrying_a_literal_is_refused() {
+        let found = found_in(EVERY_LITERAL);
+        let source = Source::AdHoc {
+            name: "my-query",
+            sql: "SELECT 1 WHERE x = 11",
+        };
+        let refusal = permit(source, &found).unwrap_err();
+        assert!(refusal.contains("ABORTED"), "got {refusal}");
+        assert!(refusal.contains("Nothing was written"), "got {refusal}");
+        // Every literal is shown, not just a count — the user learns what would
+        // have leaked even though the capture is refused.
+        for l in &found {
+            assert!(
+                refusal.contains(&l.value),
+                "the refusal hid {:?}: {refusal}",
+                l.value
+            );
+        }
+    }
+
+    #[test]
+    fn the_refusal_is_a_recipe_not_a_complaint() {
+        // Someone who reads this should find adding two lines to an array
+        // obviously cheaper than editing the guard out. That is the whole
+        // mechanism for keeping the guard in place, since there is no override.
+        let source = Source::AdHoc {
+            name: "missing-index",
+            sql: r#"SELECT "col" FROM T WHERE p LIKE 'C:\dir\%'"#,
+        };
+        let refusal = permit(source, &found_in(EVERY_LITERAL)).unwrap_err();
+        assert!(refusal.contains("FIXTURES"), "got {refusal}");
+        assert!(
+            refusal.contains("core/examples/dump_plan.rs"),
+            "got {refusal}"
+        );
+        assert!(refusal.contains("just dump-plans"), "got {refusal}");
+
+        // The SQL carries a double quote AND a backslash, because neither `{}`
+        // nor `{:?}` escapes a SINGLE quote — a specimen using `'X'` emits the
+        // same bytes either way and asserts nothing about escaping. Under `{}`
+        // this line would end the Rust literal early at `"col"` and carry a `\d`
+        // that does not compile.
+        assert!(
+            refusal.contains(
+                r#"    ("missing-index", "SELECT \"col\" FROM T WHERE p LIKE 'C:\\dir\\%'"),"#
+            ),
+            "the FIXTURES line is not paste-ready: {refusal}"
+        );
+    }
+
+    #[test]
+    fn a_newline_in_the_sql_stays_on_one_line() {
+        // A multi-line ad-hoc query is ordinary — fish and bash both pass one
+        // through happily. Emitted raw it would split the FIXTURES entry across
+        // two lines and leave an unterminated literal.
+        let source = Source::AdHoc {
+            name: "two-lines",
+            sql: "SELECT 1\nFROM T",
+        };
+        let refusal = permit(source, &found_in(EVERY_LITERAL)).unwrap_err();
+        assert!(
+            refusal.contains(r#"    ("two-lines", "SELECT 1\nFROM T"),"#),
+            "a newline was not escaped: {refusal}"
+        );
+    }
+
+    #[test]
+    fn a_quote_in_the_fixture_name_is_escaped_too() {
+        // The name is interpolated by the same mechanism and is just as
+        // user-supplied as the SQL.
+        let source = Source::AdHoc {
+            name: r#"od"d"#,
+            sql: "SELECT 1",
+        };
+        let refusal = permit(source, &found_in(EVERY_LITERAL)).unwrap_err();
+        assert!(
+            refusal.contains(r#"    ("od\"d", "SELECT 1"),"#),
+            "the name was not escaped: {refusal}"
+        );
+    }
+
+    #[test]
+    fn the_two_modes_get_the_source_that_matches_them() {
+        // Wiring, not policy. Every other test here builds its own `Source`, so
+        // swapping these two in `plan_work` leaves all of them green while the
+        // gate is open on precisely the SQL it exists to stop.
+        let args = |v: &[&str]| v.iter().map(|s| (*s).to_string()).collect::<Vec<_>>();
+
+        let pair = args(&["my-query", "SELECT 1"]);
+        let (work, source) = plan_work(&pair).expect("two args");
+        assert!(
+            matches!(source, Source::AdHoc { name, sql } if name == "my-query" && sql == "SELECT 1"),
+            "an argument pair must be ad-hoc"
+        );
+        assert_eq!(work, vec![("my-query".to_string(), "SELECT 1".to_string())]);
+
+        let none = args(&[]);
+        let (work, source) = plan_work(&none).expect("no args");
+        assert!(
+            matches!(source, Source::BuiltIn),
+            "no arguments must be the built-in set"
+        );
+        assert_eq!(work.len(), FIXTURES.len());
+
+        let one = args(&["only-one"]);
+        let three = args(&["a", "b", "c"]);
+        assert!(plan_work(&one).is_none());
+        assert!(plan_work(&three).is_none());
+    }
+
+    #[test]
+    fn an_ad_hoc_capture_with_no_literals_is_allowed() {
+        // Covers a state no real capture reaches: `StatementText` is on every
+        // statement element, so a captured plan always carries a literal and
+        // every ad-hoc capture is refused. Kept because it pins the shape of the
+        // rule — the gate turns on the literals, not on the mode alone — and
+        // deleting the `found.is_empty()` early return fails here.
+        let source = Source::AdHoc {
+            name: "shapes-only",
+            sql: "SELECT name FROM sys.objects",
+        };
+        assert_eq!(permit(source, &[]), Ok(()));
+    }
+
+    #[test]
+    fn a_real_plan_always_carries_a_literal() {
+        // Why the rule above is closed rather than conditional: every statement
+        // element carries `StatementText`, so `literals` is never empty for a
+        // captured document and no ad-hoc query slips through.
+        for name in FIXTURE_FILES {
+            let source = Source::AdHoc {
+                name: "would-be-adhoc",
+                sql: "irrelevant",
+            };
+            assert!(
+                permit(source, &found_in(&fixture(name))).is_err(),
+                "{name} would have been permitted as an ad-hoc capture"
+            );
+        }
     }
 
     #[test]
