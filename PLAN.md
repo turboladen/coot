@@ -1,14 +1,24 @@
 # Personal SQL Server client for macOS — build plan
 
-**Working name:** TBD (pick one before scaffolding). **Audience:** Claude Code + me. **Purpose:**
-Replace the deprecated Azure Data Studio for my own day-to-day use against on-prem SQL Server DEV
-boxes. Single user, single machine, no multi-user or distribution concerns. "Good enough for me"
-beats "general-purpose."
+> **This is a historical record of the plan Coot was built from, not a description of the app as it
+> stands.** Every phase in §9 has shipped, and the design has moved in places the plan does not
+> reflect. For current truth, read the ADRs in [`docs/adr/`](docs/adr/README.md) (the durable
+> decision record), [`CHANGELOG.md`](CHANGELOG.md) (what the app does), and
+> [`README.md`](README.md) (how to build and run it). Where this document and the code disagree, the
+> code wins. It is kept because the *reasoning* behind the shape of the codebase — why the driver
+> hides behind `core`, why a database is execution context, why parameters are typed — is recorded
+> here and nowhere else.
+
+**Name:** Coot. **Audience:** Claude Code + me. **Purpose:** Replace the deprecated Azure Data
+Studio for my own day-to-day use against on-prem SQL Server **DEV boxes** — the development servers
+I work against, holding real data, reachable over VPN, and safe to run DDL on. Single user, single
+machine, no multi-user or distribution concerns. "Good enough for me" beats "general-purpose."
 
 This plan is the output of a design spike. The driver question is **closed** — a throwaway Rust
-probe (see "Spike results" at the end) validated the chosen driver against the real DEV server on
-both the typed and untyped read paths. Decisions below are made; rationale is included so they don't
-get re-opened, not so they get re-debated.
+probe validated the chosen driver against a real DEV box on both the typed and untyped read paths.
+The probes live on as `core/examples/typed_probe.rs` and `core/examples/dynamic_dump.rs`; the
+footguns they turned up are in the first appendix below. Decisions here are made; rationale is
+included so they don't get re-opened, not so they get re-debated.
 
 ---
 
@@ -44,7 +54,7 @@ get re-opened, not so they get re-debated.
 | SQL Server driver         | **`mssql-client`** (praxiomlabs/rust-mssql-driver), v0.20+              | Only actively-maintained option; tiberius is quiet and its native-tls path is broken against SQL Server on macOS. This crate is **rustls-native → no OpenSSL, no macOS TLS pain**. Validated end-to-end against the real box. |
 | GUI stack                 | **Tauri + Svelte**                                                      | The two hardest UI pieces are a real code editor and a virtualized results grid. Webland hands both over (CodeMirror/Monaco + TanStack Table). Reinventing either in a Rust-native GUI would be the whole project.            |
 | Secret storage            | **macOS Keychain via the `keyring` crate**                              | Never store SQL passwords in plaintext config. Connection _metadata_ in config/SQLite; the password in Keychain, keyed by connection id.                                                                                      |
-| Connection string default | `Encrypt=false;TrustServerCertificate=true`                             | Matches my environment ("encrypt optional, always trust cert"). Confirmed working against the DEV box. Expose `strict` / `no_tls` as options later if ever needed.                                                        |
+| Connection string default | `Encrypt=false;TrustServerCertificate=true`                             | Matches my environment ("encrypt optional, always trust cert"). Confirmed working against the DEV box. The driver accepts two other `Encrypt` modes — `strict` (TDS 8.0, where TLS is established before any protocol traffic; SQL Server 2022+) and `no_tls` (no encryption at all) — which can be exposed as options later if ever needed. TDS is Tabular Data Stream, the wire protocol SQL Server speaks. |
 | Type rendering            | Column metadata for headers/types; `SqlValue` (via `get_raw`) for cells | Confirmed: the driver exposes `row.columns()` + `row.get_raw(i) -> Option<SqlValue>`. See §7 for the two-type-sources subtlety.                                                                                               |
 | datetimeoffset target     | `chrono::DateTime<FixedOffset>`                                         | Both `FixedOffset` and `Utc` decode; `FixedOffset` preserves the zone.                                                                                                                                                        |
 
@@ -59,21 +69,35 @@ boundary and never leaks into the UI** (§3). If it ever goes bad, only `core` c
 A Cargo **workspace**, two crates. The whole point is that the driver, the schema cache, and the
 render layer meet in _one_ place — `core` — and the Tauri app is a thin shell.
 
+The modules `core` grew, current as of this writing:
+
 ```
 workspace/
 ├─ core/          # pure Rust. no Tauri. the entire spine. unit-testable headless.
 │  └─ src/
-│     ├─ connection.rs   # Connection config + secrets (keyring). connect().
-│     ├─ context.rs      # ExecutionContext { database }. THE key seam (§4).
-│     ├─ executor.rs     # run SQL -> QueryResult (driver-agnostic). owns mssql-client.
-│     ├─ result.rs       # QueryResult, ColumnMeta, CellValue. NO mssql_client types.
-│     ├─ schema.rs       # sys.* introspection cache: databases/tables/columns/views.
-│     ├─ types.rs        # TDS wire-token -> friendly SQL type name map.
-│     ├─ query_store.rs  # saved queries + parameters (§5). persistence.
+│     ├─ connection.rs        # ConnectionConfig + the SecretStore trait (keyring).
+│     ├─ connection_store.rs  # saved connections, persisted. no passwords.
+│     ├─ context.rs           # ExecutionContext { database }. THE key seam (§4).
+│     ├─ executor.rs          # run SQL -> QueryResult (driver-agnostic). uses mssql-client.
+│     ├─ session.rs           # one reused client per connection, for schema queries (ADR-0002).
+│     ├─ batch.rs             # split a script on GO into the batches the runner sends (§6).
+│     ├─ query.rs             # SavedQuery + Param data model, UI-facing (§5).
+│     ├─ param_bind.rs        # bind params via sp_executesql; splice raw-text fragments (§5).
+│     ├─ result.rs            # QueryResult, ColumnMeta, CellValue. NO mssql_client types.
+│     ├─ schema.rs            # sys.* introspection cache: databases/tables/columns/views.
+│     ├─ types.rs             # TDS wire-token -> friendly SQL type name map.
+│     ├─ query_store.rs       # saved queries + parameters (§5). persistence.
+│     ├─ plan/                # estimated query plans: capture, parse, fingerprint, judge.
+│     ├─ test_support.rs      # test-only helpers shared by the executor/schema/session tests.
 │     └─ error.rs
 └─ app/           # Tauri + Svelte. thin. #[tauri::command]s delegate straight into core.
    └─ src/ (Rust commands) + ui/ (Svelte)
 ```
+
+Two entries in that list are places where the driver boundary widened after this plan was written,
+and both are governed by [ADR-0002](docs/adr/0002-connection-reuse-for-schema-introspection.md):
+`session.rs` is the second module permitted to drive a live client, and `plan::capture` is the
+third.
 
 **The load-bearing boundary:** `core` owns `mssql-client` as a private dependency and exposes only
 plain, serializable data types (`QueryResult`, `ColumnMeta`, `CellValue`). Tauri commands and Svelte
@@ -146,8 +170,9 @@ Design rules:
 - **Remember-last-value is the feature.** Second run should be _one click_: if every param already
   has a value, just run; only prompt for genuinely-unset ones.
 - **Session scope** = "I'm on customer 12345 all afternoon." Set `@cust` once at session level;
-  every saved query referencing it just works, no per-query prompting. Three tiers: Global defaults
-  (`@today`) < Session values < per-query Local.
+  every saved query referencing it just works, no per-query prompting. Three tiers, narrowest first:
+  a per-query **Local** value wins; failing that a **Session** value; failing that a **Global**
+  default such as `@today`.
 - **Auto-type from the catalog.** When building a scoped query off a table, pre-fill param types
   from `schema.rs` (`sys.columns`+`sys.types`) — "typed at the UI level" becomes "typed
   automatically from the schema, editable to override." The tree already knows every type.
@@ -256,10 +281,10 @@ enum CellValue {
   `executor::run` returning `QueryResult`. Port the spike's `render_cell` → `SqlValue→CellValue`.
   Port the wire-token→friendly map. Unit-test against the DEV box with no UI. _Exit:_ can run
   arbitrary SQL from a test and get clean `QueryResult`s.
-- **Phase 1 — the MVP that replaces ADS.** Tauri shell. Connection manager UI (save/edit, Keychain).
-  SQL editor (CodeMirror: comment-toggle, selection). Run selection-or-batch (§6). Results grid
-  (TanStack, virtualized) reading `CellValue`. Tab autosave. _Exit:_ I stop opening ADS for basic
-  querying.
+- **Phase 1 — the MVP that replaces Azure Data Studio.** Tauri shell. Connection manager UI
+  (save/edit, Keychain). SQL editor (CodeMirror: comment-toggle, selection). Run selection-or-batch
+  (§6). Results grid (TanStack, virtualized) reading `CellValue`. Tab autosave. _Exit:_ I stop
+  opening Azure Data Studio for basic querying.
 - **Phase 2 — object tree.** `schema.rs` cache. Databases→Tables→Columns + Views, lazy-load,
   Refresh, `state_desc` greying. Double-click table → `SELECT TOP 1000` into a new tab.
 - **Phase 3 — saved queries + parameterization (§5).** Saved-query library UI. Bind + raw-text
@@ -285,7 +310,14 @@ enum CellValue {
 
 ## Appendix — carry-over assets
 
-The two spike binaries (`main.rs` typed probes, `bin/dynamic.rs` untyped dump) are the seed of
-`core`: the connection-string builder, `render_cell`, and the column-introspection loop all graduate
-directly into `executor.rs` / `result.rs`. Keep them as `core`'s first integration tests against the
-DEV box.
+The two spike probes are the seed of `core`: the connection-string builder, `render_cell`, and the
+column-introspection loop all graduate directly into `executor.rs` / `result.rs`. The probes
+themselves stay runnable as `core` examples, and the same driver calls become `core`'s first
+integration tests against the DEV box:
+
+- `core/examples/typed_probe.rs` — the typed read path. Run it with `just probe-typed`.
+- `core/examples/dynamic_dump.rs` — the untyped column/row dump. Run it with `just probe-dynamic`.
+
+Both need the `MSSQL_*` environment variables and a reachable DEV box. They are the working proof of
+the exact driver calls this plan assumes; when the driver's API is in doubt, read or run them rather
+than guessing.

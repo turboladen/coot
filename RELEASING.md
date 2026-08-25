@@ -38,13 +38,15 @@ Bump both if this isn't the version already there. (For the very first release,
 
 ### 2. Update the changelog
 
-Add a section to `CHANGELOG.md` for `X.Y.Z` with the date and a human summary of
-what changed. Source material:
+Rename the `## [Unreleased]` section in `CHANGELOG.md` to `## [X.Y.Z] - YYYY-MM-DD`,
+open a fresh empty `## [Unreleased]` above it, and check that what is there is a
+human summary rather than a commit list. Source material for anything missing:
 ```fish
 # commits since the last tag (or all commits for the first release)
 git log --pretty=format:'%s' PREVIOUS_TAG..HEAD | grep -iE '^(feat|fix|perf)'
 ```
-Update the link reference at the bottom of `CHANGELOG.md` to point at the new tag.
+Then fix the link references at the bottom of `CHANGELOG.md`: point `[Unreleased]` at
+`compare/vX.Y.Z...HEAD` and add an `[X.Y.Z]` line for the new tag.
 
 ### 3. Green gate
 
@@ -105,7 +107,13 @@ build, not in `just dev`:
 (Locally the app isn't quarantined, so you won't hit the Gatekeeper issue below —
 but a downloader will, which is why the release notes must document it.)
 
-### 7. Publish the GitHub Release
+### 7. Write the release notes
+
+Create `RELEASE_NOTES.md` at the repo root from this version's changelog section, and
+**always append the install instructions below** — a downloader cannot open the app
+without them. Keep the file untracked, and delete it once the release is published.
+
+### 8. Publish the GitHub Release
 
 ```fish
 set -l DMG (ls target/release/bundle/dmg/Coot_*_aarch64.dmg)
@@ -113,9 +121,8 @@ gh release create vX.Y.Z "$DMG" \
     --title "Coot vX.Y.Z" \
     --notes-file RELEASE_NOTES.md
 ```
-Write `RELEASE_NOTES.md` from the changelog section for this version, and **always
-include the install instructions below** (delete `RELEASE_NOTES.md` after, or keep
-it untracked). Alternatively use `--notes "…"` inline for short releases.
+For a short release you can skip the file and pass `--notes "…"` inline instead, as
+long as the install instructions are still in it.
 
 ## Install instructions to include in every release's notes
 

@@ -9,15 +9,15 @@
 
 The UI worked but looked vanilla: bare `system-ui`, hardcoded `#ccc` borders, no design system, and
 no coherent way to add dark mode. Styling decisions were being made per-component, so every new
-component was a fresh opportunity to hardcode a colour that would later break theming.
+component was a fresh opportunity to hardcode a color that would later break theming.
 
-Separately, and non-negotiably: the sole user has a red/green colour deficiency. Any convention that
+Separately, and non-negotiably: the sole user has a red/green color deficiency. Any convention that
 carries meaning in hue alone is not merely imperfect for this project — it is unreadable.
 
 ## Decision
 
-**A single token layer in `app/ui/src/app.css`, and colourblind-safety as a hard constraint on every
-colour choice.**
+**A single token layer in `app/ui/src/app.css`, and colorblind-safety as a hard constraint on every
+color choice.**
 
 Tokens:
 
@@ -32,7 +32,7 @@ Tokens:
   plus Svelte scoped styles.
 - Motion is subtle (120–150ms) and gated on `prefers-reduced-motion`.
 
-Colourblind-safety rules, enforced in every phase:
+Colorblind-safety rules, enforced in every phase:
 
 - **State is never carried by hue alone** — pair every status with an icon or a shape change.
   Connected is a filled teal dot with a check; locked or offline is a hollow ring, not a red/green
@@ -52,5 +52,5 @@ Colourblind-safety rules, enforced in every phase:
   goal, so it survives contact with future components.
 - **Negative:** every new component must use tokens. A hardcoded hex works fine in light mode and
   silently breaks dark mode, which is the failure mode most likely to slip through.
-- **Negative:** red is effectively unavailable as a status colour, so the error/warning vocabulary is
+- **Negative:** red is effectively unavailable as a status color, so the error/warning vocabulary is
   narrower than convention assumes and leans on icons to carry meaning.

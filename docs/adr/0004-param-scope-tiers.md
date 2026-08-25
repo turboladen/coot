@@ -1,4 +1,4 @@
-# ADR-0004: Parameter scope tiers — Local < Session < Global
+# ADR-0004: Parameter scope tiers — Local beats Session beats Global
 
 - **Status:** Accepted
 - **Date:** 2026-07-12
@@ -15,13 +15,14 @@ default such as `@today`. The first implementation shipped Local-only remembered
 
 ## Decision
 
-**A parameter value resolves `Local ?? Session ?? Global`, and its scope selects where an edit is
-remembered — independent of where the displayed value resolved from.**
+**A parameter value resolves `Local ?? Session ?? Global` — a Local value wins over a Session value,
+which wins over a Global one — and its scope selects where an edit is remembered, independent of
+where the displayed value resolved from.**
 
 - **Precedence and write-target are separate concepts.** `resolve(@name)` layers the three tiers;
   the scope selector chooses the write destination. A value can therefore display as inherited from
   Session while being remembered Locally, or vice versa.
-- **Writes happen on Run**, consistent with the existing Local behaviour.
+- **Writes happen on Run**, consistent with the existing Local behavior.
 - **Storage differs per tier, deliberately:** Local stays `Param.last_value` in `query_store`;
   Session is in-memory for the app session; Global persists to `localStorage` under a versioned key,
   degrading to `{}` on corrupt data.
@@ -47,3 +48,12 @@ badge means "no Local value stored yet; inheriting."
   knowing the scope.
 - **Negative:** the badge can lag user input until Run, which is a deliberate simplification rather
   than a bug, and is documented on `valueSource`.
+
+## Corrections
+
+**2026-08-24 (`billz-nvt`).** The title read "Local < Session < Global". Precedence runs the other
+way: `resolve` in `paramBarLogic.ts` is `param.lastValue ?? session[name] ?? global[name]`, so a
+Local value wins. The `<` notation caused it — one reader takes it as "Local ranks lowest" and
+another as "Local overrides Session", and `PLAN.md` §5 wrote the same three tiers with the symbol
+pointing the opposite way. Both now state the order in words, and `<` is not used for precedence in
+either file.
