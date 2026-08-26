@@ -1,28 +1,39 @@
 # CLAUDE.md
 
-Standing orders for this repo. Read every turn. Terse on purpose. `PLAN.md` is the full spec and the
-source of truth for _what_ and _why_; this file is the _rules that must not drift_ across a long
-build.
+Standing orders for this repo. Read every turn. Terse on purpose. This file holds the _rules that
+must not drift_; the ADRs in `docs/adr/` hold the reasoning behind them.
 
-A personal macOS SQL Server client (Tauri + Svelte, Rust core). Single user, me, on DEV boxes. "Good
-enough for me" beats "general-purpose." Do not build for scale, multi-user, or distribution.
+Coot is a personal macOS SQL Server client (Tauri + Svelte, Rust core). Single user, me, on DEV
+boxes — the on-prem development servers I work against. "Good enough for me" beats
+"general-purpose." Do not build for scale, multi-user, or distribution. `README.md` is the
+orientation for a newcomer.
 
 ## Read before doing anything
 
-- `bd ready` — what's actionable now. The build order (`PLAN.md` §9) lives as beads epics
-  (`Phase 0…3`) with dependencies, so `bd ready` is the source of truth for _where to start_.
-- `PLAN.md` — architecture, data models, phases, non-goals.
+Work is tracked in **beads** (`bd`), a local issue tracker. An individual issue is a **bead**, and
+its id (`billz-a8a`, `billz-xi6.1`) is what commits and code comments cite. Run `bd prime` for the
+command reference.
+
+- `bd ready` — what's actionable now, and the source of truth for _where to start_.
+- `docs/adr/` — the durable decision record: why the code is shaped the way it is. Read the index
+  (`docs/adr/README.md`) before changing anything architectural. `CHANGELOG.md` says what the app
+  currently does.
+- `PLAN.md` — the original design plan, kept as a **historical record**. Good for rationale (why a
+  database is execution context, why parameters are typed); not authoritative about what the code
+  does today. Where it and the code disagree, the code wins.
 - The two spike probes (`core/examples/typed_probe.rs` typed, `core/examples/dynamic_dump.rs`
-  untyped dump) — **working proof** of the exact `mssql-client` calls the plan relies on. When in
-  doubt about the driver, read/run them (`cargo run -p coot-core --example <name>`), don't guess.
-  (`billz-ce1.7` ports them into `core`'s env-gated integration tests.)
+  untyped dump) — **working proof** of the exact `mssql-client` calls this project relies on. When
+  in doubt about the driver, read or run them (`just probe-typed` / `just probe-dynamic`), don't
+  guess.
 
 ## Non-negotiable invariants
 
 - **The driver stays behind `core`.** `mssql-client` is a _private_ dependency of the `core` crate.
   No `mssql_client::` type ever appears in the `app` (Tauri) crate or crosses to Svelte. UI sees
   only `core`'s own `QueryResult` / `ColumnMeta` / `CellValue`. This is the one rule that makes a
-  bad-driver-day a `core`-only change. Never break it for convenience.
+  bad-driver-day a `core`-only change. Never break it for convenience. Inside `core`, three modules
+  are permitted to drive a live client — `executor`, `session`, and `plan::capture`. A fourth needs
+  a written justification, per `docs/adr/0002-connection-reuse-for-schema-introspection.md`.
 - **`core` is pure Rust, no Tauri, headless-testable.** If a thing needs Tauri to test, it's in the
   wrong crate.
 - **Secrets never touch disk in plaintext.** Passwords go to the macOS Keychain via `keyring`.
@@ -32,12 +43,14 @@ enough for me" beats "general-purpose." Do not build for scale, multi-user, or d
 
 ## Scope discipline
 
-- Build only the current phase (`PLAN.md` §9). Do not gold-plate toward later phases.
+- Build what `bd ready` says is ready, and nothing further. Do not gold-plate toward beads that are
+  still blocked or deferred.
 - SQL-auth only. No Entra/AAD/Windows auth.
-- Do **not** build: cross-DB fan-out, ER diagrams, MCP server, tree nodes beyond
-  Databases/Tables/Columns/Views. **Omit** unbuilt tree nodes — don't render disabled stubs.
-- If a "nice to have" tempts you and it isn't in the current phase, **file a deferred bead** (or
-  leave a `// TODO(phaseN):` pointing at its id) and move on — don't build it.
+- Do **not** build: ER diagrams, MCP server, tree nodes beyond Databases/Tables/Columns/Views.
+  **Omit** unbuilt tree nodes — don't render disabled stubs.
+- If a "nice to have" tempts you and no bead covers it, **file a deferred bead** and leave a
+  `// TODO(billz-xxx):` comment pointing at its id — `TODO(later)` when the idea is real but no bead
+  exists yet. Then move on; don't build it.
 
 ## Tech stack (locked)
 
@@ -84,11 +97,17 @@ fast-moving and single-maintainer).
 
 ## Shell & commands
 
-- **Prefer `just` for all tasks** — the `justfile` at the repo root is the task interface. `just`
-  lists recipes; the common ones: `just dev` (run the app), `just verify` (the full Rust+frontend
-  gate), `just test` / `just lint` / `just fmt`, `just ui-check` / `just ui-test` / `just ui-build`,
-  `just app-build` (signed release), `just setup-signing`, `just probe-typed` / `probe-dynamic`. Add
-  a recipe there rather than reaching for a raw `cargo`/`bun` invocation.
+- **Prefer `just` for all tasks** — the `justfile` at the repo root is the task interface, and
+  `just` on its own lists every recipe with its own description. Add a recipe there rather than
+  reaching for a raw `cargo`/`bun` invocation. The full set:
+  - Run: `just dev` (the app), `just app-build` (signed release bundle).
+  - Rust: `just build`, `just test`, `just lint`, `just fmt`, `just fmt-check`, `just audit`
+    (cargo-deny; not in `verify` because it fetches the advisory DB).
+  - Frontend: `just install` (bun install — needed in any fresh clone or worktree), `just ui-check`,
+    `just ui-test`, `just ui-build`.
+  - Gate: `just verify` = `fmt-check lint test ui-check ui-test ui-build`.
+  - DEV box: `just probe-typed`, `just probe-dynamic`, `just dump-plans` (+ `just fmt-plans`).
+  - Setup and tracking: `just setup-signing`, `just ready`.
 - I use **fish**. Emit fish-compatible commands (`set -x FOO bar`, not `export FOO=bar`).
 - Under the hood: frontend tooling is **bun** (`app/ui`); Rust is **cargo** (workspace root); the
   Tauri CLI runs via bun (`bun run tauri …`, wired with `TAURI_APP_PATH=..`).
@@ -119,7 +138,7 @@ fast-moving and single-maintainer).
 
 This project uses **bd (beads)** for issue tracking. Run `bd prime` to see full workflow context and commands.
 
-**Issue IDs use the legacy `billz-` prefix** (e.g. `billz-a8a`) — unrelated to the `coot-*` crates/product. They pepper code comments as references. **Never bulk-rewrite `billz-*`**; those are issue IDs, not stale names.
+**Issue IDs use the `billz-` prefix** (e.g. `billz-a8a`). The project was called `billz` before it was renamed to Coot, and the prefix stayed behind so that existing ids keep resolving — it has nothing to do with the `coot-*` crates. Those ids pepper code comments and commit messages as references. **Never bulk-rewrite `billz-*`**; they are issue IDs, not stale names.
 
 ### Quick Reference
 
