@@ -21,7 +21,7 @@
     "@fontsource/ibm-plex-sans": "^5.3.0",
     "@lezer/highlight": "^1.2.3",
     "@tanstack/svelte-virtual": "^3.13.36",
-    "@tanstack/table-core": "^8.21.3",
+    "@tanstack/table-core": "^9.2.3",
     "@tauri-apps/api": "^2.11.1",
     "codemirror": "^6.0.2",
     "lucide-svelte": "^1.0.1"
