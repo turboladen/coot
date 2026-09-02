@@ -1,4 +1,4 @@
-//! Wire-token → friendly SQL type name mapping (`PLAN.md` §7).
+//! Wire-token → friendly SQL type name mapping.
 //!
 //! `Column.type_name` from the driver is the Debug name of a raw TDS `TypeId`
 //! variant (`tds-protocol 0.20.2`) — literally `"Int4"`, `"IntN"`, `"NVarChar"`,

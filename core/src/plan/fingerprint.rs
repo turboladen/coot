@@ -2,8 +2,9 @@
 //!
 //! Two tenants' plans belong in the same equivalence class when they run the
 //! same operators over the same objects in the same structure. This is what
-//! partitions ~27 tenant databases into the handful of classes the variance view
-//! shows.
+//! partitions ~27 tenant databases into a handful of classes, which is what
+//! turns "do these tenants run this query differently?" into a short answer
+//! instead of 27 plans to read.
 //!
 //! # Two things must stay out of the key, for the same reason
 //!
@@ -36,9 +37,12 @@
 //!
 //! # Not in the key
 //!
-//! Warnings and missing indexes: the key is structure and objects, per design
-//! spec §4.1. Statement text likewise — a fan-out runs one SQL string
-//! everywhere, so it cannot discriminate.
+//! Warnings and missing indexes. The key answers whether two plans run the same
+//! operators over the same objects, and a warning or an index suggestion is a
+//! judgment ABOUT a plan rather than part of its shape. Admitting them would
+//! split tenants whose operator trees are identical — the same silent failure as
+//! admitting the numbers. Statement text is out too: a fan-out runs one SQL
+//! string everywhere, so it cannot discriminate.
 
 use crate::plan::model::{PlanNode, QueryPlan};
 
@@ -51,10 +55,10 @@ use crate::plan::model::{PlanNode, QueryPlan};
 /// op        := physical_op | physical_op "/" logical_op
 /// ```
 ///
-/// Readable rather than hashed, deliberately: this is the grouping key the
-/// variance view shows, two classes diff against each other line by line, and a
-/// test asserting an exact key proves WHAT the shape is where comparing two
-/// hashes proves only that they match. Even the longest fixture key — the
+/// Readable rather than hashed, deliberately: this key is meant to be displayed,
+/// two classes diff against each other line by line, and a test asserting an
+/// exact key proves WHAT the shape is where comparing two hashes proves only
+/// that they match. Even the longest fixture key — the
 /// 32-operator `scan.sqlplan` — is trivial as a `HashMap` key for 27 tenants.
 ///
 /// Object names are not escaped, so an identifier containing `(`, `)`, `,`, `;`
@@ -305,7 +309,7 @@ mod tests {
         // single-child chains, and `child_order_is_significant` asserts
         // INEQUALITY, which holds even with siblings run together. A separator
         // colliding with `;` or `:` aliases two structurally different plans
-        // into one class, so the variance view reports "all tenants agree" —
+        // into one class, so a comparison reports "all tenants agree" —
         // indistinguishable from a genuine result. `aggregate.sqlplan` node 2's
         // two children live in different databases, so this pins the comma, the
         // branching and the strip at once.

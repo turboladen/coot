@@ -10,13 +10,23 @@
 //! [`QueryResult`] by hand, assert the mapping) exactly as `executor` tests its
 //! `cell_from_sql_value`.
 //!
-//! **Two type sources** (`PLAN.md` §7): this module's [`format_sql_type`] builds
-//! the tree's *canonical* type from `sys.types` + length metadata. That is a
-//! DIFFERENT source from the runner's [`crate::friendly_type_name`] (wire
-//! tokens) — they are intentionally not shared.
+//! **Two type sources, and they must not be merged.** This module's
+//! [`format_sql_type`] names a column the way the catalog declares it, from
+//! `sys.types` plus length metadata: `nvarchar(50)`, `decimal(19,4)`. The
+//! runner's [`crate::friendly_type_name`] names a column the way the wire
+//! describes it, from a TDS type token: `nvarchar`, `decimal`, no width at all.
+//! One function serving both looks tempting because the outputs overlap, but the
+//! two `max_length` arguments do not mean the same thing. Here it is
+//! `sys.columns.max_length`, a byte count where `-1` means MAX and an `nvarchar`
+//! must be halved to get its character count; there it is a wire width that picks
+//! a family member, turning `IntN` into `tinyint` or `bigint`. A merged function
+//! would take one argument that its two callers disagree about, and the disagreement
+//! is silent: `sys.types` already yields lowercase friendly names, so routing catalog
+//! input through the wire mapper returns it unchanged via the fall-through arm
+//! rather than failing.
 //!
-//! `run` takes no bind params (Phase 3), so `list_columns`'s schema/table are
-//! embedded as escaped SQL string literals via [`quote_literal`] — they are
+//! [`crate::executor::run`] binds no parameters, so `list_columns` embeds its
+//! schema/table as escaped SQL string literals via [`quote_literal`] — they are
 //! *values* compared against `sys.*.name`, injection-safe once single-quotes are
 //! doubled.
 
@@ -145,8 +155,9 @@ fn list_columns_sql(schema: &str, table: &str) -> String {
 /// column's precision/scale. Unknown type names fall through to the bare name
 /// (never panics, always shows *something*).
 ///
-/// This is a **different type source** from [`crate::friendly_type_name`] (wire
-/// tokens) and deliberately does not reuse it (`PLAN.md` §7).
+/// Do not reroute this through [`crate::friendly_type_name`]. That fn maps a TDS
+/// wire token and returns a bare name, so the widths this one exists to produce
+/// would vanish; the module doc has the full argument.
 fn format_sql_type(type_name: &str, max_length: i16, precision: u8, scale: u8) -> String {
     // `sys.types` returns lowercase system type names; lowercase defensively.
     let t = type_name.to_ascii_lowercase();

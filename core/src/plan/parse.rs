@@ -1,12 +1,8 @@
 //! ShowPlanXML → [`QueryPlan`]. Pure: no I/O, no driver, no server.
 //!
-//! Every test here runs offline. Most are backed by the real `.sqlplan` files in
-//! `core/tests/fixtures/plans/`, captured from a live SQL Server and then
-//! sanitized (see `fixture` below — the structure is genuine, the numbers are
-//! not); three are not, and say so at their definitions — the missing-index test
-//! uses a hand-authored schema-derived document, and two feed deliberately
-//! malformed or non-plan input. No path in this module is fixture-backed unless
-//! it says it is.
+//! A ShowPlanXML document describes every statement in an explained batch as a
+//! tree of operators, each carrying the optimizer's estimates. [`parse_plan`]
+//! reads one into [`QueryPlan`], the crate's own model of that tree.
 //!
 //! Element names are matched on their LOCAL name throughout, so the showplan
 //! namespace declaration is irrelevant and a future namespace bump cannot break
@@ -15,6 +11,14 @@
 //! Missing or unparseable attributes default rather than fail. A plan is a
 //! diagnostic aid; refusing to show any of it because one operator lacks one
 //! attribute is the wrong trade. Only malformed XML is an error.
+//!
+//! Every test here runs offline. Most are backed by the real `.sqlplan` files in
+//! `core/tests/fixtures/plans/`, captured from a live SQL Server and then
+//! sanitized (see `fixture` below — the structure is genuine, the numbers are
+//! not); three are not, and say so at their definitions — the missing-index test
+//! uses a hand-authored schema-derived document, and two feed deliberately
+//! malformed or non-plan input. No path in this module is fixture-backed unless
+//! it says it is.
 
 use roxmltree::{Document, Node};
 

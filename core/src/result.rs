@@ -1,4 +1,4 @@
-//! The result-set types the UI sees — `core`'s own, driver-free (`PLAN.md` §8).
+//! The result-set types the UI sees — `core`'s own, driver-free.
 //!
 //! `mssql_client::SqlValue` / `Column` never cross this boundary. `CellValue`
 //! mirrors `SqlValue` but is OURS: everything the grid needs, nothing driver-

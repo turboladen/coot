@@ -1,6 +1,6 @@
 //! On-disk connection metadata — a JSON file of `Vec<ConnectionConfig>`.
 //!
-//! Pure Rust, headless-testable (`PLAN.md` §3): `app` supplies only the path
+//! Pure Rust, headless-testable: `app` supplies only the path
 //! (Tauri's app-config dir) and this module owns all persistence. Because
 //! [`ConnectionConfig`] has **no password field by construction**, the file
 //! structurally cannot contain a password — the Keychain

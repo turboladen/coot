@@ -1,5 +1,5 @@
 //! Client-side batch splitting. `GO` is not T-SQL — it's a separator the client
-//! honors and never sends (PLAN.md §6). Matching is deliberately simple for a
+//! honors and never sends. Matching is deliberately simple for a
 //! personal tool: a `GO` on a line by itself. GO inside a string literal or a
 //! block comment is NOT detected (whole-line match only) and would mis-split —
 //! an accepted v1 limitation. An optional repeat count (`GO 5`) is NOT honored;

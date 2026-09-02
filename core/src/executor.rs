@@ -1,21 +1,21 @@
-//! The executor — one of three modules (with `session` and `plan::capture`)
-//! where `mssql-client` is used in non-test code. A fourth requires
-//! justification. `plan::capture` earns its place by having to own and close its
-//! own connection so a `SET SHOWPLAN_XML` cannot leak, and it does that through
-//! the `pub(crate)` helpers here rather than by touching the driver itself.
+//! The executor — where a query is actually sent to a server.
 //!
 //! [`run`] connects (per call), applies the [`ExecutionContext`]'s `USE`, runs a
 //! SQL batch, and maps the driver's `SqlValue`→[`CellValue`] and
 //! `Column`→[`ColumnMeta`], returning `core`'s own [`QueryResult`]s. **No
 //! `mssql_client` type appears in this module's public API** — the driver is
-//! confined to `run`'s private body and the two private mappers below
-//! (`PLAN.md` §3, `CLAUDE.md`). Errors are stringified into [`CoreError`];
-//! the driver's `Error` is never `#[from]`.
+//! confined to private bodies and the two private mappers below (`CLAUDE.md`).
+//! Errors are stringified into [`CoreError`]; the driver's `Error` is never
+//! `#[from]`.
+//!
+//! This is one of only three modules that name `mssql-client` in non-test code,
+//! along with [`crate::session`] and [`crate::plan::capture`]. A fourth requires
+//! justification. `plan::capture` earns its place by having to own and close its
+//! own connection so a `SET SHOWPLAN_XML` cannot leak, and it does that through
+//! the `pub(crate)` helpers here rather than by touching the driver itself.
 
 // The three-module bar is ADR-0002,
-// `docs/adr/0002-connection-reuse-for-schema-introspection.md`. The exception
-// for `plan::capture` is §4.2 of the plan-verdict design spec (untracked, under
-// `docs/superpowers/specs/`).
+// `docs/adr/0002-connection-reuse-for-schema-introspection.md`.
 
 use futures::StreamExt;
 use mssql_client::{
@@ -34,8 +34,11 @@ use crate::types::friendly_type_name;
 /// core's own [`QueryResult`] and errors are [`CoreError`].
 ///
 /// Connects per call (`cfg` supplies the connection metadata; `ctx` supplies the
-/// target database via `USE`). No `params` (bind params are Phase 3) and no `GO`
-/// splitting (the runner's batch semantics are Phase 1) — `sql` is sent as one
+/// target database via `USE`). `sql` is sent as one batch, exactly as given: this
+/// fn binds no parameters and does not split on `GO`. To bind parameters, call
+/// [`run_with_params`] instead. To honor `GO` separators, split the text with
+/// [`crate::split_batches`] first and run each batch — `GO` is a client-side
+/// separator, not T-SQL, so leaving it in `sql` makes the server reject the
 /// batch.
 ///
 // Cross-tenant fan-out ships via [`run_fanout`] below: N *parallel* per-call
@@ -56,8 +59,8 @@ pub async fn run(
 }
 
 /// Run the same `batches` against many `databases` on one server **in parallel**,
-/// returning a per-database [`DbRunOutcome`] — the cross-tenant fan-out primitive
-/// (`PLAN.md` §4). Each database is an independent unit of work: connect once,
+/// returning a per-database [`DbRunOutcome`] — the cross-tenant fan-out
+/// primitive. Each database is an independent unit of work: connect once,
 /// apply `base.clone().with_database(db)`, run every batch on that one connection,
 /// close. One login per DB; no pooled reuse.
 ///
@@ -67,7 +70,9 @@ pub async fn run(
 ///
 /// `max_concurrency` caps in-flight connections (`buffer_unordered`). That
 /// combinator yields completions out of order, so outcomes are re-sorted back to
-/// **input order** before returning — the caller's status strip/grid stay stable.
+/// **input order** before returning. A caller that renders one section per
+/// database therefore gets the same arrangement every run, rather than one that
+/// reshuffles with whichever database happened to answer first.
 pub async fn run_fanout(
     cfg: &ConnectionConfig,
     store: &dyn SecretStore,
@@ -250,21 +255,24 @@ async fn collect_multi(client: &mut Client<Ready>, sql: &str) -> Result<Vec<Quer
 /// Run `sql` with parameters, applying the [`ExecutionContext`], and return the
 /// result(s). **Core types only** in the signature — `params` is `core`'s own
 /// [`ResolvedParam`] and the return is [`QueryResult`]; no `NamedParam`/`SqlValue`/
-/// `Client` leaks past this boundary (`PLAN.md` §3/§7, `CLAUDE.md`).
+/// `Client` leaks past this boundary (`CLAUDE.md`).
 ///
-/// Two mechanisms, decided by each param's `sql_type` (`PLAN.md` §5):
+/// Two mechanisms, decided by each param's `sql_type`:
 ///   - `None` → a **raw-text** fragment, spliced literally into the SQL before
-///     send (injectable BY DESIGN; the library UI flags it loud).
+///     send (injectable BY DESIGN; the library renders it loud).
 ///   - `Some(_)` → a **bind** param: its value is parsed to a typed value and sent
 ///     via `sp_executesql` (safe, typed) — the driver derives the type declaration
 ///     from the value at runtime.
 ///
-/// **Single-result-set on the bind path (driver limitation, `PLAN.md` §0 F5):** the
-/// driver has no named multi-result API, so a query that actually has bind params
-/// returns only its first result set. A query with only raw-text params (or none)
-/// still routes through the multi-result path after splicing, preserving
-/// multi-result there. Follow-up: bead for a positional `@cust`→`@p1` remap if
-/// multi-result-with-bind is ever needed.
+/// **Binding parameters and reading several result sets are mutually exclusive.**
+/// The driver's named-parameter call returns exactly one result stream, and its
+/// multi-result call accepts positional parameters only, so a query that carries
+/// at least one bind param yields only its first result set. A query whose params
+/// are all raw-text (or which has none) is spliced and then run through the
+/// multi-result call, so it keeps every result set.
+// Supporting both at once means rewriting each `@name` in the SQL to the driver's
+// positional form (`@p1`, `@p2`, …) and passing the values in that order.
+// Unbuilt: nothing so far needs bind params and multiple result sets together.
 pub async fn run_with_params(
     cfg: &ConnectionConfig,
     store: &dyn SecretStore,
@@ -280,10 +288,11 @@ pub async fn run_with_params(
 }
 
 /// Splice raw-text params, bind typed params, apply `ctx`'s `USE`, and run on an
-/// ALREADY-connected client — neither connects nor closes. Named-empty keeps the
-/// multi-result path (raw-text-only or no params); named-present uses
-/// `sp_executesql` (single result set, F5). Split out of [`run_with_params`] so
-/// that fn can `close()` the client even when this errors.
+/// ALREADY-connected client — neither connects nor closes. With no bind params
+/// (raw-text-only, or none at all) this keeps the multi-result path; with at
+/// least one, it uses `sp_executesql` and gets back a single result set. Split
+/// out of [`run_with_params`] so that fn can `close()` the client even when this
+/// errors.
 async fn run_params_on_client(
     client: &mut Client<Ready>,
     ctx: &ExecutionContext,
@@ -312,7 +321,7 @@ async fn run_params_on_client(
         // No bind params → keep the multi-result path (raw-text-only or no params).
         collect_multi(client, &sent_sql).await
     } else {
-        // Bind params → `sp_executesql`, a single result set (F5).
+        // Bind params → `sp_executesql`, which returns a single result set.
         let stream = client
             .query_named(&sent_sql, &named)
             .await

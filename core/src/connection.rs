@@ -24,8 +24,8 @@ pub struct ConnectionId(pub String);
 
 /// Saved connection metadata. **No password field by construction** — it can
 /// never be written to disk. SQL-auth only (no auth-mode enum): no Entra/AAD/
-/// Windows auth (`CLAUDE.md` scope). `strict`/`no_tls` encrypt modes are
-/// deferred (`PLAN.md` §2) and intentionally not modeled.
+/// Windows auth (`CLAUDE.md` scope). The `strict` and `no_tls` encrypt modes are
+/// intentionally not modeled; the two fields below cover what this client needs.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConnectionConfig {
@@ -36,10 +36,10 @@ pub struct ConnectionConfig {
     pub server: String,
     pub username: String,
     pub default_database: Option<String>,
-    /// `false` ⇒ `Encrypt=false` ("optional") — the locked default (`PLAN.md` §2).
+    /// `false` ⇒ `Encrypt=false` ("optional"), which is the default.
     #[serde(default)]
     pub encrypt: bool,
-    /// `true` ⇒ `TrustServerCertificate=true` — the locked default (`PLAN.md` §2).
+    /// `true` ⇒ `TrustServerCertificate=true`, which is the default.
     #[serde(default = "default_true")]
     pub trust_server_certificate: bool,
     /// `false` ⇒ session-only password (prompted at connect, held in memory,
@@ -166,8 +166,8 @@ pub trait SecretStore: Send + Sync {
 /// service = `"coot"`, account = the connection id. `keyring`'s `NoEntry`
 /// (nothing stored) maps to `Ok(None)` on read and `Ok(())` on delete
 /// (idempotent); every other keyring error is stringified into
-/// [`CoreError::Secret`] so the driver-agnostic error surface (`PLAN.md` §3) is
-/// preserved — no `#[from] keyring::Error`.
+/// [`CoreError::Secret`] so the backend-agnostic error surface is preserved —
+/// no `#[from] keyring::Error`.
 pub struct KeychainSecretStore;
 
 impl KeychainSecretStore {

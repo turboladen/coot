@@ -1,4 +1,4 @@
-//! Saved-query + parameter data model (`PLAN.md` §4/§5).
+//! Saved-query + parameter data model.
 //!
 //! These are `core`-owned, UI-facing serde types — no `mssql_client` import (the
 //! driver boundary, `CLAUDE.md`). Mirrors `connection.rs`: a newtype id, camelCase
@@ -6,9 +6,14 @@
 //! hand-edited JSON file loads cleanly. Persistence lives in
 //! [`crate::query_store`], exactly as `connection_store` splits from `connection`.
 //!
-//! This module defines the shapes only. The behaviors that hang off them —
-//! bind vs raw-text substitution, remember-last-value, scope resolution,
-//! auto-type from the catalog, the library UI — live elsewhere.
+//! This module defines the shapes only, and not every field is interpreted
+//! inside `core`. Bind-versus-raw-text substitution lives in
+//! [`crate::param_bind`] and [`crate::executor`], and [`crate::query_store`]
+//! persists whatever it is handed. But `scope` and `last_value` are carried
+//! through `core` untouched: the frontend decides which tier a value belongs to
+//! and writes it back into the `SavedQuery` it sends. `sql_type` is likewise
+//! filled in there, from a column's catalog type. So a change to what a tier
+//! MEANS is a frontend change, even though the tiers are named here.
 
 // The bead wave these shapes come from: d28.1 defines them here; d28.2
 // substitutes, d28.3 remembers last values, d28.4 resolves scope, d28.5
@@ -23,7 +28,7 @@ use serde::{Deserialize, Serialize};
 #[serde(transparent)]
 pub struct SavedQueryId(pub String);
 
-/// The small set of SQL types a **bind** param can declare (`PLAN.md` §5). NOT the
+/// The small set of SQL types a **bind** param can declare. NOT the
 /// full wire-token surface ([`crate::friendly_type_name`]) — deliberately capped to
 /// "the things you filter by." A bind param carries `Some(SqlType)`; a raw-text
 /// fragment carries `None`.
@@ -66,10 +71,10 @@ pub enum SqlType {
     Money,
 }
 
-/// Resolution tier for a param value (`PLAN.md` §5): Global defaults < Session
-/// values < per-query Local. Unit variants — the *value* lives in
-/// [`Param::last_value`] / the session and global stores; scope is only the tier
-/// discriminator.
+/// Resolution tier for a param value. Narrowest wins: a per-query `Local` value
+/// beats a `Session` value, which beats a `Global` default. Unit variants — the
+/// *value* lives in [`Param::last_value`] or in the session and global stores;
+/// the scope is only the tier discriminator.
 ///
 /// Closed set (the model names exactly three tiers) → not `#[non_exhaustive]`, so
 /// every resolution `match` stays exhaustive. `Default = Local` (a saved query's
@@ -84,7 +89,7 @@ pub enum ParamScope {
     Local,
 }
 
-/// A query parameter (`PLAN.md` §5). The `sql_type` discriminator decides the
+/// A query parameter. The `sql_type` discriminator decides the
 /// substitution mechanism, which is implemented in `param_bind`, NOT here:
 ///   `Some(_)` → **bind** param, real `sp_executesql` (typed, safe).
 ///   `None`    → **raw-text** fragment, string-spliced (unsafe, render LOUD).
@@ -106,9 +111,10 @@ pub struct Param {
     pub scope: ParamScope,
 }
 
-/// A named, searchable library item (`PLAN.md` §5) — distinct from a scratch tab.
-/// Minimal by design ("good enough for me"): no description/timestamps this wave
-/// (both are non-breaking `#[serde(default)]` additions later if wanted).
+/// A named, searchable library item — distinct from a scratch tab.
+/// Minimal by design ("good enough for me"): it carries no description and no
+/// timestamps, and either would be a non-breaking `#[serde(default)]` addition
+/// if it turned out to be wanted.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SavedQuery {
@@ -117,8 +123,8 @@ pub struct SavedQuery {
     pub name: String,
     /// The SQL text (may contain `@param` placeholders).
     pub sql: String,
-    /// The **target database**, separate from the connection (`PLAN.md` §4:
-    /// database is execution context). `None` = "current" / the connection's
+    /// The **target database**, separate from the connection, because the
+    /// database is execution context. `None` = "current" / the connection's
     /// default. The executor maps this to `ExecutionContext.database`.
     pub target_database: Option<String>,
     /// Declared params. Order preserved (`Vec`, not a map) for stable UI display.
