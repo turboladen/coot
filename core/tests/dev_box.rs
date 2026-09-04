@@ -25,8 +25,8 @@
 
 use coot_core::{
     CellValue, ConnectionConfig, ConnectionId, DbRunOutcome, ExecutionContext, InMemorySecretStore,
-    QueryResult, ResolvedParam, SecretStore, SqlType, build_connection_string, run, run_fanout,
-    run_with_params,
+    QueryResult, ResolvedParam, SecretStore, SqlType, build_connection_string, capture_plan_xml,
+    run, run_fanout, run_with_params,
 };
 
 /// Build a live `(cfg, store)` from `MSSQL_*` env, or `None` when any required
@@ -659,5 +659,52 @@ async fn fanout_runs_each_db_and_captures_per_db_errors() {
         bogus.results.is_empty(),
         "a failed DB has no result sets, got {}",
         bogus.results.len()
+    );
+}
+
+// Estimated-plan capture rests on one assumption: with `SET SHOWPLAN_XML ON`,
+// nothing in the submitted SQL executes. That holds only while a server that
+// refuses SHOWPLAN makes the capture fail, so this pins that a denial surfaces
+// as `Err` instead of the batch quietly running for real.
+//
+// Gated on `MSSQL_NO_SHOWPLAN_DATABASE`, naming a database on the DEV box where
+// the login lacks the SHOWPLAN permission. Find one with:
+//
+//     SELECT HAS_PERMS_BY_NAME(DB_NAME(), 'DATABASE', 'SHOWPLAN');
+//
+// which returns 0 where the permission is absent (billz-bkm).
+#[tokio::test]
+async fn capture_fails_when_the_login_lacks_showplan() {
+    let Some((cfg, store)) = env_connection() else {
+        eprintln!("skipping capture_fails_when_the_login_lacks_showplan: MSSQL_* env not set");
+        return;
+    };
+    let Ok(database) = std::env::var("MSSQL_NO_SHOWPLAN_DATABASE") else {
+        eprintln!(
+            "skipping capture_fails_when_the_login_lacks_showplan: \
+             MSSQL_NO_SHOWPLAN_DATABASE not set"
+        );
+        return;
+    };
+    let ctx = ExecutionContext::new(cfg.id.clone()).with_database(&database);
+
+    // A plain read first, so a failure below is attributable to SHOWPLAN alone.
+    // Without it a misspelled database or an unreachable box also produces the
+    // `Err` this asserts, and the test passes while proving nothing.
+    let sql = "SELECT name FROM sys.objects";
+    run(&cfg, &store, &ctx, sql)
+        .await
+        .expect("the login must be able to read sys.objects in MSSQL_NO_SHOWPLAN_DATABASE");
+
+    let err = capture_plan_xml(&cfg, &store, &ctx, sql)
+        .await
+        .expect_err("capture must fail where the login lacks SHOWPLAN");
+
+    // Error 262 is the server's SHOWPLAN denial. Matching on it separates a
+    // refusal from any other transport or syntax failure.
+    let text = err.to_string();
+    assert!(
+        text.contains("262") || text.to_ascii_uppercase().contains("SHOWPLAN"),
+        "expected a SHOWPLAN denial, got: {text}"
     );
 }

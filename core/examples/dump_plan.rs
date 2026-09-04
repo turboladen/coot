@@ -139,6 +139,15 @@ const FIXTURES: &[(&str, &str)] = &[
         "aggregate",
         "SELECT type_desc, COUNT(*) FROM sys.objects GROUP BY type_desc",
     ),
+    // A comma join with no ON predicate, which the optimizer reports as
+    // `<Warnings NoJoinPredicate="true">`. This is the accidental-cartesian
+    // signal the verdict grades Problem severity, and it is the one warning
+    // shape reachable from `sys.*` alone: the others need a table this capture
+    // is not permitted to create.
+    (
+        "no-join-predicate",
+        "SELECT TOP 10 o.name, s.name FROM sys.objects o, sys.schemas s",
+    ),
 ];
 
 #[tokio::main]
