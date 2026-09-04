@@ -36,10 +36,15 @@ const SHOWPLAN_OFF: &str = "SET SHOWPLAN_XML OFF";
 /// The query is COMPILED, not run — but state that dependency honestly rather
 /// than as a promise: `sql` never executes *provided* SHOWPLAN actually engaged,
 /// and what guarantees that is `run_batch(…, SHOWPLAN_ON)` returning `Err`
-/// whenever it does not. A login lacking SHOWPLAN permission is the case worth
-/// proving, and it is not yet proven against a real server.
-// Bead billz-bkm verifies the no-SHOWPLAN-permission case against a restricted
-// login. Until it runs, the `Err` guarantee above is reasoned, not observed.
+/// whenever it does not. A login denied SHOWPLAN gets that `Err`, observed
+/// against a real server.
+// The server checks SHOWPLAN against the databases holding the objects a
+// statement NAMES, not against the session's current database. A denied login
+// still captures `SELECT … FROM sys.objects` successfully, because a
+// catalog-only statement never reaches the denial. So a probe built from
+// `sys.*` reports a permission this path does not have, and
+// `capture_fails_when_the_login_lacks_showplan` in `core/tests/dev_box.rs`
+// targets a user table for that reason (billz-bkm).
 pub async fn capture_xml(
     cfg: &ConnectionConfig,
     store: &dyn SecretStore,
@@ -92,8 +97,8 @@ pub async fn capture_xml(
 /// Returns only the FIRST document. Harmless for one batch — SHOWPLAN emits a
 /// single document covering every statement in it — but silently lossy if
 /// `GO`-split SQL (multiple batches) ever reaches this path.
-// The shape is unpinned because the DEV box is unreachable from here; bead
-// billz-bkm pins it against a real server.
+// Every fixture `just dump-plans` writes goes through here, so the success path
+// runs against a real server's result-set shape on each capture.
 fn first_xml_cell(results: Vec<QueryResult>) -> Result<String> {
     for r in results {
         for row in r.rows {
