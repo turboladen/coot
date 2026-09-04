@@ -109,7 +109,39 @@ const FIXTURE_DB: &str = "master";
 // catalog view references it whether or not the query mentions it — 103 times
 // across the fixtures, against 544 for `master`. An allowlist of FIXTURE_DB
 // alone would refuse all five.
-const ALLOWED_DATABASES: &[&str] = &[FIXTURE_DB, "mssqlsystemresource"];
+//
+// `tempdb` admits the global temp tables in [`SCRATCH_SETUP`], which are the only
+// way to reach a shape the catalog cannot produce. It costs this list nothing:
+// the check exists to catch a capture that escaped FIXTURE_DB into a work
+// database, and `tempdb` is a reserved name no work database can hold. What it
+// does widen is the column names a fixture can carry, which is why the DDL lives
+// in this file — see [`SCRATCH_SETUP`].
+const ALLOWED_DATABASES: &[&str] = &[FIXTURE_DB, "mssqlsystemresource", "tempdb"];
+
+/// The global temp tables the scratch fixtures read, to be run by hand in a SQL
+/// client whose window stays open for the duration of `just dump-plans`.
+///
+/// `##` (global), not `#` (session-local): the capture connects on its own
+/// connection, and only a global temp table is visible across sessions. Closing
+/// that client window drops both tables, so nothing persists on the server.
+//
+// THIS DDL IS IN THE REPO FOR THE SAME REASON THE QUERIES ARE. A plan names the
+// columns of every object it touches, and a temp table's columns are whatever
+// created it — `SELECT * INTO ##t FROM <a work table>` would put real column
+// names into a document that passes all four defenses, because they are neither
+// a configured secret nor a database name. Generic names are what makes that
+// safe, so the statement that chooses them is reviewed here rather than typed
+// from memory. Read it before running it; change it and you are changing what
+// can reach a fixture.
+const SCRATCH_SETUP: &str = "\
+    SELECT TOP (200000) IDENTITY(int, 1, 1) AS c1,\n\
+    \x20      ABS(CHECKSUM(NEWID())) % 1000 AS c2,\n\
+    \x20      CAST('x' AS char(200)) AS c3\n\
+    INTO ##coot_mi\n\
+    FROM sys.all_columns a CROSS JOIN sys.all_columns b;\n\
+    \n\
+    SELECT * INTO ##coot_ui FROM ##coot_mi;\n\
+    CREATE INDEX ix_coot_ui ON ##coot_ui (c2) WHERE c2 = 1;\n";
 
 /// Every query `just dump-plans` captures, and the fixture filename each one
 /// writes. Add a query here to add a fixture.
@@ -148,6 +180,16 @@ const FIXTURES: &[(&str, &str)] = &[
         "no-join-predicate",
         "SELECT TOP 10 o.name, s.name FROM sys.objects o, sys.schemas s",
     ),
+    // Needs SCRATCH_SETUP. 200000 rows with no index on c2 puts the plan over
+    // the cost threshold where the optimizer volunteers `<MissingIndexes>`.
+    ("missing-index", "SELECT c1, c3 FROM ##coot_mi WHERE c2 = 1"),
+    // Needs SCRATCH_SETUP. The filtered index covers `c2 = 1`, but a variable
+    // leaves the optimizer unable to prove the filter applies, which is what it
+    // reports as `<Warnings><UnmatchedIndexes>`.
+    (
+        "unmatched-index",
+        "DECLARE @v int = 1; SELECT c1 FROM ##coot_ui WHERE c2 = @v",
+    ),
 ];
 
 #[tokio::main]
@@ -168,6 +210,16 @@ async fn main() {
         eprintln!("usage: dump_plan [<fixture-name> <sql>]");
         std::process::exit(1);
     };
+
+    // A scratch fixture fails to compile with "Invalid object name" when the
+    // client window holding the global temp tables is closed, which reads as a
+    // driver fault rather than a missing setup step. Say so up front.
+    if work.iter().any(|(_, sql)| sql.contains("##")) {
+        eprintln!(
+            "Some fixtures read global temp tables. Run this in a SQL client and \
+             leave the window OPEN:\n\n{SCRATCH_SETUP}"
+        );
+    }
 
     // Capture EVERYTHING first and secret-scan it before writing a single file.
     // A fixture that leaks must never reach the filesystem, where it could be
@@ -1658,7 +1710,16 @@ mod tests {
         // while connected to master can still name one. `scan_for_secrets` cannot
         // catch it — it searches for the CONFIGURED database, and this is a table
         // it was never told about.
-        for database in ["[Contoso_Prod]", "[tempdb]", "[MASTERPLAN]", "[msdb]", ""] {
+        // `[MASTERPLAN]` and `[tempdbx]` are the near misses: an allowlist that
+        // compared by prefix rather than by whole name would accept both.
+        for database in [
+            "[Contoso_Prod]",
+            "[MASTERPLAN]",
+            "[tempdbx]",
+            "[msdb]",
+            "[model]",
+            "",
+        ] {
             for xml in document_naming(database) {
                 let err = sanitize(&xml).unwrap_err();
                 assert!(
@@ -1681,6 +1742,9 @@ mod tests {
             "[mssqlsystemresource]",
             "mssqlsystemresource",
             "[MSSQLSystemResource]",
+            "[tempdb]",
+            "tempdb",
+            "[TempDB]",
         ] {
             for xml in document_naming(database) {
                 assert!(
