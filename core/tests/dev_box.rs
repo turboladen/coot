@@ -668,11 +668,13 @@ async fn fanout_runs_each_db_and_captures_per_db_errors() {
 // as `Err` instead of the batch quietly running for real.
 //
 // Gated on `MSSQL_NO_SHOWPLAN_DATABASE`, naming a database on the DEV box where
-// the login lacks the SHOWPLAN permission. Find one with:
+// the login lacks the SHOWPLAN permission (billz-bkm).
 //
-//     SELECT HAS_PERMS_BY_NAME(DB_NAME(), 'DATABASE', 'SHOWPLAN');
-//
-// which returns 0 where the permission is absent (billz-bkm).
+// The permission is checked here rather than taken on trust, and checked on the
+// same connection that attempts the capture, because `HAS_PERMS_BY_NAME` run by
+// hand in another client answers for whatever login THAT client used. A skip
+// says the named database does not deny this login anything and the assertion
+// below would prove nothing.
 #[tokio::test]
 async fn capture_fails_when_the_login_lacks_showplan() {
     let Some((cfg, store)) = env_connection() else {
@@ -688,17 +690,54 @@ async fn capture_fails_when_the_login_lacks_showplan() {
     };
     let ctx = ExecutionContext::new(cfg.id.clone()).with_database(&database);
 
-    // A plain read first, so a failure below is attributable to SHOWPLAN alone.
-    // Without it a misspelled database or an unreachable box also produces the
-    // `Err` this asserts, and the test passes while proving nothing.
-    let sql = "SELECT name FROM sys.objects";
-    run(&cfg, &store, &ctx, sql)
-        .await
-        .expect("the login must be able to read sys.objects in MSSQL_NO_SHOWPLAN_DATABASE");
+    let perms = run(
+        &cfg,
+        &store,
+        &ctx,
+        "SELECT HAS_PERMS_BY_NAME(DB_NAME(), 'DATABASE', 'SHOWPLAN') AS granted",
+    )
+    .await
+    .expect("the login must be able to reach MSSQL_NO_SHOWPLAN_DATABASE");
+    if perms[0].rows[0][0] != CellValue::Int(0) {
+        eprintln!(
+            "skipping capture_fails_when_the_login_lacks_showplan: this login HOLDS \
+             SHOWPLAN in {database}"
+        );
+        return;
+    }
 
-    let err = capture_plan_xml(&cfg, &store, &ctx, sql)
-        .await
-        .expect_err("capture must fail where the login lacks SHOWPLAN");
+    // SHOWPLAN is checked against the databases holding the objects a statement
+    // names, so a catalog-only query may never reach the database-level denial.
+    // A user table is what puts the permission on the path being tested.
+    let table = run(
+        &cfg,
+        &store,
+        &ctx,
+        "SELECT TOP 1 QUOTENAME(s.name) + '.' + QUOTENAME(t.name) AS qualified \
+         FROM sys.tables t JOIN sys.schemas s ON s.schema_id = t.schema_id \
+         ORDER BY t.name",
+    )
+    .await
+    .expect("listing tables must succeed");
+    let Some(CellValue::Text(qualified)) = table[0].rows.first().map(|r| r[0].clone()) else {
+        eprintln!(
+            "skipping capture_fails_when_the_login_lacks_showplan: no user table \
+             visible in {database}"
+        );
+        return;
+    };
+
+    // `TOP (0)` still needs a plan, and returns nothing if SHOWPLAN somehow does
+    // not engage — so the failure mode under test cannot pull rows out of a work
+    // database. The name stays in memory; nothing here writes a file.
+    let err = capture_plan_xml(
+        &cfg,
+        &store,
+        &ctx,
+        &format!("SELECT TOP (0) * FROM {qualified}"),
+    )
+    .await
+    .expect_err("capture must fail where the login lacks SHOWPLAN");
 
     // Error 262 is the server's SHOWPLAN denial. Matching on it separates a
     // refusal from any other transport or syntax failure.
