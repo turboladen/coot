@@ -78,6 +78,14 @@ ui-build:
 probe-typed:
     cargo run -p coot-core --example typed_probe
 
+# Work data — keep input and output under the gitignored /corpus/, and read the
+# example's module doc before pointing this at anything. Needs the same MSSQL_*
+# vars as the probes.
+#
+# Explain every query in a JSONL corpus, one parsed plan per output line.
+corpus-explain file="corpus/queries.jsonl":
+    cargo run -q -p coot-core --example corpus_explain -- {{file}}
+
 # Untyped column/row dump probe against the DEV box.
 probe-dynamic:
     cargo run -p coot-core --example dynamic_dump

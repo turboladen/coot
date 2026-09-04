@@ -34,8 +34,12 @@ enough for me" beats "general-purpose." Do not build for scale, multi-user, or d
 
 - Build only the current phase (`PLAN.md` §9). Do not gold-plate toward later phases.
 - SQL-auth only. No Entra/AAD/Windows auth.
-- Do **not** build: cross-DB fan-out, ER diagrams, MCP server, tree nodes beyond
-  Databases/Tables/Columns/Views. **Omit** unbuilt tree nodes — don't render disabled stubs.
+- Do **not** build: ER diagrams, tree nodes beyond Databases/Tables/Columns/Views. **Omit**
+  unbuilt tree nodes — don't render disabled stubs.
+- An **MCP server** (`billz-26u`) is in scope. It is how the plan and schema analyses reach an
+  agent, which is the second product goal; the original exclusion assumed both core jobs were
+  human-in-the-loop and visual, and the corpus-analysis job is neither. Still not the current
+  phase — build it when its bead is ready, not opportunistically.
 - If a "nice to have" tempts you and it isn't in the current phase, **file a deferred bead** (or
   leave a `// TODO(phaseN):` pointing at its id) and move on — don't build it.
 

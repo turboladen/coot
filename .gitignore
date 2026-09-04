@@ -11,3 +11,8 @@
 
 # superpowers specs/plans are transient working artifacts (see docs/adr/README.md)
 docs/superpowers/
+
+# corpus_explain input and output: real queries against a real database, so the
+# plans name work tables and columns. Unlike tests/fixtures/plans/, none of it is
+# sanitized and none of it belongs in git.
+/corpus/

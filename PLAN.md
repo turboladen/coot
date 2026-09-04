@@ -32,8 +32,8 @@ get re-opened, not so they get re-debated.
 - "Statement under caret" precision (v1 runs the selection or the batch — see §6).
 - Cross-database fan-out ("run across all `Contoso_*`"). Deferred, but the execution model is
   shaped so it's a later addition, not a rewrite (see §4).
-- MCP server. Ruled out on purpose — the two core jobs (see a schema, hand-run curated SQL) are
-  inherently human-in-the-loop and visual.
+- Cross-tenant plan variance. The same query judged across every tenant answers "which tenant is
+  slow", which is not a question the corpus-analysis job asks.
 
 ---
 
