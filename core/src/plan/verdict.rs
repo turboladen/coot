@@ -198,19 +198,22 @@ fn visit_scans(node: &PlanNode, out: &mut Vec<Finding>) {
 /// Takes `&PlanWarning` and nothing else, because
 /// [`PlanStatement::all_warnings`] — the only correct way to reach every warning
 /// — yields warnings without their operator. That costs `NoJoinPredicate` and
-/// `SpillToTempDb` their `evidence`, which is the right trade: reading only the
-/// operator tree to recover an object name would go blind on every
-/// statement-level warning, which is all of the ones we have ever captured.
+/// `SpillToTempDb` their `evidence`, which is the right trade: either position
+/// alone goes blind on the warnings that land in the other, and the captured
+/// fixtures hold both.
 ///
-// Only `ImplicitConversion` has ever been captured (`scan.sqlplan`, three of
-// them). `NoJoinPredicate`, `SpillToTempDb` and `UnmatchedIndex` have not, so
-// the gradings below are a belief about warnings that may never arrive in the
-// shape assumed here. Their tests hand-construct a `PlanWarning`, which is a
-// step further from reality than parse.rs's schema-derived XML: they prove the
+// `ImplicitConversion` is statement-level in `scan.sqlplan` (three of them) and
+// `NoJoinPredicate` is operator-level in `no-join-predicate.sqlplan`, which is
+// what makes the two positions a fact rather than a reading of the schema.
+// `SpillToTempDb` and `UnmatchedIndex` have never been captured, so their
+// gradings remain a belief about warnings that may never arrive in the shape
+// assumed here. Their tests hand-construct a `PlanWarning`, which is a step
+// further from reality than parse.rs's schema-derived XML: they prove the
 // mapping, never that such a warning exists.
 //
-// TODO(billz-e75): capture a `CROSS JOIN` with no predicate and a big `ORDER BY`
-// under a low memory grant, then revisit both the gradings and `evidence: None`.
+// TODO(billz-0av): a spill is a runtime event, so an estimated plan cannot carry
+// one. Revisit `SpillToTempDb`'s grading and `evidence: None` alongside
+// actual-run statistics, which is the only place a specimen can come from.
 fn warning_finding(warning: &PlanWarning) -> Finding {
     match warning {
         PlanWarning::ImplicitConversion {

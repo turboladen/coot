@@ -253,13 +253,14 @@ fn rel_op(n: Node) -> PlanNode {
 /// element gains new kinds across server versions and an unrecognised one is not
 /// a reason to fail a parse.
 ///
-/// **Only `PlanAffectingConvert` has ever been seen in a captured document.**
-/// `NoJoinPredicate`, `SpillToTempDb`, and `UnmatchedIndexes` are written from
-/// the ShowPlanXML schema with no specimen to check them against — the same
-/// standing as [`missing_index`], and the same warning applies: these branches
-/// prove only that the parser does what we BELIEVE the schema says.
-// billz-e75 covers capturing one of each: a `CROSS JOIN` with no predicate, and
-// a big `ORDER BY` under a low memory grant.
+/// **`PlanAffectingConvert` and `NoJoinPredicate` have been seen in a captured
+/// document; `SpillToTempDb` and `UnmatchedIndexes` have not.** Those two are
+/// written from the ShowPlanXML schema with no specimen to check them against —
+/// the same standing as [`missing_index`], and the same warning applies: those
+/// branches prove only that the parser does what we BELIEVE the schema says.
+// A spill is a runtime event, so `SET SHOWPLAN_XML ON` cannot produce one at
+// all; that specimen belongs to billz-0av. `UnmatchedIndexes` needs a filtered
+// index on a table, which billz-e75 records as unreachable on this server.
 fn warnings_from(w: Node) -> Vec<PlanWarning> {
     let mut out = Vec::new();
 
@@ -270,11 +271,12 @@ fn warnings_from(w: Node) -> Vec<PlanWarning> {
     // document, so neither version nor serializer drift explains it away. Verified
     // across the fixtures: `0`/`1` on Parallel, Ordered, ForceSeek, ForcedIndex,
     // NoExpandHint, StartupExpression, Optimized; `true`/`false` on
-    // RetrievedFromCache, SecurityPolicyApplied. No fixture has a `NoJoinPredicate`
-    // specimen (billz-e75 captures one), so which form IT uses is unknown, and
-    // guessing wrong costs a permanent silent false negative on an accidental
-    // cartesian product — a Problem-severity finding. All four forms are pinned by
-    // `no_join_predicate_is_read_in_either_boolean_encoding`.
+    // RetrievedFromCache, SecurityPolicyApplied. This attribute takes the `1` form
+    // in `no-join-predicate.sqlplan`, so matching only `"true"` would be a
+    // permanent silent false negative on an accidental cartesian product — a
+    // Problem-severity finding. All four forms are pinned by
+    // `no_join_predicate_is_read_in_either_boolean_encoding`; the captured form is
+    // pinned by `captured_no_join_predicate_fixture_is_read`.
     if matches!(w.attribute("NoJoinPredicate"), Some("true" | "1")) {
         out.push(PlanWarning::NoJoinPredicate);
     }
@@ -650,8 +652,8 @@ mod tests {
     }
 
     // A statement-level `<Warnings NoJoinPredicate=…>` with `attr` as the
-    // attribute's literal text. Schema-derived, like
-    // `SCHEMA_DERIVED_MISSING_INDEX` — no captured plan contains this warning.
+    // attribute's literal text. Reaches the encodings the captured fixture does
+    // not show, so both stay covered whichever one a server sends.
     fn schema_derived_no_join_predicate(attr: &str) -> String {
         format!(
             r#"<?xml version="1.0"?>
@@ -669,13 +671,35 @@ mod tests {
     }
 
     #[test]
+    fn captured_no_join_predicate_fixture_is_read() {
+        // The specimen, and it settles two beliefs at once. A real server writes
+        // this attribute as `1`, so a parser matching only `"true"` stays silent
+        // on a genuine cartesian product. And it puts `<Warnings>` under the
+        // `<RelOp>` that carries the join, not under `<QueryPlan>` beside it —
+        // reading `statements[].warnings` alone finds nothing here, which is what
+        // `all_warnings` exists to prevent.
+        let plan = parse_plan(&fixture("no-join-predicate.sqlplan")).unwrap();
+        assert!(
+            plan.statements
+                .iter()
+                .any(|s| s.all_warnings().any(|w| *w == PlanWarning::NoJoinPredicate)),
+            "the captured cartesian plan produced no NoJoinPredicate warning"
+        );
+        // Pin the position, so a future change that hoists operator warnings onto
+        // the statement cannot pass this test while breaking the distinction.
+        assert!(
+            plan.statements.iter().all(|s| s.warnings.is_empty()),
+            "this warning is operator-level in the captured document"
+        );
+    }
+
+    #[test]
     fn no_join_predicate_is_read_in_either_boolean_encoding() {
-        // NOT fixture coverage — see `warnings_from`. This server writes
+        // The captured fixture shows only the `1` form. This server writes
         // `xs:boolean` BOTH ways in a single document (`SecurityPolicyApplied=
         // "false"` on `<StmtSimple>`, `ForceSeek="0"` on the `<IndexScan>` under
-        // it), and we have no specimen of this attribute, so matching only
-        // `"true"` would be a coin flip whose losing side is a permanent silent
-        // false negative on an accidental cartesian product.
+        // it), so the other form stays covered here rather than left to a server
+        // that happens to choose differently.
         for attr in ["true", "1"] {
             let plan = parse_plan(&schema_derived_no_join_predicate(attr)).unwrap();
             assert_eq!(

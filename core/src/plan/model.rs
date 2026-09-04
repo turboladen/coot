@@ -35,8 +35,9 @@ impl PlanStatement {
     /// The judge must use THIS rather than walking `root` itself. ShowPlanXML
     /// puts a warning in one of two places depending on what kind it is, and a
     /// consumer that reads only the operator tree silently sees nothing at all
-    /// for a document whose warnings are all statement-level — which is exactly
-    /// the shape of `scan.sqlplan`, the only fixture we own that has any.
+    /// for a document whose warnings are all statement-level — the shape of
+    /// `scan.sqlplan` — while a consumer reading only `warnings` sees nothing in
+    /// `no-join-predicate.sqlplan`, where the warning sits on the operator.
     pub fn all_warnings(&self) -> impl Iterator<Item = &PlanWarning> {
         let mut out: Vec<&PlanWarning> = self.warnings.iter().collect();
         let mut stack: Vec<&PlanNode> = self.root.iter().collect();
