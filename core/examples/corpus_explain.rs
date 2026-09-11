@@ -16,6 +16,22 @@
 //! prompt that produced it. `database` is optional and falls back to
 //! `MSSQL_DATABASE`.
 //!
+//! # Explaining a multi-tenant corpus against one database
+//!
+//! Traces from a per-tenant product name a different database on nearly every
+//! line, and most of them do not exist on any one server. `--database <name>`
+//! explains the whole corpus against one that does. Each result line then
+//! carries `requestedDatabase` alongside `database`, so a reader can never
+//! mistake the plan for one captured against the tenant the query was written
+//! for.
+//!
+//! This is sound only where the tenants share a schema, and even then the
+//! CARDINALITY ESTIMATES come from the substitute's statistics. Findings that
+//! follow from the schema — an implicit conversion, a join with no predicate, a
+//! column with no usable index — hold. Findings that follow from row counts, and
+//! the operator choices the optimizer makes because of them, describe the
+//! substitute.
+//!
 //! Output is JSONL, one line per input line, in the same order, plus a tally on
 //! stderr. `objects` is every table the plan touched, so the union across the
 //! run says exactly which tables to export schema for.
@@ -53,7 +69,16 @@ use serde_json::{Value, json};
 
 #[tokio::main]
 async fn main() {
-    let lines = match read_corpus() {
+    let args = match parse_args() {
+        Ok(args) => args,
+        Err(e) => {
+            eprintln!("{e}");
+            eprintln!("usage: corpus_explain [<corpus.jsonl>] [--database <name>]");
+            std::process::exit(1);
+        }
+    };
+
+    let lines = match read_corpus(args.path.as_deref()) {
         Ok(lines) => lines,
         Err(e) => {
             eprintln!("{e}");
@@ -69,6 +94,14 @@ async fn main() {
         std::process::exit(1);
     };
 
+    if let Some(db) = &args.database {
+        eprintln!(
+            "explaining all {} queries against {db}, ignoring the database each was \
+             generated for. `requestedDatabase` records that on every result line.",
+            lines.len()
+        );
+    }
+
     let stdout = std::io::stdout();
     let mut out = BufWriter::new(stdout.lock());
     let mut ok = 0usize;
@@ -80,10 +113,14 @@ async fn main() {
     // millions, and a burst of parallel connects against a shared box buys
     // nothing worth the contention.
     for (n, entry) in lines.iter().enumerate() {
-        let database = entry.database.as_deref().unwrap_or(&fallback_db);
+        let (database, substituted_for) = resolve_database(
+            args.database.as_deref(),
+            entry.database.as_deref(),
+            &fallback_db,
+        );
         let ctx = ExecutionContext::new(cfg.id.clone()).with_database(database);
 
-        let line = match explain_one(&cfg, &store, &ctx, &entry.sql).await {
+        let mut line = match explain_one(&cfg, &store, &ctx, &entry.sql).await {
             Ok(plan) => {
                 ok += 1;
                 let mut objects = Vec::new();
@@ -140,6 +177,10 @@ async fn main() {
             Err(Failure::Fatal(msg)) => abort(&mut out, n + 1, lines.len(), &msg),
         };
 
+        if let Some(r) = substituted_for {
+            line["requestedDatabase"] = json!(r);
+        }
+
         if let Err(e) = writeln!(out, "{line}") {
             eprintln!("writing result {n}: {e}");
             std::process::exit(1);
@@ -176,14 +217,59 @@ struct Entry {
     database: Option<String>,
 }
 
-/// Read the corpus from the path in `argv[1]`, or stdin when there is none.
+/// The database to explain a query against, and the one it asked for when a
+/// substitution happened.
+///
+/// `--database` wins over the corpus, which wins over `MSSQL_DATABASE`. The
+/// second element is `Some` only when the corpus named a database and something
+/// else was used, so a caller can record the substitution on the result without
+/// writing a field that says nothing.
+fn resolve_database<'a>(
+    override_db: Option<&'a str>,
+    requested: Option<&'a str>,
+    fallback: &'a str,
+) -> (&'a str, Option<&'a str>) {
+    let used = override_db.or(requested).unwrap_or(fallback);
+    (used, requested.filter(|r| *r != used))
+}
+
+/// A corpus path, and a database that overrides the one every entry asks for.
+struct Args {
+    path: Option<String>,
+    database: Option<String>,
+}
+
+/// Parse `[<path>] [--database <name>]`. A missing path reads stdin.
+fn parse_args() -> std::result::Result<Args, String> {
+    let mut path: Option<String> = None;
+    let mut database = None;
+    let mut rest = std::env::args().skip(1);
+    while let Some(arg) = rest.next() {
+        match arg.as_str() {
+            "--database" | "-d" => {
+                database = Some(rest.next().ok_or("--database needs a database name")?);
+            }
+            // A bare `-` is the conventional name for stdin, so it is a path.
+            other if other.starts_with('-') && other != "-" => {
+                return Err(format!("unknown option {other}"));
+            }
+            other => {
+                if path.replace(other.to_string()).is_some() {
+                    return Err("give at most one corpus path".into());
+                }
+            }
+        }
+    }
+    Ok(Args { path, database })
+}
+
+/// Read the corpus from `path`, or stdin when there is none.
 ///
 /// Reads the whole corpus and rejects a malformed line before anything connects,
 /// so a typo in the last line neither surfaces after several minutes of captures
 /// nor requires credentials to find.
-fn read_corpus() -> std::result::Result<Vec<Entry>, String> {
-    let arg = std::env::args().nth(1);
-    let reader: Box<dyn BufRead> = match arg.as_deref() {
+fn read_corpus(path: Option<&str>) -> std::result::Result<Vec<Entry>, String> {
+    let reader: Box<dyn BufRead> = match path {
         None | Some("-") => Box::new(std::io::stdin().lock()),
         Some(path) => Box::new(std::io::BufReader::new(
             std::fs::File::open(path).map_err(|e| format!("opening {path}: {e}"))?,
@@ -386,5 +472,33 @@ mod tests {
         // The inner text, not `Display`'s "query error: " wrapper — the result
         // line carries the server's own words.
         assert_eq!(msg, "Invalid object name 'dbo.Thing'.");
+    }
+
+    #[test]
+    fn an_override_is_used_and_recorded_as_a_substitution() {
+        // The corpus asked for a database that does not exist on this server.
+        assert_eq!(
+            resolve_database(Some("Local_DEV"), Some("ESP_Arnotts_Group_DEV"), "fallback"),
+            ("Local_DEV", Some("ESP_Arnotts_Group_DEV"))
+        );
+        // An override equal to what the corpus asked for is not a substitution,
+        // so nothing is recorded — the discriminating case for the `filter`.
+        assert_eq!(
+            resolve_database(Some("Same_DEV"), Some("Same_DEV"), "fallback"),
+            ("Same_DEV", None)
+        );
+        // No override: the corpus wins over MSSQL_DATABASE, and honoring a
+        // request is not a substitution.
+        assert_eq!(
+            resolve_database(None, Some("ESP_Arnotts_Group_DEV"), "fallback"),
+            ("ESP_Arnotts_Group_DEV", None)
+        );
+        // Neither: MSSQL_DATABASE, with nothing to record.
+        assert_eq!(resolve_database(None, None, "fallback"), ("fallback", None));
+        // An override with nothing to substitute for stays quiet.
+        assert_eq!(
+            resolve_database(Some("Local_DEV"), None, "fallback"),
+            ("Local_DEV", None)
+        );
     }
 }

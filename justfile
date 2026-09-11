@@ -83,8 +83,8 @@ probe-typed:
 # vars as the probes.
 #
 # Explain every query in a JSONL corpus, one parsed plan per output line.
-corpus-explain file="corpus/queries.jsonl":
-    cargo run -q -p coot-core --example corpus_explain -- {{file}}
+corpus-explain file="corpus/queries.jsonl" *args:
+    cargo run -q -p coot-core --example corpus_explain -- {{file}} {{args}}
 
 # Untyped column/row dump probe against the DEV box.
 probe-dynamic:
