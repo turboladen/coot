@@ -37,6 +37,8 @@
 //!    SQL references tables that do not exist and gets syntax wrong, and how
 //!    often it does is one of the things the corpus is being read for. Each such
 //!    line comes back with `"ok": false` and its error, and the run continues.
+//!    Failing to REACH the server is the opposite and stops the run — see
+//!    [`classify`], and the progress line every query prints to stderr.
 //! 3. **Nothing here executes.** Capture goes through `core`'s
 //!    `capture_plan_xml`, so every query is compiled and none is run — which is
 //!    what makes it safe to point at SQL nobody has vetted.
@@ -44,8 +46,8 @@
 use std::io::{BufRead, BufWriter, Write};
 
 use coot_core::{
-    ConnectionConfig, ConnectionId, ExecutionContext, InMemorySecretStore, PlanNode, PlanWarning,
-    SecretStore, parse_plan,
+    ConnectionConfig, ConnectionId, CoreError, ExecutionContext, InMemorySecretStore, PlanNode,
+    PlanWarning, SecretStore, parse_plan,
 };
 use serde_json::{Value, json};
 
@@ -107,6 +109,13 @@ async fn main() {
                 for o in &objects {
                     push_unique(&mut objects_seen, o.clone());
                 }
+                progress(
+                    n + 1,
+                    lines.len(),
+                    &entry.id,
+                    "ok",
+                    &format!("{} warning(s)", warnings.len()),
+                );
                 json!({
                     "id": entry.id,
                     "ok": true,
@@ -117,16 +126,18 @@ async fn main() {
                     "plan": plan,
                 })
             }
-            Err(e) => {
+            Err(Failure::Verdict(msg)) => {
                 failed += 1;
+                progress(n + 1, lines.len(), &entry.id, "ERR", &msg);
                 json!({
                     "id": entry.id,
                     "ok": false,
                     "database": database,
                     "sql": entry.sql,
-                    "error": e,
+                    "error": msg,
                 })
             }
+            Err(Failure::Fatal(msg)) => abort(&mut out, n + 1, lines.len(), &msg),
         };
 
         if let Err(e) = writeln!(out, "{line}") {
@@ -215,18 +226,83 @@ fn read_corpus() -> std::result::Result<Vec<Entry>, String> {
     Ok(out)
 }
 
-/// The parsed plan for one query, or the server's complaint about it as a
-/// string. `Err` here is ordinary output — see hazard 2 in the module doc.
+/// The parsed plan for one query, or why there is none.
 async fn explain_one(
     cfg: &ConnectionConfig,
     store: &dyn SecretStore,
     ctx: &ExecutionContext,
     sql: &str,
-) -> std::result::Result<coot_core::QueryPlan, String> {
+) -> std::result::Result<coot_core::QueryPlan, Failure> {
     let xml = coot_core::capture_plan_xml(cfg, store, ctx, sql)
         .await
-        .map_err(|e| e.to_string())?;
-    parse_plan(&xml).map_err(|e| e.to_string())
+        .map_err(classify)?;
+    // A document the server produced but `parse_plan` cannot read says something
+    // about this query's shape and about coot's parser, so record it and keep
+    // going. The run still reached a server, which is what `Fatal` is for.
+    parse_plan(&xml).map_err(|e| Failure::Verdict(e.to_string()))
+}
+
+/// Why one query produced no plan, split by what it means for the queries after
+/// it.
+enum Failure {
+    /// The server's answer about this query. Ordinary output — hazard 2.
+    Verdict(String),
+    /// The run cannot produce results at all. Every remaining query would fail
+    /// the same way, so it stops.
+    Fatal(String),
+}
+
+/// Sort a capture failure into a verdict on one query and a condition that ends
+/// the run.
+///
+/// Only [`CoreError::Query`] is a verdict: the server parsed the statement and
+/// refused it — invalid object name, syntax error, SHOWPLAN denied. Everything
+/// else happened before any answer about the SQL existed.
+// The wildcard falls on `Fatal` because `CoreError` is `#[non_exhaustive]` and
+// the two mistakes are not symmetric. A new variant treated as fatal stops a run
+// that might have continued, and says why. Treated as a verdict it writes
+// `"ok": false` under SQL that was never judged, which reads as "the query is
+// bad" and is how a down VPN once produced a hundred identical verdicts.
+fn classify(e: CoreError) -> Failure {
+    match e {
+        CoreError::Query(msg) => Failure::Verdict(msg),
+        other => Failure::Fatal(other.to_string()),
+    }
+}
+
+/// One line per query on stderr, so a long run shows its shape while it runs.
+///
+/// stdout carries the results and is normally redirected to a file, which leaves
+/// stderr as the terminal.
+fn progress(n: usize, total: usize, id: &str, marker: &str, detail: &str) {
+    let width = total.to_string().len();
+    // A server message can run to several lines and hundreds of characters. The
+    // whole thing is on the result line in the output file, so the terminal gets
+    // one readable line instead.
+    let flat = detail.split_whitespace().collect::<Vec<_>>().join(" ");
+    let short = match flat.char_indices().nth(96) {
+        Some((i, _)) => format!("{}…", &flat[..i]),
+        None => flat,
+    };
+    eprintln!("[{n:>width$}/{total}] {marker:<3} {id:<24} {short}");
+}
+
+/// Stop the run, keeping what was already captured.
+///
+/// Flushes so the results written before the failure survive, then exits
+/// non-zero.
+fn abort(out: &mut impl Write, n: usize, total: usize, msg: &str) -> ! {
+    let _ = out.flush();
+    eprintln!(
+        "
+stopped at query {n} of {total}: {msg}"
+    );
+    eprintln!(
+        "This is the connection, not the corpus. Every remaining query would \
+         fail the same way, so nothing more was tried; {} result(s) were written.",
+        n - 1
+    );
+    std::process::exit(1);
 }
 
 /// The `kind` tag serde writes for this warning, without rebuilding the mapping
@@ -277,4 +353,38 @@ fn env_connection() -> Option<(ConnectionConfig, InMemorySecretStore, String)> {
     let store = InMemorySecretStore::default();
     store.set_password(&cfg.id, &password).ok()?;
     Some((cfg, store, database))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_a_server_verdict_lets_the_run_continue() {
+        // `Unreachable` is the specimen that matters. A down tunnel wrote a
+        // hundred `"ok": false` lines blaming SQL the server never saw, so the
+        // wildcard in `classify` has to land here and not on `Verdict`.
+        for e in [
+            CoreError::Unreachable("vpn down".into()),
+            CoreError::Config("no stored password".into()),
+            CoreError::Transport("connection closed".into()),
+            CoreError::Secret("keychain denied".into()),
+            CoreError::Store("bad json".into()),
+            CoreError::Param("bad int".into()),
+        ] {
+            let rendered = e.to_string();
+            assert!(
+                matches!(classify(e), Failure::Fatal(_)),
+                "{rendered} must stop the run"
+            );
+        }
+
+        let refused = CoreError::Query("Invalid object name 'dbo.Thing'.".into());
+        let Failure::Verdict(msg) = classify(refused) else {
+            panic!("a query the server refused must not stop the run");
+        };
+        // The inner text, not `Display`'s "query error: " wrapper — the result
+        // line carries the server's own words.
+        assert_eq!(msg, "Invalid object name 'dbo.Thing'.");
+    }
 }
