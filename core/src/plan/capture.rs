@@ -1,7 +1,8 @@
-//! The one server-touching file in `plan`. Gets an ESTIMATED plan — the query is
-//! compiled, never executed.
+//! The one server-touching file in `plan`. Compiles a query and never executes
+//! it — [`capture_xml`] to get the estimated plan, [`compile_check`] to learn
+//! only whether the server accepts it.
 //!
-//! Two hazards live here, both load-bearing:
+//! Two hazards live here, both load-bearing, and both apply to either `SET`:
 //!
 //! 1. **`USE` must precede `SET SHOWPLAN_XML ON`.** With SHOWPLAN on, the server
 //!    compiles but does not EXECUTE any statement — including `USE`. Flipping the
@@ -27,6 +28,48 @@ use crate::result::{CellValue, QueryResult};
 /// Must be the only statement in its batch.
 const SHOWPLAN_ON: &str = "SET SHOWPLAN_XML ON";
 const SHOWPLAN_OFF: &str = "SET SHOWPLAN_XML OFF";
+const NOEXEC_ON: &str = "SET NOEXEC ON";
+const NOEXEC_OFF: &str = "SET NOEXEC OFF";
+
+/// Whether the server accepts `sql` under `ctx` — `Ok(())` when it compiles,
+/// `Err` carrying the server's complaint when it does not.
+///
+/// Everything [`capture_xml`] validates except the plan: syntax, every table and
+/// column resolved against the real schema, and types. Needs no SHOWPLAN
+/// permission, only the read access the statement itself requires, so it reaches
+/// databases where a plan cannot be had.
+///
+/// Nothing executes. `SET NOEXEC ON` compiles each statement that follows and
+/// runs none, and the guarantee has the same shape as the one on `capture_xml`:
+/// it holds provided the `ON` engaged, which `run_batch` returning `Err`
+/// whenever it did not is what secures.
+pub async fn compile_check(
+    cfg: &ConnectionConfig,
+    store: &dyn SecretStore,
+    ctx: &ExecutionContext,
+    sql: &str,
+) -> Result<()> {
+    // Our OWN connection, and the `USE` bound into the same call as the `ON` —
+    // hazards 2 and 1, for the same reasons, since NOEXEC suppresses `USE` too.
+    let mut client = crate::executor::connect(cfg, store).await?;
+
+    let out = async {
+        crate::executor::run_batch(&mut client, ctx, NOEXEC_ON).await?;
+
+        // Never an early `?` between these two: the session must be restored
+        // even when the statement is rejected, which is the common case here.
+        let compiled = crate::executor::run_batch_no_use(&mut client, sql).await;
+        let off = crate::executor::run_batch_no_use(&mut client, NOEXEC_OFF).await;
+
+        compiled?;
+        off?;
+        Ok(())
+    }
+    .await;
+
+    crate::executor::close_client(client).await;
+    out
+}
 
 /// The raw ShowPlanXML document for `sql` under `ctx`, for `.sqlplan` export and
 /// as the input to the (pure) parser. Plans get large, so this stays a separate

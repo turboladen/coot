@@ -16,6 +16,18 @@
 //! prompt that produced it. `database` is optional and falls back to
 //! `MSSQL_DATABASE`.
 //!
+//! # When there is no SHOWPLAN permission
+//!
+//! Capturing a plan needs SHOWPLAN on every database holding an object the query
+//! names, and a login that lacks it gets error 262 for every query that touches
+//! a user table. `--compile-only` drops the plan and asks the server the smaller
+//! question instead: does this compile? Syntax, every table and column resolved
+//! against the real schema, types — all of it, with no permission beyond the
+//! read access the statement already needs.
+//!
+//! Output lines carry `ok` and, when it fails, `error`. No `plan`, no `objects`,
+//! no `warnings`: those come from a plan, and there is none.
+//!
 //! # Placeholders
 //!
 //! A query logged before its parameters were substituted still carries them —
@@ -86,7 +98,10 @@ async fn main() {
         Ok(args) => args,
         Err(e) => {
             eprintln!("{e}");
-            eprintln!("usage: corpus_explain [<corpus.jsonl>] [--database <name>]");
+            eprintln!(
+                "usage: corpus_explain [<corpus.jsonl>] [--database <name>] \
+                 [--bind <name>=<literal>]... [--compile-only]"
+            );
             std::process::exit(1);
         }
     };
@@ -125,6 +140,9 @@ async fn main() {
         std::process::exit(1);
     };
 
+    if args.compile_only {
+        eprintln!("compile-only: asking whether each query is accepted, not for its plan.");
+    }
     if let Some(db) = &args.database {
         eprintln!(
             "explaining all {} queries against {db}, ignoring the database each was \
@@ -152,8 +170,18 @@ async fn main() {
         );
         let ctx = ExecutionContext::new(cfg.id.clone()).with_database(database);
 
-        let mut line = match explain_one(&cfg, &store, &ctx, &bound[n]).await {
-            Ok(plan) => {
+        let mut line = match explain_one(&cfg, &store, &ctx, &bound[n], args.compile_only).await {
+            Ok(None) => {
+                ok += 1;
+                progress(n + 1, lines.len(), &entry.id, "ok", "compiles");
+                json!({
+                    "id": entry.id,
+                    "ok": true,
+                    "database": database,
+                    "sql": entry.sql,
+                })
+            }
+            Ok(Some(plan)) => {
                 ok += 1;
                 let mut objects = Vec::new();
                 let mut warnings = Vec::new();
@@ -241,27 +269,44 @@ async fn main() {
 
     warning_tally.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
     objects_seen.sort();
-    eprintln!(
-        "\n{ok} explained, {failed} would not compile, {} total",
-        lines.len()
-    );
+    let verb = if args.compile_only {
+        "compiled"
+    } else {
+        "explained"
+    };
+    eprintln!("\n{ok} {verb}, {failed} rejected, {} total", lines.len());
     if !error_tally.is_empty() {
         error_tally.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
         eprintln!("why queries did not compile:");
         for (msg, count) in &error_tally {
             eprintln!("  {count:>5}  {}", one_line(msg, 110));
         }
+        if !args.compile_only
+            && error_tally
+                .iter()
+                .any(|(m, _)| m.to_ascii_uppercase().contains("SHOWPLAN"))
+        {
+            eprintln!(
+                "\nSHOWPLAN is denied here, so no plan exists for any query naming a user \
+                 table.\nRerun with --compile-only to ask whether each query is accepted \
+                 instead; that needs no such permission."
+            );
+        }
     }
-    eprintln!("warnings across the corpus:");
-    if warning_tally.is_empty() {
-        eprintln!("  (none)");
-    }
-    for (kind, count) in &warning_tally {
-        eprintln!("  {count:>5}  {kind}");
-    }
-    eprintln!("tables touched ({}):", objects_seen.len());
-    for o in &objects_seen {
-        eprintln!("  {o}");
+    // Both tallies are read off plans, so a compile-only run has nothing to put
+    // in them and printing "(none)" would read as a finding.
+    if !args.compile_only {
+        eprintln!("warnings across the corpus:");
+        if warning_tally.is_empty() {
+            eprintln!("  (none)");
+        }
+        for (kind, count) in &warning_tally {
+            eprintln!("  {count:>5}  {kind}");
+        }
+        eprintln!("tables touched ({}):", objects_seen.len());
+        for o in &objects_seen {
+            eprintln!("  {o}");
+        }
     }
 }
 
@@ -415,6 +460,7 @@ struct Args {
     path: Option<String>,
     database: Option<String>,
     bind: Vec<(String, String)>,
+    compile_only: bool,
 }
 
 /// Parse `[<path>] [--database <name>] [--bind <name>=<literal>]...`. A missing
@@ -423,12 +469,14 @@ fn parse_args() -> std::result::Result<Args, String> {
     let mut path: Option<String> = None;
     let mut database = None;
     let mut bind = Vec::new();
+    let mut compile_only = false;
     let mut rest = std::env::args().skip(1);
     while let Some(arg) = rest.next() {
         match arg.as_str() {
             "--database" | "-d" => {
                 database = Some(rest.next().ok_or("--database needs a database name")?);
             }
+            "--compile-only" => compile_only = true,
             "--bind" | "-b" => {
                 let pair = rest.next().ok_or("--bind needs <name>=<literal>")?;
                 // Split on the FIRST `=`: a bound literal may contain one.
@@ -452,6 +500,7 @@ fn parse_args() -> std::result::Result<Args, String> {
         path,
         database,
         bind,
+        compile_only,
     })
 }
 
@@ -505,19 +554,31 @@ fn read_corpus(path: Option<&str>) -> std::result::Result<Vec<Entry>, String> {
 }
 
 /// The parsed plan for one query, or why there is none.
+///
+/// `Ok(None)` is `--compile-only` succeeding: the server accepted the query and
+/// was never asked for a plan.
 async fn explain_one(
     cfg: &ConnectionConfig,
     store: &dyn SecretStore,
     ctx: &ExecutionContext,
     sql: &str,
-) -> std::result::Result<coot_core::QueryPlan, Failure> {
+    compile_only: bool,
+) -> std::result::Result<Option<coot_core::QueryPlan>, Failure> {
+    if compile_only {
+        return coot_core::compile_check(cfg, store, ctx, sql)
+            .await
+            .map(|()| None)
+            .map_err(classify);
+    }
     let xml = coot_core::capture_plan_xml(cfg, store, ctx, sql)
         .await
         .map_err(classify)?;
     // A document the server produced but `parse_plan` cannot read says something
     // about this query's shape and about coot's parser, so record it and keep
     // going. The run still reached a server, which is what `Fatal` is for.
-    parse_plan(&xml).map_err(|e| Failure::Verdict(e.to_string()))
+    parse_plan(&xml)
+        .map(Some)
+        .map_err(|e| Failure::Verdict(e.to_string()))
 }
 
 /// Why one query produced no plan, split by what it means for the queries after

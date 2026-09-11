@@ -21,7 +21,7 @@ pub mod model;
 pub mod parse;
 pub mod verdict;
 
-pub use capture::capture_xml;
+pub use capture::{capture_xml, compile_check};
 pub use fingerprint::shape;
 pub use model::{
     DbPlanOutcome, Finding, FindingKind, MissingIndex, PlanCapture, PlanNode, PlanStatement,

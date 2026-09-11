@@ -26,7 +26,7 @@
 use coot_core::{
     CellValue, ConnectionConfig, ConnectionId, DbRunOutcome, ExecutionContext, InMemorySecretStore,
     QueryResult, ResolvedParam, SecretStore, SqlType, build_connection_string, capture_plan_xml,
-    run, run_fanout, run_with_params,
+    compile_check, run, run_fanout, run_with_params,
 };
 
 /// Build a live `(cfg, store)` from `MSSQL_*` env, or `None` when any required
@@ -746,4 +746,90 @@ async fn capture_fails_when_the_login_lacks_showplan() {
         text.contains("262") || text.to_ascii_uppercase().contains("SHOWPLAN"),
         "expected a SHOWPLAN denial, got: {text}"
     );
+}
+
+#[tokio::test]
+async fn compile_check_resolves_names_where_a_plan_is_refused() {
+    let Some((cfg, store)) = env_connection() else {
+        eprintln!("skipping: MSSQL_* not set");
+        return;
+    };
+    let ctx = ExecutionContext::new(cfg.id.clone());
+
+    // A real user table, which is what makes this test mean anything: SHOWPLAN is
+    // checked against the database holding the objects a statement NAMES, so only
+    // a statement touching one of these is refused a plan.
+    let table = run(
+        &cfg,
+        &store,
+        &ctx,
+        "SELECT TOP 1 QUOTENAME(s.name) + '.' + QUOTENAME(t.name) AS qualified \
+         FROM sys.tables t JOIN sys.schemas s ON s.schema_id = t.schema_id \
+         ORDER BY t.name",
+    )
+    .await
+    .expect("listing tables must succeed");
+    let Some(CellValue::Text(qualified)) = table[0].rows.first().map(|r| r[0].clone()) else {
+        eprintln!("skipping: MSSQL_DATABASE has no user tables");
+        return;
+    };
+
+    let good = format!("SELECT TOP (0) * FROM {qualified}");
+    compile_check(&cfg, &store, &ctx, &good)
+        .await
+        .expect("a valid query must compile");
+
+    // The claim worth testing. `SET PARSEONLY ON` would also accept the query
+    // above, and would accept this one too — NOEXEC is used precisely because it
+    // resolves names against the real schema, which is the only reason this can
+    // tell a hallucinated table from a real one.
+    let err = compile_check(
+        &cfg,
+        &store,
+        &ctx,
+        "SELECT TOP (0) * FROM dbo.coot_no_such_table_4f2a",
+    )
+    .await
+    .expect_err("a query naming a table that does not exist must be rejected");
+    let text = err.to_string();
+    assert!(
+        text.contains("208") || text.to_ascii_lowercase().contains("invalid object name"),
+        "expected an unresolved-name error, got: {text}"
+    );
+}
+
+#[tokio::test]
+async fn compile_check_succeeds_where_capture_is_denied_showplan() {
+    let Some((cfg, store)) = env_connection() else {
+        eprintln!("skipping: MSSQL_* not set");
+        return;
+    };
+    let ctx = ExecutionContext::new(cfg.id.clone());
+
+    let table = run(
+        &cfg,
+        &store,
+        &ctx,
+        "SELECT TOP 1 QUOTENAME(s.name) + '.' + QUOTENAME(t.name) AS qualified \
+         FROM sys.tables t JOIN sys.schemas s ON s.schema_id = t.schema_id \
+         ORDER BY t.name",
+    )
+    .await
+    .expect("listing tables must succeed");
+    let Some(CellValue::Text(qualified)) = table[0].rows.first().map(|r| r[0].clone()) else {
+        eprintln!("skipping: MSSQL_DATABASE has no user tables");
+        return;
+    };
+    let sql = format!("SELECT TOP (0) * FROM {qualified}");
+
+    // Only meaningful where the plan is actually refused; where SHOWPLAN is held
+    // there is nothing to demonstrate.
+    if capture_plan_xml(&cfg, &store, &ctx, &sql).await.is_ok() {
+        eprintln!("skipping: this login holds SHOWPLAN here");
+        return;
+    }
+
+    compile_check(&cfg, &store, &ctx, &sql)
+        .await
+        .expect("compile_check must not need the permission capture was refused");
 }
