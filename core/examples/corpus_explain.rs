@@ -138,6 +138,7 @@ async fn main() {
     let mut ok = 0usize;
     let mut failed = 0usize;
     let mut warning_tally: Vec<(String, usize)> = Vec::new();
+    let mut error_tally: Vec<(String, usize)> = Vec::new();
     let mut objects_seen: Vec<String> = Vec::new();
 
     // Sequential, one connection per query. A corpus is hundreds of queries, not
@@ -197,6 +198,10 @@ async fn main() {
             Err(Failure::Verdict(msg)) => {
                 failed += 1;
                 progress(n + 1, lines.len(), &entry.id, "ERR", &msg);
+                match error_tally.iter_mut().find(|(k, _)| *k == msg) {
+                    Some((_, c)) => *c += 1,
+                    None => error_tally.push((msg.clone(), 1)),
+                }
                 json!({
                     "id": entry.id,
                     "ok": false,
@@ -240,6 +245,13 @@ async fn main() {
         "\n{ok} explained, {failed} would not compile, {} total",
         lines.len()
     );
+    if !error_tally.is_empty() {
+        error_tally.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        eprintln!("why queries did not compile:");
+        for (msg, count) in &error_tally {
+            eprintln!("  {count:>5}  {}", one_line(msg, 110));
+        }
+    }
     eprintln!("warnings across the corpus:");
     if warning_tally.is_empty() {
         eprintln!("  (none)");
@@ -542,15 +554,23 @@ fn classify(e: CoreError) -> Failure {
 /// stderr as the terminal.
 fn progress(n: usize, total: usize, id: &str, marker: &str, detail: &str) {
     let width = total.to_string().len();
-    // A server message can run to several lines and hundreds of characters. The
-    // whole thing is on the result line in the output file, so the terminal gets
-    // one readable line instead.
-    let flat = detail.split_whitespace().collect::<Vec<_>>().join(" ");
-    let short = match flat.char_indices().nth(96) {
+    eprintln!(
+        "[{n:>width$}/{total}] {marker:<3} {id:<24} {}",
+        one_line(detail, 96)
+    );
+}
+
+/// `text` as a single line of at most `max` characters.
+///
+/// A server message runs to several lines and hundreds of characters, and the
+/// whole of it is on the result line in the output file — the terminal gets
+/// something it can scan instead.
+fn one_line(text: &str, max: usize) -> String {
+    let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    match flat.char_indices().nth(max) {
         Some((i, _)) => format!("{}…", &flat[..i]),
         None => flat,
-    };
-    eprintln!("[{n:>width$}/{total}] {marker:<3} {id:<24} {short}");
+    }
 }
 
 /// Stop the run, keeping what was already captured.
