@@ -16,6 +16,19 @@
 //! prompt that produced it. `database` is optional and falls back to
 //! `MSSQL_DATABASE`.
 //!
+//! # Placeholders
+//!
+//! A query logged before its parameters were substituted still carries them —
+//! `WHERE UC.User_Idx = :user_idx` — and SQL Server will not compile that, so
+//! there is no plan to capture. `--bind user_idx=1` puts a T-SQL literal in its
+//! place. Every placeholder must be bound; the run says which are not and stops
+//! before connecting.
+//!
+//! A literal rather than a `DECLARE`d variable, deliberately. `DECLARE` makes the
+//! optimizer estimate from average density because the value is unknown at
+//! compile time, while a parameterized query is SNIFFED on first compile using a
+//! real value. The literal reproduces the plan the application runs.
+//!
 //! # Explaining a multi-tenant corpus against one database
 //!
 //! Traces from a per-tenant product name a different database on nearly every
@@ -86,6 +99,24 @@ async fn main() {
         }
     };
 
+    // Before the env check, for the same reason `read_corpus` runs first: a
+    // corpus nobody can compile should not need credentials to discover.
+    let bound = match bind_corpus(&lines, &args.bind) {
+        Ok(bound) => bound,
+        Err(unbound) => {
+            eprintln!(
+                "the corpus still has parameter placeholders. SQL Server cannot compile a \
+                 query that holds one, so no plan exists for any of them."
+            );
+            eprint!("bind each to a T-SQL literal and rerun:\n  just corpus-explain <file>");
+            for name in &unbound {
+                eprint!(" --bind {name}=<literal>");
+            }
+            eprintln!();
+            std::process::exit(1);
+        }
+    };
+
     let Some((cfg, store, fallback_db)) = env_connection() else {
         eprintln!(
             "MSSQL_SERVER / MSSQL_USER / MSSQL_PASSWORD / MSSQL_DATABASE must all be set.\n\
@@ -120,7 +151,7 @@ async fn main() {
         );
         let ctx = ExecutionContext::new(cfg.id.clone()).with_database(database);
 
-        let mut line = match explain_one(&cfg, &store, &ctx, &entry.sql).await {
+        let mut line = match explain_one(&cfg, &store, &ctx, &bound[n]).await {
             Ok(plan) => {
                 ok += 1;
                 let mut objects = Vec::new();
@@ -180,6 +211,17 @@ async fn main() {
         if let Some(r) = substituted_for {
             line["requestedDatabase"] = json!(r);
         }
+        // `sql` stays the query as generated, because that is what the corpus is
+        // being read to judge. This says what was actually compiled.
+        if bound[n] != entry.sql {
+            line["boundParameters"] = json!(
+                args.bind
+                    .iter()
+                    .filter(|(k, _)| entry.sql.contains(&format!(":{k}")))
+                    .map(|(k, v)| (k.clone(), Value::String(v.clone())))
+                    .collect::<serde_json::Map<String, Value>>()
+            );
+        }
 
         if let Err(e) = writeln!(out, "{line}") {
             eprintln!("writing result {n}: {e}");
@@ -217,6 +259,129 @@ struct Entry {
     database: Option<String>,
 }
 
+/// Every query with its placeholders bound, or every name left unbound across
+/// the whole corpus.
+///
+/// Reports all of them at once — binding one at a time, a rerun per name, would
+/// be a connection and a full capture pass each time.
+fn bind_corpus(
+    lines: &[Entry],
+    values: &[(String, String)],
+) -> std::result::Result<Vec<String>, Vec<String>> {
+    let mut bound = Vec::with_capacity(lines.len());
+    let mut unbound: Vec<String> = Vec::new();
+    for entry in lines {
+        match bind(&entry.sql, values) {
+            Ok(sql) => bound.push(sql),
+            Err(missing) => {
+                for name in missing {
+                    if !unbound.contains(&name) {
+                        unbound.push(name);
+                    }
+                }
+            }
+        }
+    }
+    if unbound.is_empty() {
+        Ok(bound)
+    } else {
+        Err(unbound)
+    }
+}
+
+/// Every `:name` placeholder in `sql`, as a byte range and the bare name.
+///
+/// Skips a colon inside a string literal, a bracketed identifier, or a comment,
+/// and skips `::` — so a time literal, a column named `[a:b]`, and a
+/// PostgreSQL-style cast are all left alone.
+fn placeholders(sql: &str) -> Vec<(std::ops::Range<usize>, String)> {
+    let b = sql.as_bytes();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < b.len() {
+        match b[i] {
+            // A string literal. A doubled quote needs no case of its own: the
+            // closing quote is followed immediately by an opening one, which the
+            // outer match dispatches straight back here, so the scan is never
+            // outside the literal and no colon inside one is ever reached.
+            b'\'' => {
+                i += 1;
+                while i < b.len() {
+                    let quote = b[i] == b'\'';
+                    i += 1;
+                    if quote {
+                        break;
+                    }
+                }
+            }
+            b'[' => {
+                i += 1;
+                while i < b.len() && b[i] != b']' {
+                    i += 1;
+                }
+                i += 1;
+            }
+            b'-' if b.get(i + 1) == Some(&b'-') => {
+                while i < b.len() && b[i] != b'\n' {
+                    i += 1;
+                }
+            }
+            b'/' if b.get(i + 1) == Some(&b'*') => {
+                i += 2;
+                while i < b.len() && !(b[i] == b'*' && b.get(i + 1) == Some(&b'/')) {
+                    i += 1;
+                }
+                i += 2;
+            }
+            // A cast operator, not a placeholder. Stepping over BOTH colons
+            // matters: landing on the second one would read the type as a name.
+            b':' if b.get(i + 1) == Some(&b':') => i += 2,
+            b':' => {
+                let mut j = i + 1;
+                while j < b.len() && (b[j].is_ascii_alphanumeric() || b[j] == b'_') {
+                    j += 1;
+                }
+                if j > i + 1 {
+                    out.push((i..j, sql[i + 1..j].to_string()));
+                    i = j;
+                } else {
+                    i += 1;
+                }
+            }
+            _ => i += 1,
+        }
+    }
+    out
+}
+
+/// `sql` with every placeholder replaced by its bound literal, or the names that
+/// have no value.
+fn bind(sql: &str, values: &[(String, String)]) -> std::result::Result<String, Vec<String>> {
+    let found = placeholders(sql);
+    if found.is_empty() {
+        return Ok(sql.to_string());
+    }
+    let mut missing: Vec<String> = Vec::new();
+    let mut out = String::with_capacity(sql.len());
+    let mut last = 0;
+    for (range, name) in &found {
+        match values.iter().find(|(k, _)| k == name) {
+            Some((_, v)) => {
+                out.push_str(&sql[last..range.start]);
+                out.push_str(v);
+                last = range.end;
+            }
+            None if !missing.contains(name) => missing.push(name.clone()),
+            None => {}
+        }
+    }
+    if !missing.is_empty() {
+        return Err(missing);
+    }
+    out.push_str(&sql[last..]);
+    Ok(out)
+}
+
 /// The database to explain a query against, and the one it asked for when a
 /// substitution happened.
 ///
@@ -237,17 +402,28 @@ fn resolve_database<'a>(
 struct Args {
     path: Option<String>,
     database: Option<String>,
+    bind: Vec<(String, String)>,
 }
 
-/// Parse `[<path>] [--database <name>]`. A missing path reads stdin.
+/// Parse `[<path>] [--database <name>] [--bind <name>=<literal>]...`. A missing
+/// path reads stdin.
 fn parse_args() -> std::result::Result<Args, String> {
     let mut path: Option<String> = None;
     let mut database = None;
+    let mut bind = Vec::new();
     let mut rest = std::env::args().skip(1);
     while let Some(arg) = rest.next() {
         match arg.as_str() {
             "--database" | "-d" => {
                 database = Some(rest.next().ok_or("--database needs a database name")?);
+            }
+            "--bind" | "-b" => {
+                let pair = rest.next().ok_or("--bind needs <name>=<literal>")?;
+                // Split on the FIRST `=`: a bound literal may contain one.
+                let (name, value) = pair
+                    .split_once('=')
+                    .ok_or_else(|| format!("--bind {pair} is not <name>=<literal>"))?;
+                bind.push((name.to_string(), value.to_string()));
             }
             // A bare `-` is the conventional name for stdin, so it is a path.
             other if other.starts_with('-') && other != "-" => {
@@ -260,7 +436,11 @@ fn parse_args() -> std::result::Result<Args, String> {
             }
         }
     }
-    Ok(Args { path, database })
+    Ok(Args {
+        path,
+        database,
+        bind,
+    })
 }
 
 /// Read the corpus from `path`, or stdin when there is none.
@@ -472,6 +652,62 @@ mod tests {
         // The inner text, not `Display`'s "query error: " wrapper — the result
         // line carries the server's own words.
         assert_eq!(msg, "Invalid object name 'dbo.Thing'.");
+    }
+
+    #[test]
+    fn a_colon_that_is_not_a_placeholder_is_left_alone() {
+        // Each specimen is a colon a naive `:\w+` match WOULD take, and taking
+        // any of them rewrites SQL into something the user never wrote.
+        for inert in [
+            // A time literal: `:30` and `:00` both look like names.
+            "SELECT * FROM t WHERE created = '2026-08-01 10:30:00'",
+            // `''` escapes a quote, so the literal has not ended at `it''s`.
+            "SELECT * FROM t WHERE note = 'it''s 10:30 now'",
+            // A bracketed identifier may hold anything at all.
+            "SELECT [a:b] FROM t",
+            "SELECT * FROM t -- ask :someone about this",
+            "SELECT * FROM t /* see :ticket */",
+            // A cast, not a placeholder — and the second colon must be stepped
+            // over too, or `int` reads as a name.
+            "SELECT value::int FROM t",
+            // A T-SQL label. Nothing an identifier could start with follows the
+            // colon, so there is no name, and a placeholder with an empty name
+            // would be reported unbound as `""` and bindable by nothing.
+            "retry: SELECT 1 FROM t",
+            "SELECT 1 FROM t WHERE x = 1:",
+        ] {
+            assert_eq!(
+                placeholders(inert),
+                vec![],
+                "found a placeholder in: {inert}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_placeholder_is_replaced_in_place() {
+        // The real shape out of the corpus, and the colon inside the literal is
+        // what discriminates: it must survive untouched while `:user_idx` goes.
+        let sql = "SELECT * FROM P WHERE P.At = '10:30:00' AND UC.User_Idx = :user_idx";
+        let values = [("user_idx".to_string(), "1".to_string())];
+        assert_eq!(
+            bind(sql, &values).unwrap(),
+            "SELECT * FROM P WHERE P.At = '10:30:00' AND UC.User_Idx = 1"
+        );
+
+        // Two occurrences of one name, and a second name, all in one statement.
+        let two = "SELECT :a, :b, :a FROM t";
+        let both = [
+            ("a".to_string(), "1".to_string()),
+            ("b".to_string(), "'x'".to_string()),
+        ];
+        assert_eq!(bind(two, &both).unwrap(), "SELECT 1, 'x', 1 FROM t");
+
+        // Unbound names come back so the run can name every one at once.
+        assert_eq!(
+            bind(two, &[("a".to_string(), "1".to_string())]).unwrap_err(),
+            vec!["b".to_string()]
+        );
     }
 
     #[test]
