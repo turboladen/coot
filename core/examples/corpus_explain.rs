@@ -21,9 +21,13 @@
 //! Capturing a plan needs SHOWPLAN on every database holding an object the query
 //! names, and a login that lacks it gets error 262 for every query that touches
 //! a user table. `--compile-only` drops the plan and asks the server the smaller
-//! question instead: does this compile? Syntax, every table and column resolved
-//! against the real schema, types — all of it, with no permission beyond the
-//! read access the statement already needs.
+//! question instead: is this valid T-SQL? `SET NOEXEC ON` checks SYNTAX, with no
+//! permission beyond the read access the statement already needs, which is how
+//! another dialect's `LIMIT` gets caught.
+//!
+//! An `ok` of `true` does NOT mean the tables exist. SQL Server defers name
+//! resolution for an absent object to execution, which NOEXEC prevents, so
+//! `SELECT * FROM dbo.no_such_table` compiles. See `core::compile_check`.
 //!
 //! Output lines carry `ok` and, when it fails, `error`. No `plan`, no `objects`,
 //! no `warnings`: those come from a plan, and there is none.
@@ -74,15 +78,21 @@
 //! 1. **Never commit the output.** `/corpus/` is gitignored for this reason;
 //!    keep both the input and the output there. Moving a file out does not make
 //!    it safe.
-//! 2. **A query that will not compile is a RESULT, not a failure.** Generated
-//!    SQL references tables that do not exist and gets syntax wrong, and how
-//!    often it does is one of the things the corpus is being read for. Each such
-//!    line comes back with `"ok": false` and its error, and the run continues.
-//!    Failing to REACH the server is the opposite and stops the run — see
-//!    [`classify`], and the progress line every query prints to stderr.
+//! 2. **A query the server refuses is a RESULT, not a failure.** Generated SQL
+//!    gets syntax wrong and names tables that do not exist, and how often it
+//!    does is one of the things the corpus is being read for. Each refusal comes
+//!    back with `"ok": false` and its error, and the run continues. Failing to
+//!    REACH the server is the opposite and stops the run — see [`classify`], and
+//!    the progress line every query prints to stderr. Under `--compile-only` an
+//!    absent table is NOT a refusal, for the reason given above.
 //! 3. **Nothing here executes.** Capture goes through `core`'s
-//!    `capture_plan_xml`, so every query is compiled and none is run — which is
-//!    what makes it safe to point at SQL nobody has vetted.
+//!    `capture_plan_xml` and `--compile-only` through `core`'s `compile_check`,
+//!    so every query is compiled and none is run — which is what makes it safe
+//!    to point at SQL nobody has vetted. A corpus naming `NOEXEC` is refused
+//!    before anything connects, because `SET NOEXEC OFF` inside a submitted
+//!    batch would re-enable execution for whatever follows it. That is the one
+//!    way the corpus can break this guarantee, and it is the reason the refusal
+//!    is a check rather than a warning.
 
 use std::io::{BufRead, BufWriter, Write};
 
@@ -113,6 +123,24 @@ async fn main() {
             std::process::exit(1);
         }
     };
+
+    // Before anything connects, so a corpus that must not be sent is never sent.
+    let unsafe_ids: Vec<&str> = lines
+        .iter()
+        .filter(|e| names_noexec(&e.sql))
+        .map(|e| e.id.as_str())
+        .collect();
+    if !unsafe_ids.is_empty() {
+        eprintln!(
+            "these queries name NOEXEC, and `SET NOEXEC OFF` inside a submitted batch \
+             re-enables execution for whatever follows it:"
+        );
+        for id in &unsafe_ids {
+            eprintln!("  {id}");
+        }
+        eprintln!("Nothing was sent. Remove them from the corpus to run the rest.");
+        std::process::exit(1);
+    }
 
     // Before the env check, for the same reason `read_corpus` runs first: a
     // corpus nobody can compile should not need credentials to discover.
@@ -247,10 +275,16 @@ async fn main() {
         // `sql` stays the query as generated, because that is what the corpus is
         // being read to judge. This says what was actually compiled.
         if bound[n] != entry.sql {
+            // Ask `placeholders` which names this query actually holds rather
+            // than testing `sql.contains(":name")`: that substring matches
+            // `:user` inside `:user_idx`, and matches a colon in a string
+            // literal or comment that `placeholders` deliberately skips, either
+            // way recording a substitution that never happened.
+            let used = placeholders(&entry.sql);
             line["boundParameters"] = json!(
                 args.bind
                     .iter()
-                    .filter(|(k, _)| entry.sql.contains(&format!(":{k}")))
+                    .filter(|(k, _)| used.iter().any(|(_, name)| name == k))
                     .map(|(k, v)| (k.clone(), Value::String(v.clone())))
                     .collect::<serde_json::Map<String, Value>>()
             );
@@ -277,7 +311,13 @@ async fn main() {
     eprintln!("\n{ok} {verb}, {failed} rejected, {} total", lines.len());
     if !error_tally.is_empty() {
         error_tally.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
-        eprintln!("why queries did not compile:");
+        if args.compile_only {
+            eprintln!("why queries did not compile:");
+        } else {
+            // A plan run also counts a document coot could not parse, which is
+            // not the server refusing anything.
+            eprintln!("why queries produced no plan:");
+        }
         for (msg, count) in &error_tally {
             eprintln!("  {count:>5}  {}", one_line(msg, 110));
         }
@@ -316,6 +356,27 @@ struct Entry {
     database: Option<String>,
 }
 
+/// Whether `sql` uses `NOEXEC` as a word.
+///
+/// The compile path holds its no-execution guarantee by leaving `SET NOEXEC ON`
+/// in force for the submitted batch, so a batch that turns it back off executes
+/// the rest of itself for real. Nothing in a generated `SELECT` needs the word,
+/// which makes refusing it free.
+///
+/// `SET SHOWPLAN_XML OFF` needs no such check: the server requires it to stand
+/// alone, so a batch holding one is rejected rather than run.
+fn names_noexec(sql: &str) -> bool {
+    const NEEDLE: &str = "NOEXEC";
+    // ASCII uppercasing preserves length, so these indices still address `sql`.
+    let upper = sql.to_ascii_uppercase();
+    let b = upper.as_bytes();
+    let ident = |c: u8| c.is_ascii_alphanumeric() || c == b'_';
+    upper.match_indices(NEEDLE).any(|(i, _)| {
+        let end = i + NEEDLE.len();
+        (i == 0 || !ident(b[i - 1])) && (end >= b.len() || !ident(b[end]))
+    })
+}
+
 /// Every query with its placeholders bound, or every name left unbound across
 /// the whole corpus.
 ///
@@ -348,9 +409,9 @@ fn bind_corpus(
 
 /// Every `:name` placeholder in `sql`, as a byte range and the bare name.
 ///
-/// Skips a colon inside a string literal, a bracketed identifier, or a comment,
-/// and skips `::` — so a time literal, a column named `[a:b]`, and a
-/// PostgreSQL-style cast are all left alone.
+/// Skips a colon inside a string literal, a bracketed or double-quoted
+/// identifier, or a comment, and skips `::` — so a time literal, a column named
+/// `[a:b]`, and a PostgreSQL-style cast are all left alone.
 fn placeholders(sql: &str) -> Vec<(std::ops::Range<usize>, String)> {
     let b = sql.as_bytes();
     let mut out = Vec::new();
@@ -365,6 +426,21 @@ fn placeholders(sql: &str) -> Vec<(std::ops::Range<usize>, String)> {
                 i += 1;
                 while i < b.len() {
                     let quote = b[i] == b'\'';
+                    i += 1;
+                    if quote {
+                        break;
+                    }
+                }
+            }
+            // A double-quoted run: an identifier under QUOTED_IDENTIFIER ON,
+            // which every capture reports as the session setting, and a string
+            // in the other dialects this corpus is full of. Either way its
+            // contents are not T-SQL and a colon inside it is not a
+            // placeholder. Doubling is handled the way `'` handles it.
+            b'"' => {
+                i += 1;
+                while i < b.len() {
+                    let quote = b[i] == b'"';
                     i += 1;
                     if quote {
                         break;
@@ -576,9 +652,12 @@ async fn explain_one(
     // A document the server produced but `parse_plan` cannot read says something
     // about this query's shape and about coot's parser, so record it and keep
     // going. The run still reached a server, which is what `Fatal` is for.
+    // Labelled, because this failure shares a tally with the server's refusals
+    // and is the opposite of one: the server compiled the query and produced a
+    // document coot could not read.
     parse_plan(&xml)
         .map(Some)
-        .map_err(|e| Failure::Verdict(e.to_string()))
+        .map_err(|e| Failure::Verdict(format!("coot could not parse the plan: {e}")))
 }
 
 /// Why one query produced no plan, split by what it means for the queries after
@@ -746,6 +825,10 @@ mod tests {
             "SELECT * FROM t WHERE note = 'it''s 10:30 now'",
             // A bracketed identifier may hold anything at all.
             "SELECT [a:b] FROM t",
+            // So may a double-quoted one, which generated SQL written for
+            // another dialect reaches for constantly.
+            "SELECT \"a:b\" FROM t",
+            "SELECT * FROM t WHERE note = \"it 10:30 now\"",
             "SELECT * FROM t -- ask :someone about this",
             "SELECT * FROM t /* see :ticket */",
             // A cast, not a placeholder — and the second colon must be stepped
@@ -789,6 +872,20 @@ mod tests {
             bind(two, &[("a".to_string(), "1".to_string())]).unwrap_err(),
             vec!["b".to_string()]
         );
+    }
+
+    #[test]
+    fn only_noexec_as_a_word_is_refused() {
+        assert!(names_noexec(
+            "SELECT 1; SET NOEXEC OFF; DELETE FROM dbo.Promo"
+        ));
+        // Casing is the server's business, not the corpus author's.
+        assert!(names_noexec("select 1; set noexec off"));
+        // The discriminating specimens: a substring match would refuse all three
+        // and reject a corpus that is perfectly safe.
+        assert!(!names_noexec("SELECT noexec_flag FROM dbo.Settings"));
+        assert!(!names_noexec("SELECT * FROM dbo.NOEXECUTIONS"));
+        assert!(!names_noexec("SELECT Name FROM dbo.Promo WHERE Id = 1"));
     }
 
     #[test]

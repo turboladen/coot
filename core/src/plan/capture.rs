@@ -54,8 +54,9 @@ pub async fn compile_check(
     ctx: &ExecutionContext,
     sql: &str,
 ) -> Result<()> {
-    // Our OWN connection, and the `USE` bound into the same call as the `ON` —
-    // hazards 2 and 1, for the same reasons, since NOEXEC suppresses `USE` too.
+    // Our OWN connection, and `run_batch` issues the `USE` immediately before
+    // the `ON` — hazards 2 and 1, for the same reasons, since NOEXEC suppresses
+    // `USE` too.
     let mut client = crate::executor::connect(cfg, store).await?;
 
     let out = async {

@@ -34,9 +34,10 @@ compile. That is real value, but second-order next to a third of the corpus not 
 **The corpus job compile-checks queries. It does not capture or analyze execution plans.**
 
 `core::compile_check` sends `SET NOEXEC ON`, the query, then `SET NOEXEC OFF`, on its own connection,
-with the `USE` bound into the same batch as the `ON` — the two hazards documented in
-`core/src/plan/capture.rs` apply to NOEXEC exactly as they do to SHOWPLAN, because NOEXEC suppresses
-`USE` too.
+issuing the `USE` as its own request immediately before the `ON` and never again after it — the two
+hazards documented in `core/src/plan/capture.rs` apply to NOEXEC exactly as they do to SHOWPLAN,
+because NOEXEC suppresses `USE` too. The `USE` stays a separate request rather than a line prepended
+to the batch, for the reasons on `executor::run_batch`.
 
 `core/src/plan/` keeps its model, parser and verdict. They are correct and tested, including against
 a real captured plan; they are not extended and not deleted.
