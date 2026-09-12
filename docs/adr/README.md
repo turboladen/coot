@@ -52,3 +52,4 @@ Rule of thumb: if reversing it later would need a "why did we do that?" explanat
 | [0005](0005-saved-query-is-a-stable-template.md) | Accepted | A saved query is a stable template; Run never rewrites the library |
 | [0006](0006-schema-cache-generation-guard.md) | Accepted | Generation counter checked under the insert lock; return but don't cache across a clear |
 | [0007](0007-design-tokens-and-colorblind-safe-theme.md) | Accepted | Single token layer; colourblind-safety as a hard constraint (hue is never the only cue) |
+| [0008](0008-compile-checking-instead-of-execution-plans.md) | Accepted | The corpus job compile-checks with `SET NOEXEC ON`; execution plans are out, SHOWPLAN being unobtainable |

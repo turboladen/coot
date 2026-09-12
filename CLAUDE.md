@@ -36,9 +36,18 @@ enough for me" beats "general-purpose." Do not build for scale, multi-user, or d
 - SQL-auth only. No Entra/AAD/Windows auth.
 - Do **not** build: ER diagrams, tree nodes beyond Databases/Tables/Columns/Views. **Omit**
   unbuilt tree nodes — don't render disabled stubs.
-- An **MCP server** (`billz-26u`) is in scope. It is how the plan and schema analyses reach an
-  agent, which is the second product goal; the original exclusion assumed both core jobs were
-  human-in-the-loop and visual, and the corpus-analysis job is neither. Still not the current
+- Do **not** build on **plan capture or plan analysis** (`billz-xi6`, ditched). `SET SHOWPLAN_XML
+  ON` needs SHOWPLAN on every database holding an object a query names, and this login has it on
+  none; getting it granted is an org ask that is not going to happen. `plan/model`, `plan/parse`
+  and `plan/verdict` stay in the tree and stay tested — leave them alone rather than extending or
+  deleting them.
+- The corpus job is **`compile_check`** (`billz-3xz`): `SET NOEXEC ON` validates syntax with no
+  permission beyond the read access the query already needs. It does **not** resolve names — an
+  absent table is accepted, because resolution is deferred to an execution that never happens. Do
+  not describe its `ok` as "the tables exist."
+- An **MCP server** (`billz-26u`) is in scope. It is how the schema introspection and the compile
+  check reach an agent, which is the second product goal; the original exclusion assumed both core
+  jobs were human-in-the-loop and visual, and the corpus job is neither. Still not the current
   phase — build it when its bead is ready, not opportunistically.
 - If a "nice to have" tempts you and it isn't in the current phase, **file a deferred bead** (or
   leave a `// TODO(phaseN):` pointing at its id) and move on — don't build it.

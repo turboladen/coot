@@ -662,19 +662,15 @@ async fn fanout_runs_each_db_and_captures_per_db_errors() {
     );
 }
 
-// Estimated-plan capture rests on one assumption: with `SET SHOWPLAN_XML ON`,
-// nothing in the submitted SQL executes. That holds only while a server that
-// refuses SHOWPLAN makes the capture fail, so this pins that a denial surfaces
-// as `Err` instead of the batch quietly running for real.
+// Capture promises that nothing in the submitted SQL executes, which holds only
+// while a server refusing SHOWPLAN makes the capture fail. This pins that a
+// denial surfaces as `Err` rather than the batch quietly running for real
+// (billz-bkm). Gated on `MSSQL_NO_SHOWPLAN_DATABASE`.
 //
-// Gated on `MSSQL_NO_SHOWPLAN_DATABASE`, naming a database on the DEV box where
-// the login lacks the SHOWPLAN permission (billz-bkm).
-//
-// The permission is checked here rather than taken on trust, and checked on the
-// same connection that attempts the capture, because `HAS_PERMS_BY_NAME` run by
-// hand in another client answers for whatever login THAT client used. A skip
-// says the named database does not deny this login anything and the assertion
-// below would prove nothing.
+// The denial is verified on the SAME connection that attempts the capture:
+// `HAS_PERMS_BY_NAME` answers for the login of whichever client runs it, so a
+// reading taken by hand elsewhere describes a different login. A skip means the
+// named database denies this login nothing, leaving the assertion vacuous.
 #[tokio::test]
 async fn capture_fails_when_the_login_lacks_showplan() {
     let Some((cfg, store)) = env_connection() else {
