@@ -749,16 +749,13 @@ async fn capture_fails_when_the_login_lacks_showplan() {
 }
 
 #[tokio::test]
-async fn compile_check_resolves_names_where_a_plan_is_refused() {
+async fn compile_check_rejects_bad_syntax_but_not_an_unresolved_table() {
     let Some((cfg, store)) = env_connection() else {
         eprintln!("skipping: MSSQL_* not set");
         return;
     };
     let ctx = ExecutionContext::new(cfg.id.clone());
 
-    // A real user table, which is what makes this test mean anything: SHOWPLAN is
-    // checked against the database holding the objects a statement NAMES, so only
-    // a statement touching one of these is refused a plan.
     let table = run(
         &cfg,
         &store,
@@ -774,28 +771,43 @@ async fn compile_check_resolves_names_where_a_plan_is_refused() {
         return;
     };
 
-    let good = format!("SELECT TOP (0) * FROM {qualified}");
-    compile_check(&cfg, &store, &ctx, &good)
-        .await
-        .expect("a valid query must compile");
+    compile_check(
+        &cfg,
+        &store,
+        &ctx,
+        &format!("SELECT TOP (0) * FROM {qualified}"),
+    )
+    .await
+    .expect("a valid query must compile");
 
-    // The claim worth testing. `SET PARSEONLY ON` would also accept the query
-    // above, and would accept this one too — NOEXEC is used precisely because it
-    // resolves names against the real schema, which is the only reason this can
-    // tell a hallucinated table from a real one.
+    // What this check is FOR. `LIMIT` is the shape that matters on a corpus of
+    // generated SQL: another dialect's keyword, rejected by the parser.
     let err = compile_check(
+        &cfg,
+        &store,
+        &ctx,
+        &format!("SELECT * FROM {qualified} LIMIT 10"),
+    )
+    .await
+    .expect_err("another dialect's syntax must be rejected");
+    assert!(
+        err.to_string().contains("102"),
+        "expected a syntax error, got: {err}"
+    );
+
+    // And its limit, pinned so nobody reads `ok` as "the tables are real".
+    // SQL Server DEFERS name resolution for an object that does not exist, and
+    // raises it at execution — which NOEXEC prevents, so the statement is
+    // accepted. Resolving names needs something that binds without executing,
+    // such as `sys.sp_describe_first_result_set`.
+    compile_check(
         &cfg,
         &store,
         &ctx,
         "SELECT TOP (0) * FROM dbo.coot_no_such_table_4f2a",
     )
     .await
-    .expect_err("a query naming a table that does not exist must be rejected");
-    let text = err.to_string();
-    assert!(
-        text.contains("208") || text.to_ascii_lowercase().contains("invalid object name"),
-        "expected an unresolved-name error, got: {text}"
-    );
+    .expect("an unresolved table is accepted, because resolution is deferred");
 }
 
 #[tokio::test]

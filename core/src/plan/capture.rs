@@ -34,10 +34,15 @@ const NOEXEC_OFF: &str = "SET NOEXEC OFF";
 /// Whether the server accepts `sql` under `ctx` — `Ok(())` when it compiles,
 /// `Err` carrying the server's complaint when it does not.
 ///
-/// Everything [`capture_xml`] validates except the plan: syntax, every table and
-/// column resolved against the real schema, and types. Needs no SHOWPLAN
-/// permission, only the read access the statement itself requires, so it reaches
-/// databases where a plan cannot be had.
+/// Validates SYNTAX, and needs no SHOWPLAN permission, so it reaches databases
+/// where a plan cannot be had. Another dialect's keyword — `LIMIT` in SQL a model
+/// wrote for the wrong engine — is rejected here.
+///
+/// It does NOT tell you the tables exist. SQL Server defers name resolution for
+/// an object that is absent and raises it at execution, which is exactly what
+/// NOEXEC prevents, so `SELECT * FROM dbo.no_such_table` is accepted. Binding
+/// without executing needs something else, such as
+/// `sys.sp_describe_first_result_set`.
 ///
 /// Nothing executes. `SET NOEXEC ON` compiles each statement that follows and
 /// runs none, and the guarantee has the same shape as the one on `capture_xml`:
