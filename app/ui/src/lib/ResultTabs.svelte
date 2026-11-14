@@ -46,20 +46,25 @@
 </script>
 
 <div class="result-tabs">
-  <div class="tabs">
-    {#each results ?? [] as r, i}
-      <button class="tab" class:active={activeTab === i} onclick={() => (activeTab = i)}>
-        {tabLabel(r, i)}
-        <span class="count">{r.rows.length}</span>
+  <!-- The tabs wrap onto extra rows, never scroll sideways: macOS hides the
+       overlay scrollbar and a vertical wheel can't scroll a row, so overflowed
+       tabs would be unreachable. Copy sits outside the tabs so it never moves. -->
+  <div class="strip">
+    <div class="tabs">
+      {#each results ?? [] as r, i}
+        <button class="tab" class:active={activeTab === i} onclick={() => (activeTab = i)}>
+          {tabLabel(r, i)}
+          <span class="count">{r.rows.length}</span>
+        </button>
+      {/each}
+      <button
+        class="tab"
+        class:active={activeTab === "messages"}
+        onclick={() => (activeTab = "messages")}
+      >
+        Messages
       </button>
-    {/each}
-    <button
-      class="tab"
-      class:active={activeTab === "messages"}
-      onclick={() => (activeTab = "messages")}
-    >
-      Messages
-    </button>
+    </div>
     <div class="copy">
       {#each COPY_FORMATS as f}
         <button
@@ -99,13 +104,20 @@
     height: 100%;
     min-height: 0;
   }
-  .tabs {
+  .strip {
     display: flex;
     flex: none;
-    gap: 0.25rem;
+    align-items: flex-start;
+    gap: var(--sp-2);
     padding: 0 0.4rem;
     border-bottom: 1px solid var(--border);
-    overflow-x: auto;
+  }
+  .tabs {
+    display: flex;
+    flex: 1 1 auto;
+    flex-wrap: wrap;
+    min-width: 0;
+    gap: 0.25rem;
   }
   .tab {
     display: flex;
@@ -130,8 +142,8 @@
     display: flex;
     align-items: center;
     gap: var(--sp-1);
-    margin-left: auto;
     flex: none;
+    padding-top: 0.15rem;
   }
   /* The global button base supplies font, flex layout, gap, radius, cursor and
      the disabled style; this rule only makes it a quiet, borderless strip control. */

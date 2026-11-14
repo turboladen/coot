@@ -41,6 +41,8 @@ All notable changes to Coot are documented here. Format loosely follows
   the configured server, user, and database — not a customer id in a `WHERE` clause.
 
 ### Fixed
+- Result tabs wrap onto extra rows when they overflow, so every tab stays reachable
+  without sideways scrolling, which a mouse wheel cannot do on macOS.
 - `@param` scanning runs through a T-SQL lexer in both the frontend and `core`, so an
   `@name` inside a string literal, a bracketed identifier, or a comment is not mistaken
   for a parameter — `'sales@vendor.com'` yields no `@vendor`.
