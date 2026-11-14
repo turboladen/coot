@@ -21,6 +21,10 @@ All notable changes to Coot are documented here. Format loosely follows
 - Save the current editor contents to the library without leaving the editor, and
   rename a saved query from the library panel.
 
+### Results grid
+- Copy the active result set, headers included, as CSV or as a Markdown table from
+  buttons in the result tab strip.
+
 ### Notifications
 - Toasts carry success, failure, and progress for every feedback surface in the app.
 - Repeated identical toasts coalesce into one slot with a count.

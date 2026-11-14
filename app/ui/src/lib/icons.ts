@@ -8,4 +8,5 @@ export {
   Sun, Moon, Monitor,
   Network,
   Pencil, Trash2, MoreHorizontal,
+  Copy,
 } from "lucide-svelte";

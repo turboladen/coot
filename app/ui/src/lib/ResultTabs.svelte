@@ -6,6 +6,9 @@
   import type { Message } from "./resultSummary";
   import { tabLabel } from "./resultSummary";
   import ResultsGrid from "./ResultsGrid.svelte";
+  import { canCopy, copiedMessage, formatResult, type CopyFormat } from "./copyFormatLogic";
+  import { Copy } from "./icons";
+  import { pushToast } from "./toasts.svelte";
 
   let {
     results,
@@ -23,6 +26,19 @@
   const selectedResult = $derived(
     results && typeof activeTab === "number" ? (results[activeTab] ?? null) : null,
   );
+
+  // Copies the active result set, headers included. A rejected clipboard write
+  // surfaces as an error toast so a failed copy is never mistaken for a success.
+  async function copy(format: CopyFormat) {
+    const result = selectedResult;
+    if (!canCopy(result)) return;
+    try {
+      await navigator.clipboard.writeText(formatResult(result, format));
+      pushToast("success", copiedMessage(result.rows.length, format));
+    } catch (e) {
+      pushToast("error", `Couldn't copy to the clipboard: ${String(e)}`);
+    }
+  }
 </script>
 
 <div class="result-tabs">
@@ -40,6 +56,24 @@
     >
       Messages
     </button>
+    <div class="copy">
+      <button
+        class="copy-btn"
+        aria-label="Copy result as CSV"
+        disabled={!canCopy(selectedResult)}
+        onclick={() => copy("csv")}
+      >
+        <Copy size={14} /> CSV
+      </button>
+      <button
+        class="copy-btn"
+        aria-label="Copy result as Markdown"
+        disabled={!canCopy(selectedResult)}
+        onclick={() => copy("markdown")}
+      >
+        <Copy size={14} /> Markdown
+      </button>
+    </div>
   </div>
 
   <div class="pane">
@@ -93,6 +127,35 @@
     color: var(--text);
     background: var(--raised);
     box-shadow: var(--shadow-sm);
+  }
+  .copy {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-1);
+    margin-left: auto;
+    flex: none;
+  }
+  .copy-btn {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-1);
+    padding: 0.2rem 0.5rem;
+    border: none;
+    border-radius: var(--r-sm);
+    background: none;
+    font: inherit;
+    font-size: var(--fs-xs);
+    color: var(--muted);
+    white-space: nowrap;
+    cursor: pointer;
+  }
+  .copy-btn:hover:not(:disabled) {
+    color: var(--text);
+    background: var(--raised);
+  }
+  .copy-btn:disabled {
+    opacity: 0.45;
+    cursor: default;
   }
   .count {
     font-size: var(--fs-xs);
