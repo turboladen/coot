@@ -7,7 +7,7 @@ import type { QueryResult } from "./api";
 export type Message = { kind: "info" | "error"; text: string };
 
 // Pluralize a count with its noun: (1,"row") → "1 row", (2,"row") → "2 rows".
-function plural(n: number, noun: string): string {
+export function plural(n: number, noun: string): string {
   return `${n} ${noun}${n === 1 ? "" : "s"}`;
 }
 

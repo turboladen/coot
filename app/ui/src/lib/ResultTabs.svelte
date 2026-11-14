@@ -6,7 +6,7 @@
   import type { Message } from "./resultSummary";
   import { tabLabel } from "./resultSummary";
   import ResultsGrid from "./ResultsGrid.svelte";
-  import { canCopy, copiedMessage, formatResult, type CopyFormat } from "./copyFormatLogic";
+  import { COPY_FORMATS, canCopy, copiedMessage, formatLabel, formatResult, type CopyFormat } from "./copyFormatLogic";
   import { Copy } from "./icons";
   import { pushToast } from "./toasts.svelte";
 
@@ -27,8 +27,12 @@
     results && typeof activeTab === "number" ? (results[activeTab] ?? null) : null,
   );
 
+  const copyable = $derived(canCopy(selectedResult));
+
   // Copies the active result set, headers included. A rejected clipboard write
   // surfaces as an error toast so a failed copy is never mistaken for a success.
+  // Rows go out in query order, which matches the grid only while the grid
+  // cannot sort or filter.
   async function copy(format: CopyFormat) {
     const result = selectedResult;
     if (!canCopy(result)) return;
@@ -57,22 +61,16 @@
       Messages
     </button>
     <div class="copy">
-      <button
-        class="copy-btn"
-        aria-label="Copy result as CSV"
-        disabled={!canCopy(selectedResult)}
-        onclick={() => copy("csv")}
-      >
-        <Copy size={14} /> CSV
-      </button>
-      <button
-        class="copy-btn"
-        aria-label="Copy result as Markdown"
-        disabled={!canCopy(selectedResult)}
-        onclick={() => copy("markdown")}
-      >
-        <Copy size={14} /> Markdown
-      </button>
+      {#each COPY_FORMATS as f}
+        <button
+          class="copy-btn"
+          aria-label="Copy result as {formatLabel(f)}"
+          disabled={!copyable}
+          onclick={() => copy(f)}
+        >
+          <Copy size={14} /> {formatLabel(f)}
+        </button>
+      {/each}
     </div>
   </div>
 
@@ -135,27 +133,19 @@
     margin-left: auto;
     flex: none;
   }
+  /* The global button base supplies font, flex layout, gap, radius, cursor and
+     the disabled style; this rule only makes it a quiet, borderless strip control. */
   .copy-btn {
-    display: flex;
-    align-items: center;
-    gap: var(--sp-1);
     padding: 0.2rem 0.5rem;
     border: none;
-    border-radius: var(--r-sm);
     background: none;
-    font: inherit;
     font-size: var(--fs-xs);
     color: var(--muted);
     white-space: nowrap;
-    cursor: pointer;
   }
   .copy-btn:hover:not(:disabled) {
     color: var(--text);
     background: var(--raised);
-  }
-  .copy-btn:disabled {
-    opacity: 0.45;
-    cursor: default;
   }
   .count {
     font-size: var(--fs-xs);

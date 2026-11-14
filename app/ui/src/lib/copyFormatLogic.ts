@@ -6,10 +6,7 @@
 // including the literal NULL and decimals kept as strings.
 import type { QueryResult } from "./api";
 import { renderCell } from "./renderCell";
-
-export type CopyFormat = "csv" | "markdown";
-
-const FORMAT_LABEL: Record<CopyFormat, string> = { csv: "CSV", markdown: "Markdown" };
+import { plural } from "./resultSummary";
 
 // Fields are quoted per RFC 4180. Leading or trailing whitespace is quoted too, so a reader
 // that trims unquoted fields keeps it.
@@ -33,18 +30,43 @@ export function toCsv(result: QueryResult): string {
 /** Formats the result as a GFM table, right-aligning a column when all its non-NULL cells are numeric. */
 export function toMarkdown(result: QueryResult): string {
   const row = (cells: string[]) => `| ${cells.join(" | ")} |`;
-  const rendered = result.rows.map((r) => r.map(renderCell));
-  const separators = result.columns.map((_, i) => {
-    const values = rendered.map((r) => r[i]).filter((c) => c && !c.nullish);
-    return values.length > 0 && values.every((c) => c.align === "right") ? "---:" : "---";
-  });
-  const lines = [row(result.columns.map((c) => mdCell(c.name))), row(separators)];
-  for (const r of rendered) lines.push(row(r.map((c) => mdCell(c.text))));
-  return lines.join("\n");
+  // One pass builds each row's text and tracks alignment per column, so no
+  // rendered cell outlives its row on a large result.
+  const sawValue = result.columns.map(() => false);
+  const allRight = result.columns.map(() => true);
+  const body = result.rows.map((r) =>
+    row(
+      r.map((cell, i) => {
+        const c = renderCell(cell);
+        if (!c.nullish) {
+          sawValue[i] = true;
+          if (c.align !== "right") allRight[i] = false;
+        }
+        return mdCell(c.text);
+      }),
+    ),
+  );
+  const separators = result.columns.map((_, i) => (sawValue[i] && allRight[i] ? "---:" : "---"));
+  return [row(result.columns.map((c) => mdCell(c.name))), row(separators), ...body].join("\n");
+}
+
+const FORMATS = {
+  csv: { label: "CSV", format: toCsv },
+  markdown: { label: "Markdown", format: toMarkdown },
+} satisfies Record<string, { label: string; format: (result: QueryResult) => string }>;
+
+export type CopyFormat = keyof typeof FORMATS;
+
+/** Every copy format, in the order the buttons show them. */
+export const COPY_FORMATS = Object.keys(FORMATS) as CopyFormat[];
+
+/** Returns the format's display name, such as "CSV". */
+export function formatLabel(format: CopyFormat): string {
+  return FORMATS[format].label;
 }
 
 export function formatResult(result: QueryResult, format: CopyFormat): string {
-  return format === "csv" ? toCsv(result) : toMarkdown(result);
+  return FORMATS[format].format(result);
 }
 
 /** Reports whether there is anything to copy, which needs a result with at least one column. */
@@ -54,5 +76,5 @@ export function canCopy(result: QueryResult | null): result is QueryResult {
 
 /** Returns the toast text for a successful copy, such as "Copied 42 rows as CSV". */
 export function copiedMessage(rowCount: number, format: CopyFormat): string {
-  return `Copied ${rowCount} row${rowCount === 1 ? "" : "s"} as ${FORMAT_LABEL[format]}`;
+  return `Copied ${plural(rowCount, "row")} as ${formatLabel(format)}`;
 }
