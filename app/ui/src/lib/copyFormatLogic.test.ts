@@ -30,6 +30,10 @@ describe("toCsv", () => {
   test("header names are escaped like cells", () => {
     expect(toCsv(res(["a,b", 'q"'], []))).toBe('"a,b","q"""');
   });
+  test("a lone empty field is quoted so the record is not a blank line", () => {
+    expect(toCsv(res(["s"], [[T("")], [T("x")]]))).toBe('s\n""\nx');
+    expect(toCsv(res(["a", "b"], [[T(""), T("")]]))).toBe("a,b\n,");
+  });
   test("decimal and bigint copied verbatim", () => {
     const r = res(
       ["d", "b"],
@@ -53,6 +57,9 @@ describe("toMarkdown", () => {
     expect(toMarkdown(res(["a|b"], [[T("x|y")], [T("1\r\n2\r3\n4")]]))).toBe(
       "| a\\|b |\n| --- |\n| x\\|y |\n| 1<br>2<br>3<br>4 |",
     );
+  });
+  test("backslashes before a pipe are doubled so the pipe stays escaped", () => {
+    expect(toMarkdown(res(["p"], [[T("C:\\|x")], [T("a\\b")]]))).toBe("| p |\n| --- |\n| C:\\\\\\|x |\n| a\\b |");
   });
   test("empty string cell renders empty", () => {
     expect(toMarkdown(res(["s"], [[T("")]]))).toBe("| s |\n| --- |\n|  |");

@@ -16,18 +16,23 @@ function csvField(text: string): string {
 
 // Escaping here guarantees only the table's structure. Inline Markdown such as
 // `*x*` or `<b>` still renders, which an AI reading the raw text never sees.
+// GFM splits cells after pairing each backslash with the next character, so any
+// backslashes before a pipe are doubled; otherwise `C:\|x` would end the cell.
 function mdCell(text: string): string {
-  return text.replace(/\|/g, "\\|").replace(/\r\n|\r|\n/g, "<br>");
+  return text.replace(/(\\*)\|/g, "$1$1\\|").replace(/\r\n|\r|\n/g, "<br>");
 }
 
 /** Formats the result as CSV: a header row of column names, then one line per row, joined with `\n`. */
 export function toCsv(result: QueryResult): string {
-  const lines = [result.columns.map((c) => csvField(c.name)).join(",")];
-  for (const row of result.rows) lines.push(row.map((cell) => csvField(renderCell(cell).text)).join(","));
+  // A lone empty field would leave a blank line, which many readers skip as no
+  // record at all, so it is written as `""`.
+  const line = (fields: string[]) => fields.map(csvField).join(",") || '""';
+  const lines = [line(result.columns.map((c) => c.name))];
+  for (const row of result.rows) lines.push(line(row.map((cell) => renderCell(cell).text)));
   return lines.join("\n");
 }
 
-/** Formats the result as a GFM table, right-aligning a column when all its non-NULL cells are numeric. */
+/** Formats the result as a GFM table, right-aligning a column that has a value and whose non-NULL cells are all numeric. */
 export function toMarkdown(result: QueryResult): string {
   const row = (cells: string[]) => `| ${cells.join(" | ")} |`;
   // One pass builds each row's text and tracks alignment per column, so no
